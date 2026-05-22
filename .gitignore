@@ -1,0 +1,65 @@
+# ==========================================
+# 核心安全凭证（绝对禁止提交！！！）
+# ==========================================
+.env
+*.pem
+*.key
+
+# ==========================================
+# Python 运行时与编译缓存
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ==========================================
+# 环境管理工具 (venv, uv, conda)
+# ==========================================
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.cache
+.mypy_cache/
+.ruff_cache/
+
+# ==========================================
+# 本地轻量级存储数据库 (SQLite / Chroma 本地镜像)
+# ==========================================
+*.db
+*.sqlite3
+.chroma/
+
+# ==========================================
+# 操作系统级垃圾文件
+# ==========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

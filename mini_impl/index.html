@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgentHub MVP</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 隐藏滚动条但保持功能 */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-gray-100 h-screen flex flex-col overflow-hidden text-gray-800">
+
+    <!-- 顶部状态栏 -->
+    <header class="bg-white border-b px-4 py-3 flex justify-between items-center z-10 shadow-sm">
+        <div class="flex items-center space-x-2">
+            <span class="text-xl">🚀</span>
+            <h1 class="text-lg font-bold tracking-tight">AgentHub <span class="text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded ml-1 font-normal">MVP 雏形</span></h1>
+        </div>
+        <div id="conn-status" class="text-xs bg-red-100 text-red-600 px-2 py-1 rounded-full flex items-center space-x-1">
+            <span class="w-2 h-2 bg-red-500 rounded-full inline-block mr-1"></span>未连接
+        </div>
+    </header>
+
+    <!-- 主体：响应式三栏布局 -->
+    <div class="flex-1 flex overflow-hidden relative">
+        
+        <!-- 1. 左侧会话列表：在移动端(sm)和普通平板隐藏，在大平板及电脑(md:)展示 -->
+        <!-- 1. 左侧会话列表 -->
+        <aside class="hidden md:flex flex-col w-64 bg-white border-r flex-shrink-0">
+            <div class="p-3 border-b">
+                <button onclick="toggleChatMode()" id="mode-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm py-2 px-4 rounded-lg font-medium transition-colors shadow-sm">
+                    切换至群聊模式 (@多Agent)
+                </button>
+            </div>
+            <!-- 联系人列表（支持自由选择 Agent 平台） -->
+            <div class="flex-1 overflow-y-auto p-2 space-y-2 no-scrollbar" id="agent-list">
+                
+                <!-- 智能体 1 -->
+                <div onclick="selectAgent('Claude Code')" id="item-Claude" class="agent-item flex items-center p-2.5 bg-blue-50 border-l-4 border-blue-600 rounded-r-lg cursor-pointer transition-all">
+                    <div class="w-9 h-9 bg-orange-500 text-white rounded-full flex items-center justify-center font-bold shadow-sm">C</div>
+                    <div class="ml-3 overflow-hidden">
+                        <p class="text-sm font-semibold text-gray-800">Claude Code</p>
+                        <p class="text-xs text-gray-400 truncate">擅长全栈敏捷网页开发</p>
+                    </div>
+                </div>
+
+                <!-- 智能体 2 -->
+                <div onclick="selectAgent('Codex')" id="item-Codex" class="agent-item flex items-center p-2.5 hover:bg-gray-50 border-l-4 border-transparent rounded-r-lg cursor-pointer transition-all">
+                    <div class="w-9 h-9 bg-purple-600 text-white rounded-full flex items-center justify-center font-bold shadow-sm">X</div>
+                    <div class="ml-3 overflow-hidden">
+                        <p class="text-sm font-semibold text-gray-700">Codex</p>
+                        <p class="text-xs text-gray-400 truncate">专注深度代码审查与优化</p>
+                    </div>
+                </div>
+
+            </div>
+        </aside>
+
+        <!-- 2. 中间聊天流：三端皆可见，宽度自适应 -->
+        <main class="flex-1 flex flex-col bg-gray-50">
+            <!-- 消息区域 -->
+            <div class="bg-white border-b px-4 py-3 flex justify-between items-center shadow-sm flex-shrink-0">
+                <div class="flex items-center space-x-2">
+                    <span class="text-green-500 text-xs animate-pulse">●</span>
+                    <span id="current-agent-label" class="text-sm font-bold text-gray-700">Claude Code (单聊)</span>
+                </div>
+            </div>
+
+            <div id="chat-stream" class="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar">
+                </div>
+
+            <!-- 输入区域 -->
+            <div class="p-4 bg-white border-t">
+                <div class="flex space-x-2">
+                    <input type="text" id="user-input" placeholder="输入消息... (提示：群聊模式会自动生成网页产物)" class="flex-1 border rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button onclick="sendMessage()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">发送</button>
+                </div>
+            </div>
+        </main>
+
+        <!-- 3. 右侧产物内联预览：移动端和普通电脑隐藏，仅在宽屏/大桌面端(lg:)展示 -->
+        <section class="hidden lg:flex flex-col w-96 bg-white border-l flex-shrink-0">
+            <div class="p-3 border-b bg-gray-50 flex items-center justify-between">
+                <span class="text-sm font-bold text-gray-700 flex items-center"><span class="mr-1.5">👁️</span>实时产物预览沙箱</span>
+                <span class="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded">实时(HMR)</span>
+            </div>
+            <div class="flex-1 p-4 bg-gray-100 overflow-y-auto" id="sandbox-container">
+                <div class="h-full border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center p-6 text-center text-gray-400">
+                    <span class="text-3xl mb-2">📦</span>
+                    <p class="text-xs">暂无待渲染产物<br>触发群聊协作生成代码后在此自动运行</p>
+                </div>
+            </div>
+        </section>
+
+    </div>
+
+    <!-- JS 逻辑迁移至第三步 -->
+    <script src="main.js"></script>
+</body>
+</html>

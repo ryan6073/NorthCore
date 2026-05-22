@@ -1,0 +1,37 @@
+agenthub-frontend/
+├── .env.development      # 开发环境后端 API 地址
+├── .env.production       # 生产环境部署地址
+├── package.json
+├── tailwind.config.js    # Tailwind 配置文件
+└── src/
+    ├── main.jsx          # 全局入口
+    ├── index.css         # 全局样式（引入 Tailwind 指令）
+    ├── assets/           # 静态资源 (图标、默认头像)
+    ├── config/           # 客户端配置
+    ├── hooks/            # 常用 Hooks (如 useWebSocket, useScroll)
+    ├── store/            # 状态管理 (Zustand)
+    │   ├── chatStore.js  # 管理当前选中的会话、单聊/群聊状态、历史消息列表
+    │   └── agentStore.js # 管理所有在线的 Agent 联系人及其状态
+    ├── services/         # 接口请求层
+    │   ├── api.js        # Axios 封装
+    │   └── websocket.js  # WebSocket 原生事件封装
+    └── components/       # 组件库 (大厂原子化设计)
+        ├── layout/       # 骨架布局
+        │   ├── Header.jsx       # 顶部状态栏
+        │   └── MainLayout.jsx   # 响应式三栏容器
+        ├── sidebar/      # 左侧会话侧边栏
+        │   ├── SessionList.jsx  # 会话列表 (搜索/置顶/归档)
+        │   └── AgentContact.jsx # Agent 联系人卡片 (带能力标签)
+        ├── chat/         # 中间聊天流
+        │   ├── ChatWindow.jsx   # 消息滚动容器
+        │   ├── InputArea.jsx    # 富文本输入框 (支持 @、附件上传)
+        │   └── message/         # 消息渲染器
+        │       ├── TextBubble.jsx    # 普通文本
+        │       ├── CodeBubble.jsx    # 语法高亮代码块
+        │       ├── DiffBubble.jsx    # 代码 Diff 视图对比卡片
+        │       └── StatusBubble.jsx  # Orchestrator 状态编排卡片
+        └── sandbox/      # 右侧产物沙箱 (核心加分项)
+            ├── SandboxContainer.jsx # 沙箱主面板 (全屏切换、Tab 切换)
+            ├── PreviewIframe.jsx    # iframe 网页实时渲染沙箱
+            ├── CodeEditor.jsx       # Monaco Editor 代码二次编辑
+            └── DeployPanel.jsx      # 部署状态与预览 URL 卡片

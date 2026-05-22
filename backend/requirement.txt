@@ -1,0 +1,5 @@
+pydantic-settings
+openai
+uvicorn
+fastapi
+websockets
