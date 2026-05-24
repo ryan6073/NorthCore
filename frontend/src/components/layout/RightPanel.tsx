@@ -1,6 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Artifact, Agent } from '@/types';
-import { Maximize2 } from 'lucide-react';
 import AgentList from '../agent/AgentList';
 import ArtifactList from '../artifact/ArtifactList';
 import ArtifactPreview from '../artifact/ArtifactPreview';
@@ -80,17 +79,11 @@ const RightPanel: React.FC<RightPanelProps> = ({
           onSelectArtifact={onSelectArtifact}
         />
         {selectedArtifact && (
-          <div className="flex-1 border-t border-lark-border/60 overflow-hidden relative min-h-0 bg-white">
-            <div className="absolute top-2 right-2 z-10">
-              <button
-                onClick={onOpenFullScreenPreview}
-                className="p-1.5 rounded-lg bg-white/95 hover:bg-lark-bg-hover active:scale-95 shadow-sm border border-lark-border transition-all flex items-center justify-center"
-                title="放大全屏预览"
-              >
-                <Maximize2 className="w-3.5 h-3.5 text-lark-text-secondary hover:text-lark-primary" />
-              </button>
-            </div>
-            <ArtifactPreview artifact={selectedArtifact} />
+          <div className="flex-1 border-t border-lark-border/60 overflow-hidden min-h-0 bg-white">
+            <ArtifactPreview 
+              artifact={selectedArtifact} 
+              onOpenFullScreen={onOpenFullScreenPreview}
+            />
           </div>
         )}
       </div>

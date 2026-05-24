@@ -1,13 +1,14 @@
 import React, { useState, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Artifact } from '@/types';
-import { Copy, FileCode, FileText, Globe } from 'lucide-react';
+import { Copy, FileCode, FileText, Globe, Maximize2 } from 'lucide-react';
 
 interface ArtifactPreviewProps {
   artifact: Artifact | null;
+  onOpenFullScreen?: () => void;
 }
 
-const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact }) => {
+const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullScreen }) => {
   const [activeTab, setActiveTab] = useState<'preview' | 'source'>('preview');
   const [copied, setCopied] = useState(false);
 
@@ -122,7 +123,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact }) => {
           <span className="flex-shrink-0">{getTypeIcon()}</span>
           <h4 className="text-xs font-semibold text-lark-text-primary truncate" title={artifact.title}>{artifact.title}</h4>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           {needTabs && (
             <div className="flex bg-[#eef0f2] rounded-lg p-0.5 border border-lark-border/30">
               <button
@@ -158,6 +159,15 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact }) => {
               <Copy className="w-3.5 h-3.5" />
             )}
           </button>
+          {onOpenFullScreen && (
+            <button
+              onClick={onOpenFullScreen}
+              className="p-1.5 rounded-lg hover:bg-lark-bg-hover text-lark-text-secondary hover:text-lark-primary transition-all border border-lark-border shadow-sm bg-white"
+              title="放大全屏预览"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
       <div className="flex-1 overflow-hidden min-h-0 bg-[#fafbfb]">

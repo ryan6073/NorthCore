@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Artifact } from '@/types';
-import { X, Copy, FileCode, FileText, Globe } from 'lucide-react';
+import { X, Copy, FileCode, FileText, Globe, Maximize2 } from 'lucide-react';
 
 interface ArtifactFullScreenModalProps {
   open: boolean;
@@ -110,11 +110,11 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl w-full h-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-slate-50">
-          <div className="flex items-center gap-3">
-            <span className="text-blue-600">{getTypeIcon()}</span>
-            <h2 className="text-lg font-bold text-slate-800">{artifact.title}</h2>
+          <div className="flex items-center gap-3 min-w-0">
+            <span className="text-blue-600 flex-shrink-0">{getTypeIcon()}</span>
+            <h2 className="text-lg font-bold text-slate-800 truncate">{artifact.title}</h2>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             {needTabs && (
               <div className="flex bg-slate-200 rounded-md p-0.5">
                 <button
@@ -139,10 +139,11 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
                 </button>
               </div>
             )}
+            <div className="w-px h-6 bg-slate-300 mx-0.5" />
             <button
               onClick={handleCopy}
               className="p-2 rounded-md hover:bg-slate-200 transition-colors"
-              title="复制"
+              title="复制内容"
             >
               {copied ? (
                 <span className="text-xs text-green-600 font-medium">已复制</span>
@@ -153,6 +154,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
             <button
               onClick={onClose}
               className="p-2 rounded-md hover:bg-slate-200 transition-colors"
+              title="关闭"
             >
               <X className="w-5 h-5 text-slate-500" />
             </button>
