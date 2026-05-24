@@ -63,3 +63,15 @@ env/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# =========================
+# Trae
+# =========================
+.trae/
+
+# dependencies
+node_modules/
+
+# build output
+dist/
+build/
