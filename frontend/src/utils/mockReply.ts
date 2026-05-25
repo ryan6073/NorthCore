@@ -1,10 +1,11 @@
-import { Conversation, Agent, Message, Artifact } from '@/types';
+import { Conversation, Agent, Message, Artifact, ArtifactVersion } from '@/types';
 import { createId } from './id';
 import { getCurrentFullTime } from './time';
 
 interface MockReplyResult {
   messages: Message[];
   artifacts: Artifact[];
+  artifactVersions: ArtifactVersion[];
 }
 
 export function generateMockReply(params: {
@@ -24,7 +25,7 @@ function generateSingleAgentReply(params: {
   userContent: string;
 }): MockReplyResult {
   const targetAgent = params.agents.find(a => params.conversation.agentIds.includes(a.id));
-  if (!targetAgent) return { messages: [], artifacts: [] };
+  if (!targetAgent) return { messages: [], artifacts: [], artifactVersions: [] };
 
   const messages: Message[] = [
     {
@@ -58,14 +59,27 @@ function generateSingleAgentReply(params: {
       conversationId: params.conversation.id,
       title: 'GeneratedPage.tsx',
       type: 'code',
-      content: '// 自动生成的React组件',
-      createdAt: getCurrentFullTime()
+      currentVersionId: `${newArtifactId}-v1`,
+      latestVersion: 1,
+      createdAt: getCurrentFullTime(),
+      updatedAt: getCurrentFullTime()
     };
 
-    return { messages, artifacts: [newArtifact] };
+    const newArtifactVersion: ArtifactVersion = {
+      id: `${newArtifactId}-v1`,
+      artifactId: newArtifactId,
+      version: 1,
+      content: '// 自动生成的React组件',
+      createdBy: targetAgent.id,
+      createdByType: 'agent',
+      createdAt: getCurrentFullTime(),
+      size: 20
+    };
+
+    return { messages, artifacts: [newArtifact], artifactVersions: [newArtifactVersion] };
   }
 
-  return { messages, artifacts: [] };
+  return { messages, artifacts: [], artifactVersions: [] };
 }
 function generateGroupAgentReply(params: {
   conversation: Conversation;
@@ -191,18 +205,45 @@ function generateGroupAgentReply(params: {
       conversationId: params.conversation.id,
       title: 'AutoPage.tsx',
       type: 'code',
-      content: '// 自动生成的代码',
-      createdAt: getCurrentFullTime()
+      currentVersionId: `${pageArtifactId}-v1`,
+      latestVersion: 1,
+      createdAt: getCurrentFullTime(),
+      updatedAt: getCurrentFullTime()
     },
     {
       id: readmeArtifactId,
       conversationId: params.conversation.id,
       title: 'README.md',
       type: 'markdown',
-      content: '# 自动生成文档',
-      createdAt: getCurrentFullTime()
+      currentVersionId: `${readmeArtifactId}-v1`,
+      latestVersion: 1,
+      createdAt: getCurrentFullTime(),
+      updatedAt: getCurrentFullTime()
     }
   ];
 
-  return { messages, artifacts };
+  const artifactVersions: ArtifactVersion[] = [
+    {
+      id: `${pageArtifactId}-v1`,
+      artifactId: pageArtifactId,
+      version: 1,
+      content: '// 自动生成的代码',
+      createdBy: codeAgent ? codeAgent.id : 'agent',
+      createdByType: 'agent',
+      createdAt: getCurrentFullTime(),
+      size: 10
+    },
+    {
+      id: `${readmeArtifactId}-v1`,
+      artifactId: readmeArtifactId,
+      version: 1,
+      content: '# 自动生成文档',
+      createdBy: docAgent ? docAgent.id : 'agent',
+      createdByType: 'agent',
+      createdAt: getCurrentFullTime(),
+      size: 8
+    }
+  ];
+
+  return { messages, artifacts, artifactVersions };
 }

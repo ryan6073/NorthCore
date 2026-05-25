@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Artifact } from '@/types';
+import { Artifact, ArtifactVersion } from '@/types';
 import { Copy, FileCode, FileText, Globe, Maximize2, GitCompare, RefreshCw, Edit3, Save, X } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 import CodeDiffViewer from './CodeDiffViewer';
@@ -26,6 +26,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   const containerRef = useRef<HTMLDivElement>(null);
 
   const allArtifacts = useAgentHubStore(state => state.artifacts);
+  const artifactVersions = useAgentHubStore(state => state.artifactVersions);
   const loadArtifactContent = useAgentHubStore(state => state.loadArtifactContent);
   const saveEditedArtifact = useAgentHubStore(state => state.saveEditedArtifact);
   const setQuoteArtifactRef = useAgentHubStore(state => state.setQuoteArtifactRef);
@@ -47,20 +48,28 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     return allArtifacts.find(a => a.id === localArtifactId) || artifact;
   }, [localArtifactId, allArtifacts, artifact]);
 
-  // Group all versions of this artifact (same title, sorted by creation date ascending)
+  // Group all versions of this artifact (sorted by version number ascending)
   const versions = useMemo(() => {
     if (!currentArtifact) return [];
-    return allArtifacts
-      .filter(a => a.title === currentArtifact.title)
-      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-  }, [currentArtifact, allArtifacts]);
+    return (artifactVersions[currentArtifact.id] || [])
+      .sort((a, b) => a.version - b.version);
+  }, [currentArtifact, artifactVersions]);
+
+  // Active version that is currently selected or default currentVersionId
+  const currentVersion: ArtifactVersion | null = useMemo(() => {
+    if (!versions.length) return null;
+    if (selectedArtifactVersion !== null) {
+      return versions.find(v => v.version === selectedArtifactVersion) || versions[versions.length - 1];
+    }
+    return versions.find(v => v.id === currentArtifact?.currentVersionId) || versions[versions.length - 1];
+  }, [versions, selectedArtifactVersion, currentArtifact]);
 
   const currentVersionIndex = useMemo(() => {
-    if (!currentArtifact) return -1;
-    return versions.findIndex(v => v.id === currentArtifact.id);
-  }, [currentArtifact, versions]);
+    if (!currentVersion || !versions.length) return -1;
+    return versions.findIndex(v => v.id === currentVersion.id);
+  }, [currentVersion, versions]);
 
-  const previousArtifact = useMemo(() => {
+  const previousVersion: ArtifactVersion | null = useMemo(() => {
     if (currentVersionIndex > 0) {
       return versions[currentVersionIndex - 1];
     }
@@ -69,31 +78,22 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
   // Sync when an artifact reference version is selected from message bubble click
   useEffect(() => {
-    if (selectedArtifactId && selectedArtifactVersion !== null && currentArtifact) {
-      const activeVersions = allArtifacts
-        .filter(a => a.title === currentArtifact.title)
-        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-      const targetArt = activeVersions[selectedArtifactVersion - 1];
-      if (targetArt) {
-        setLocalArtifactId(targetArt.id);
+    if (selectedArtifactId) {
+      setLocalArtifactId(selectedArtifactId);
+      if (selectedArtifactVersion !== null) {
         setActiveTab('source'); // Auto-switch to source code view to show highlighted lines
       }
     }
-  }, [selectedArtifactId, selectedArtifactVersion, allArtifacts, currentArtifact?.title]);
+  }, [selectedArtifactId, selectedArtifactVersion]);
 
   // Proactively load current artifact content if missing
   useEffect(() => {
-    if (currentArtifact && !currentArtifact.content) {
+    if (currentArtifact && versions.length === 0) {
       loadArtifactContent(currentArtifact.id);
     }
-  }, [currentArtifact, loadArtifactContent]);
+  }, [currentArtifact, versions.length, loadArtifactContent]);
 
-  // Proactively load previous version's content when in diff view
-  useEffect(() => {
-    if (activeTab === 'diff' && previousArtifact && !previousArtifact.content) {
-      loadArtifactContent(previousArtifact.id);
-    }
-  }, [activeTab, previousArtifact, loadArtifactContent]);
+
 
   // Reset editing mode when selected artifact changes
   useEffect(() => {
@@ -116,7 +116,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
   const handleCopy = async () => {
     if (!currentArtifact) return;
-    await navigator.clipboard.writeText(currentArtifact.content);
+    if (currentVersion) await navigator.clipboard.writeText(currentVersion.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -129,14 +129,16 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
   const handleQuoteSelection = () => {
     if (!selectionBox || !currentArtifact) return;
-    setQuoteArtifactRef({
-      artifactId: currentArtifact.id,
-      artifactTitle: currentArtifact.title,
-      version: currentVersionIndex + 1,
-      quotedText: selectionBox.text,
-      startLine: selectionBox.startLine,
-      endLine: selectionBox.endLine,
-    });
+    if (currentVersion) {
+      setQuoteArtifactRef({
+        artifactId: currentArtifact.id,
+        artifactTitle: currentArtifact.title,
+        version: currentVersion.version,
+        quotedText: selectionBox.text,
+        startLine: selectionBox.startLine,
+        endLine: selectionBox.endLine,
+      });
+    }
     // Clear browser selection
     window.getSelection()?.removeAllRanges();
     setSelectionBox(null);
@@ -237,9 +239,9 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   };
 
   const htmlSrcDoc = useMemo(() => {
-    if (!currentArtifact || currentArtifact.type !== 'html') return undefined;
-    return currentArtifact.content;
-  }, [currentArtifact]);
+    if (!currentArtifact || currentArtifact.type !== 'html' || !currentVersion) return undefined;
+    return currentVersion.content;
+  }, [currentArtifact, currentVersion]);
 
   if (!currentArtifact) {
     return (
@@ -253,19 +255,19 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     if (isEditing) {
       return (
         <CodeEditorContainer
-          initialValue={currentArtifact.content || ''}
+          initialValue={currentVersion?.content || ''}
           onChange={(val) => setEditedContent(val)}
         />
       );
     }
 
     if (activeTab === 'diff') {
-      const oldValue = previousArtifact?.content || '';
-      const newValue = currentArtifact.content || '';
+      const oldValue = previousVersion?.content || '';
+      const newValue = currentVersion?.content || '';
       return (
         <div className="h-full w-full overflow-hidden p-3 flex flex-col bg-slate-950">
           <div className="flex items-center justify-between px-2 pb-2 flex-shrink-0 text-xs text-slate-400">
-            <span>对比版本: {previousArtifact ? `v${currentVersionIndex}` : '无'} ➔ v{currentVersionIndex + 1}</span>
+            <span>对比版本: {previousVersion ? `v${previousVersion.version}` : '无'} ➔ v{currentVersion?.version || 1}</span>
             <button
               onClick={() => setSplitView(!splitView)}
               className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
@@ -287,12 +289,12 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
           onMouseUp={handleContainerMouseUp}
           className="h-full w-full overflow-y-auto p-4 bg-slate-950 relative"
         >
-          {!currentArtifact.content ? (
+          {!currentVersion ? (
             <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
               <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
             </div>
           ) : (
-            renderCodeLines(currentArtifact.content)
+            renderCodeLines(currentVersion.content)
           )}
         </div>
       );
@@ -302,13 +304,13 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       if (activeTab === 'preview') {
         return (
           <div className="h-full w-full overflow-y-auto p-5 bg-[#fafbfb]">
-            {!currentArtifact.content ? (
+            {!currentVersion ? (
               <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
                 <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
               </div>
             ) : (
               <article className="prose prose-sm max-w-none text-lark-text-primary bg-white border border-lark-border p-6 rounded-2xl shadow-sm leading-relaxed">
-                <ReactMarkdown>{currentArtifact.content}</ReactMarkdown>
+                <ReactMarkdown>{currentVersion.content}</ReactMarkdown>
               </article>
             )}
           </div>
@@ -320,12 +322,12 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
           onMouseUp={handleContainerMouseUp}
           className="h-full w-full overflow-y-auto p-4 bg-slate-950 relative"
         >
-          {!currentArtifact.content ? (
+          {!currentVersion ? (
             <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
               <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
             </div>
           ) : (
-            renderCodeLines(currentArtifact.content)
+            renderCodeLines(currentVersion.content)
           )}
         </div>
       );
@@ -348,7 +350,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
             </div>
             {/* Browser Content */}
             <div className="flex-1 min-h-0 border-l border-r border-b border-slate-200 rounded-b-xl bg-white overflow-hidden shadow-sm">
-              {!currentArtifact.content ? (
+              {!currentVersion ? (
                 <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
                   <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
                 </div>
@@ -370,12 +372,12 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
           onMouseUp={handleContainerMouseUp}
           className="h-full w-full overflow-y-auto p-4 bg-slate-950 relative"
         >
-          {!currentArtifact.content ? (
+          {!currentVersion ? (
             <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
               <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
             </div>
           ) : (
-            renderCodeLines(currentArtifact.content)
+            renderCodeLines(currentVersion.content)
           )}
         </div>
       );
@@ -383,12 +385,12 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
     return (
       <div className="h-full w-full overflow-y-auto p-4 bg-slate-950">
-        {!currentArtifact.content ? (
+        {!currentVersion ? (
           <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
             <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
           </div>
         ) : (
-          renderCodeLines(currentArtifact.content)
+          renderCodeLines(currentVersion.content)
         )}
       </div>
     );
@@ -402,7 +404,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   };
 
   const needTabs = currentArtifact.type !== undefined && ['code', 'markdown', 'html'].includes(currentArtifact.type);
-  const isEditable = currentArtifact.type === 'code' || currentArtifact.type === 'markdown';
+  const isEditable = true;
 
   return (
     <div className="h-full w-full flex flex-col overflow-hidden text-lark-text-primary bg-white relative">
@@ -412,17 +414,21 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
           <h4 className="text-xs font-semibold text-lark-text-primary truncate max-w-[120px]" title={currentArtifact.title}>{currentArtifact.title}</h4>
           
           {/* Version Dropdown Select */}
-          {!isEditing && versions.length > 1 && (
+          {!isEditing && versions.length > 1 && currentVersion && (
             <select
-              value={currentArtifact.id}
-              onChange={(e) => setLocalArtifactId(e.target.value)}
+              value={currentVersion.id}
+              onChange={(e) => {
+                const selectedVer = versions.find(v => v.id === e.target.value);
+                if (selectedVer) {
+                  useAgentHubStore.getState().setSelectedArtifactVersion(selectedVer.version);
+                }
+              }}
               className="bg-[#f2f4f6] border border-lark-border/60 text-lark-text-secondary text-[10px] rounded px-1.5 py-0.5 outline-none font-medium focus:ring-1 focus:ring-lark-primary cursor-pointer hover:bg-lark-bg-hover"
             >
-              {versions.slice().reverse().map((v, idx) => {
-                const verNum = versions.length - idx;
+              {versions.slice().reverse().map((v) => {
                 return (
                   <option key={v.id} value={v.id}>
-                    v{verNum} {verNum === versions.length ? '(最新)' : ''}
+                    v{v.version} {v.version === currentArtifact.latestVersion ? '(最新)' : ''}
                   </option>
                 );
               })}
@@ -489,7 +495,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
             {isEditable && (
               <button
                 onClick={() => {
-                  setEditedContent(currentArtifact.content || '');
+                  setEditedContent(currentVersion?.content || '');
                   setIsEditing(true);
                 }}
                 className="p-1.5 rounded-lg hover:bg-lark-bg-hover text-lark-text-secondary hover:text-lark-primary transition-all border border-lark-border shadow-sm bg-white flex items-center gap-1 active:scale-95"

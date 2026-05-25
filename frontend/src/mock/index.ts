@@ -1,4 +1,4 @@
-import { Agent, Conversation, Message, Artifact } from '@/types';
+import { Agent, Conversation, Message, Artifact, ArtifactVersion } from '@/types';
 
 export const mockAgents: Agent[] = [
   {
@@ -362,7 +362,40 @@ export const mockArtifacts: Artifact[] = [
     title: 'LoginPage.tsx',
     type: 'code',
     description: '登录页面组件',
-    size: 1024,
+    currentVersionId: 'ver-login-page-1',
+    latestVersion: 1,
+    createdAt: '2026-05-22 14:30',
+    updatedAt: '2026-05-22 14:30'
+  },
+  {
+    id: 'art-home-page',
+    conversationId: 'conv-group-website',
+    title: 'HomePage.tsx',
+    type: 'code',
+    description: '官网首页组件',
+    currentVersionId: 'ver-home-page-1',
+    latestVersion: 1,
+    createdAt: '2026-05-22 15:15',
+    updatedAt: '2026-05-22 15:15'
+  },
+  {
+    id: 'art-readme',
+    conversationId: 'conv-group-website',
+    title: 'index.html',
+    type: 'html',
+    description: '交互预览页面',
+    currentVersionId: 'ver-readme-1',
+    latestVersion: 1,
+    createdAt: '2026-05-22 15:20',
+    updatedAt: '2026-05-22 15:20'
+  }
+];
+
+export const mockArtifactVersions: ArtifactVersion[] = [
+  {
+    id: 'ver-login-page-1',
+    artifactId: 'art-login-page',
+    version: 1,
     content: `import React, { useState } from 'react';
 
 const LoginPage: React.FC = () => {
@@ -412,15 +445,15 @@ const LoginPage: React.FC = () => {
 };
 
 export default LoginPage;`,
+    size: 1024,
+    createdBy: 'agent-claude-code',
+    createdByType: 'agent',
     createdAt: '2026-05-22 14:30'
   },
   {
-    id: 'art-home-page',
-    conversationId: 'conv-group-website',
-    title: 'HomePage.tsx',
-    type: 'code',
-    description: '官网首页组件',
-    size: 2048,
+    id: 'ver-home-page-1',
+    artifactId: 'art-home-page',
+    version: 1,
     content: `import React from 'react';
 
 const HomePage: React.FC = () => {
@@ -445,15 +478,15 @@ const HomePage: React.FC = () => {
 };
 
 export default HomePage;`,
+    size: 2048,
+    createdBy: 'agent-codex',
+    createdByType: 'agent',
     createdAt: '2026-05-22 15:15'
   },
   {
-    id: 'art-readme',
-    conversationId: 'conv-group-website',
-    title: 'index.html',
-    type: 'html',
-    description: '交互预览页面',
-    size: 5120,
+    id: 'ver-readme-1',
+    artifactId: 'art-readme',
+    version: 1,
     content: `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -586,6 +619,9 @@ export default HomePage;`,
   </script>
 </body>
 </html>`,
+    size: 5120,
+    createdBy: 'agent-doc',
+    createdByType: 'agent',
     createdAt: '2026-05-22 15:20'
   }
 ];

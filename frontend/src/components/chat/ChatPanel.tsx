@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Conversation, Message, Agent, Artifact, MessageAttachment } from '@/types';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Conversation, Message, Agent, Artifact, MessageAttachment, AgentMentionItem } from '@/types';
 import MessageBubble from './MessageBubble';
 import { Send, Paperclip, Smile, GripVertical, X, FileCode, Scissors } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
@@ -86,9 +86,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const startHeight = useRef(0);
 
   const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([]);
-  const lastNotifiedAgentIdRef = useRef<string | null>(null);
 
-  const notifyMentionAgent = useAgentHubStore(state => state.notifyMentionAgent);
+  const getMentionAgents = useAgentHubStore(state => state.getMentionAgents);
   const compressContext = useAgentHubStore(state => state.compressContext);
 
   const replyContext = useAgentHubStore(state => state.replyContext);
@@ -111,6 +110,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const [showMentionPopup, setShowMentionPopup] = useState(false);
   const [mentionSearch, setMentionSearch] = useState('');
   const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionCandidates, setMentionCandidates] = useState<AgentMentionItem[]>([]);
+  const lastSearchKeyword = useRef('$$__INITIAL__$$');
 
   useEffect(() => {
     if (conversation) {
@@ -126,12 +127,19 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     setIsEditingTitle(false);
   };
 
-  const filteredMentionAgents = useMemo(() => {
-    return agents.filter(a => 
-      a.id !== 'agent-orchestrator' &&
-      a.name.toLowerCase().includes(mentionSearch.toLowerCase())
-    );
-  }, [agents, mentionSearch]);
+  useEffect(() => {
+    if (!showMentionPopup) {
+      lastSearchKeyword.current = '$$__INITIAL__$$';
+      return;
+    }
+    if (lastSearchKeyword.current === mentionSearch) return;
+    lastSearchKeyword.current = mentionSearch;
+
+    (async () => {
+      const results = await getMentionAgents(mentionSearch || undefined);
+      setMentionCandidates(results);
+    })();
+  }, [showMentionPopup, mentionSearch, getMentionAgents]);
 
   const selectMention = (agentName: string) => {
     const textarea = textareaRef.current;
@@ -141,21 +149,13 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     const lastAtIdx = text.substring(0, cursor).lastIndexOf('@');
     if (lastAtIdx === -1) return;
 
-    const targetAgent = agents.find(a => a.name === agentName);
-    if (targetAgent && conversation) {
-      // 选中Agent时，立即向后端发送通知
-      if (lastNotifiedAgentIdRef.current !== targetAgent.id) {
-        lastNotifiedAgentIdRef.current = targetAgent.id;
-        notifyMentionAgent(targetAgent.id);
-      }
-    }
-
     const before = text.substring(0, lastAtIdx);
     const after = text.substring(cursor);
     const newValue = `${before}@${agentName} ${after}`;
 
     setInputValue(newValue);
     setShowMentionPopup(false);
+    lastSearchKeyword.current = '$$__INITIAL__$$';
 
     setTimeout(() => {
       textarea.focus();
@@ -167,21 +167,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
     setInputValue(value);
-
-    // 检查当前文本里最后一个 @ 后面是否还有合法的 Agent 引用
-    const matches = [...value.matchAll(/@([^\s]+)/g)];
-    if (matches.length === 0) {
-      // 没有任何 @ 了，重置通知标记
-      lastNotifiedAgentIdRef.current = null;
-    } else {
-      // 检查最后一个 match 的名字是否匹配当前 agents 中的任何一个
-      const lastName = matches[matches.length - 1][1];
-      const foundAgent = agents.find(a => a.name === lastName);
-      if (!foundAgent) {
-        // 不再是已选中的 Agent 名字，重置标记
-        lastNotifiedAgentIdRef.current = null;
-      }
-    }
 
     const cursor = e.target.selectionStart;
     const textBeforeCursor = value.substring(0, cursor);
@@ -250,20 +235,20 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (showMentionPopup && filteredMentionAgents.length > 0) {
+    if (showMentionPopup && mentionCandidates.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setMentionIndex(prev => (prev + 1) % filteredMentionAgents.length);
+        setMentionIndex(prev => (prev + 1) % mentionCandidates.length);
         return;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setMentionIndex(prev => (prev - 1 + filteredMentionAgents.length) % filteredMentionAgents.length);
+        setMentionIndex(prev => (prev - 1 + mentionCandidates.length) % mentionCandidates.length);
         return;
       }
       if (e.key === 'Enter') {
         e.preventDefault();
-        selectMention(filteredMentionAgents[mentionIndex].name);
+        selectMention(mentionCandidates[mentionIndex].name);
         return;
       }
       if (e.key === 'Escape') {
@@ -366,7 +351,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
 
   return (
     <div className="flex-grow h-full flex flex-col bg-white relative z-0">
-      {/* 最高层级弹窗区域 - 解决覆盖问题 */}
       {(showEmojiPicker || showMentionPopup) && (
         <div className="fixed inset-0 z-50 bg-transparent" onClick={() => {
           setShowEmojiPicker(false);
@@ -374,7 +358,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         }} />
       )}
 
-      {/* 表情选择器 */}
       {showEmojiPicker && (
         <div className="absolute bottom-[200px] left-4 z-[60] mb-2 p-3 bg-white border border-lark-border rounded-xl shadow-2xl w-72 max-h-52 overflow-y-auto select-none animate-scale-in">
           <div className="text-[10px] text-lark-text-tertiary mb-1.5 font-semibold">常用表情</div>
@@ -393,11 +376,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         </div>
       )}
 
-      {/* @提及选择器 */}
-      {showMentionPopup && filteredMentionAgents.length > 0 && (
+      {showMentionPopup && mentionCandidates.length > 0 && (
         <div className="absolute bottom-[200px] left-4 z-[60] bg-white border border-lark-border rounded-xl shadow-2xl w-60 max-h-52 overflow-y-auto p-1.5 animate-scale-in">
           <div className="text-[10px] text-lark-text-tertiary px-2 py-1 font-semibold">选择要 @ 的 Agent</div>
-          {filteredMentionAgents.map((agent, idx) => (
+          {mentionCandidates.map((agent, idx) => (
             <button
               key={agent.id}
               type="button"
@@ -415,7 +397,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         </div>
       )}
 
-      {/* Header */}
       <div className="px-5 py-3.5 border-b border-lark-border bg-white flex items-center justify-between flex-shrink-0 z-10">
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           {isEditingTitle ? (
@@ -476,7 +457,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
             </span>
           )}
         </div>
-        {/* 右侧操作按钮区域 */}
         <div className="flex items-center gap-1.5 flex-shrink-0">
           {conversation && (
             <button
@@ -491,7 +471,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         </div>
       </div>
       
-      {/* Message Area */}
       <div className="flex-grow overflow-y-auto px-6 py-5 bg-[#fafbfb] min-h-0 space-y-4 z-10">
         {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center p-8 max-w-sm mx-auto">
@@ -509,12 +488,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         <div ref={messagesEndRef} />
       </div>
       
-      {/* Input Area with Resizable Handle */}
       <div 
         className="flex-shrink-0 bg-white" 
         style={{ height: inputAreaHeight }}
       >
-        {/* Drag Resize Handle */}
         <div
           onMouseDown={handleDragStart}
           className="h-[6px] bg-transparent hover:bg-slate-100/80 cursor-ns-resize transition-colors flex items-center justify-center group relative z-10 before:content-[''] before:absolute before:-top-2 before:bottom-2 before:left-0 before:right-0"
@@ -527,7 +504,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         <div className="flex-1 p-4 pt-1 border-t border-lark-border bg-white h-full flex flex-col min-h-0 z-20">
           <div className="border border-lark-border hover:border-lark-border/80 focus-within:border-lark-primary focus-within:ring-2 focus-within:ring-lark-primary/10 rounded-xl bg-white transition-all flex flex-col relative z-30 flex-1 min-h-0 overflow-hidden">
             
-            {/* 1. Reply Context Bar */}
             {replyContext && (
               <div className="flex items-center justify-between px-3.5 py-1.5 bg-slate-50 border-b border-lark-border/40 text-[11px] text-slate-500 animate-slide-up flex-shrink-0 rounded-t-xl">
                 <span className="truncate flex items-center gap-1 min-w-0">
@@ -544,7 +520,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
               </div>
             )}
 
-            {/* 2. Artifact Reference Bar */}
             {quoteArtifactRef && (
               <div className="flex items-center justify-between px-3.5 py-1.5 bg-slate-50 border-b border-lark-border/40 text-[11px] text-slate-500 animate-slide-up flex-shrink-0 rounded-t-xl">
                 <span className="truncate flex items-center gap-2 min-w-0">
@@ -567,7 +542,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
               </div>
             )}
 
-            {/* 3. Pending Attachments Bar */}
             {pendingAttachments.length > 0 && (
               <div className="flex flex-wrap gap-1.5 px-3.5 py-1.5 bg-slate-50/50 border-b border-lark-border/40 flex-shrink-0 select-none max-h-16 overflow-y-auto">
                 {pendingAttachments.map((attach) => (
@@ -585,7 +559,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
               </div>
             )}
 
-            {/* Hidden File Input */}
             <input 
               type="file" 
               ref={fileInputRef} 
@@ -594,7 +567,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
               className="hidden" 
             />
 
-            {/* Input Area Toolbar (Top of the Input Box) */}
             <div className={`flex items-center gap-1.5 px-3 py-1.5 bg-slate-50/50 border-b border-lark-border/30 relative flex-shrink-0 ${hasHeader ? '' : 'rounded-t-xl'}`}>
               <button 
                 type="button"
@@ -620,14 +592,13 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
               <span className="text-[10px] text-lark-text-tertiary">Shift + Enter 换行</span>
             </div>
 
-            {/* Text Area - 发送按钮在右侧，横向排列防止挤压 */}
             <div className="flex-1 p-2 bg-transparent flex flex-row items-end gap-2 min-h-0 overflow-hidden">
               <textarea
                 ref={textareaRef}
                 value={inputValue}
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
-                placeholder="输入消息，发送任务..."
+                placeholder="输入消息，输入 @ 唤起 Agent 选择器..."
                 className="w-full px-2 py-1.5 text-sm outline-none resize-none text-lark-text-primary placeholder:text-lark-text-tertiary bg-transparent flex-1 h-full min-h-[36px]"
               />
               <button

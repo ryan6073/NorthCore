@@ -6,7 +6,9 @@ import type {
   BaseApiResponse,
   PaginatedData,
   ConversationMode,
-  CompressContextResponse,
+  CompressContextResult,
+  MemoryItem,
+  PinItem,
 } from '@/types';
 
 interface GetConversationListParams {
@@ -43,8 +45,41 @@ export async function updateConversation(
 
 export async function compressContext(
   conversationId: string
-): Promise<BaseApiResponse<CompressContextResponse>> {
-  return await http.post(`/conversations/${conversationId}/compress`);
+): Promise<BaseApiResponse<CompressContextResult>> {
+  return await http.post(`/conversations/${conversationId}/context/compress`, {});
+}
+
+export async function getMemories(
+  conversationId: string
+): Promise<BaseApiResponse<MemoryItem[]>> {
+  return await http.get(`/conversations/${conversationId}/memories`);
+}
+
+export async function deleteMemory(
+  conversationId: string,
+  memoryId: string
+): Promise<BaseApiResponse<boolean>> {
+  return await http.delete(`/conversations/${conversationId}/memories/${memoryId}`);
+}
+
+export async function getPins(
+  conversationId: string
+): Promise<BaseApiResponse<PinItem[]>> {
+  return await http.get(`/conversations/${conversationId}/pins`);
+}
+
+export async function pinMessage(
+  conversationId: string,
+  messageId: string
+): Promise<BaseApiResponse<PinItem>> {
+  return await http.post(`/conversations/${conversationId}/messages/${messageId}/pin`);
+}
+
+export async function unpinMessage(
+  conversationId: string,
+  messageId: string
+): Promise<BaseApiResponse<boolean>> {
+  return await http.delete(`/conversations/${conversationId}/messages/${messageId}/pin`);
 }
 
 export async function deleteConversation(
@@ -59,6 +94,11 @@ const conversationService = {
   getConversationDetail,
   updateConversation,
   compressContext,
+  getMemories,
+  deleteMemory,
+  getPins,
+  pinMessage,
+  unpinMessage,
   deleteConversation,
 };
 

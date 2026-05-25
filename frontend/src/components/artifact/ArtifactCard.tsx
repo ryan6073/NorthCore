@@ -1,6 +1,7 @@
 import React from 'react';
 import { Artifact } from '@/types';
 import { FileCode, FileText, Globe, Maximize2, Navigation } from 'lucide-react';
+import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface ArtifactCardProps {
   artifact: Artifact;
@@ -13,6 +14,9 @@ const ArtifactCard: React.FC<ArtifactCardProps> = ({
   onJumpToMessage,
   onFullScreenPreview
 }) => {
+  const versions = useAgentHubStore(state => state.artifactVersions[artifact.id] || []);
+  const currentVersion = versions.find(v => v.id === artifact.currentVersionId) || versions[versions.length - 1];
+  const size = currentVersion?.size;
   const getTypeIcon = () => {
     if (artifact.type === 'code') return <FileCode className="w-5 h-5 text-emerald-600" />;
     if (artifact.type === 'markdown') return <FileText className="w-5 h-5 text-blue-600" />;
@@ -49,10 +53,10 @@ const ArtifactCard: React.FC<ArtifactCardProps> = ({
           </h4>
           <p className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1.5 font-medium">
             <span className="capitalize">{artifact.type}</span>
-            {artifact.size && (
+            {size && (
               <>
                 <span className="w-1 h-1 rounded-full bg-slate-300" />
-                <span>{formatSize(artifact.size)}</span>
+                <span>{formatSize(size)}</span>
               </>
             )}
           </p>

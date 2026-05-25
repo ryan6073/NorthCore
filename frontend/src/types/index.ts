@@ -132,21 +132,42 @@ export interface Message {
   isPinned?: boolean;
 }
 
-export interface ArtifactMeta {
+export interface Artifact {
   id: string;
   conversationId: string;
   title: string;
   type: ArtifactType;
   description?: string;
+  tags?: string[];
+  currentVersionId: string;
+  latestVersion: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ArtifactVersion {
+  id: string;
+  artifactId: string;
+  version: number;
+  content: string;
+  language?: string;
   size?: number;
+  changeSummary?: string;
+  createdBy: string;
+  createdByType:
+    | 'user'
+    | 'agent'
+    | 'orchestrator';
+  parentVersionId?: string;
+  metadata?: Record<string, any>;
   createdAt: string;
 }
 
-export interface Artifact extends ArtifactMeta {
-  content: string;
+export interface ArtifactDetail extends Artifact {  
+  currentVersion: ArtifactVersion;  
+  content: string; // 兼容旧前端，等于 currentVersion.content  
+  size?: number;   // 兼容旧前端，等于 currentVersion.size 
 }
-
-export type ArtifactDetail = Artifact;
 
 export interface CreateConversationPayload {
   title: string;
@@ -159,30 +180,68 @@ export interface UpdateConversationPayload {
   agentIds?: string[];
 }
 
+export type MemoryCategory = 'preference' | 'project' | 'profile' | 'constraint';
+
+export interface AgentMentionItem {
+  id: string;
+  name: string;
+  avatar: string;
+  description: string;
+  tags: string[];
+  status: 'online' | 'offline';
+}
+
+export interface ConversationSummary {
+  id: string;
+  conversationId: string;
+  summary: string;
+  coveredUntilMessageId: string;
+  coveredMessageCount: number;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CompressContextResult {
+  summary: ConversationSummary;
+  compressed: boolean;
+}
+
+export interface MemoryItem {
+  id: string;
+  conversationId: string;
+  category: MemoryCategory;
+  content: string;
+  confidence: number;
+  sourceMessageId: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PinItem {
+  id: string;
+  conversationId: string;
+  messageId: string;
+  createdAt: string;
+  message: Message;
+}
+
+export interface GetMentionAgentsRequest {
+  keyword?: string;
+  query?: string;
+}
+
 export interface SendMessageRequest {
   content: string;
   targetAgentId?: string;
-}
-
-export interface NotifyMentionAgentRequest {
-  agentId: string;
-}
-
-export interface NotifyMentionAgentResponse {
-  agentId: string;
-  status: 'preparing';
-}
-
-export interface CompressContextResponse {
-  originalMessageCount: number;
-  compressedMessageCount: number;
-  summary: string;
+  targetAgentID?: string;
 }
 
 export interface SendMessageResponse {
   userMessage: Message;
   agentMessages: Message[];
-  artifacts: ArtifactMeta[];
+  artifacts: Artifact[];
 }
 
 export interface BaseApiResponse<T = any> {
@@ -284,7 +343,7 @@ export interface ArtifactCreatedEvent {
   type: 'artifact.created';
   eventId: string;
   data: {
-    artifact: ArtifactMeta;
+    artifact: Artifact;
   };
 }
 
