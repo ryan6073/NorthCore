@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Artifact } from '@/types';
-import { X, Copy, FileCode, FileText, Globe, Maximize2 } from 'lucide-react';
+import { X, Copy, FileCode, FileText, Globe } from 'lucide-react';
 
 interface ArtifactFullScreenModalProps {
   open: boolean;
@@ -143,7 +143,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
             <button
               onClick={handleCopy}
               className="p-2 rounded-md hover:bg-slate-200 transition-colors"
-              title="复制内容"
+              title="复制"
             >
               {copied ? (
                 <span className="text-xs text-green-600 font-medium">已复制</span>

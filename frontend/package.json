@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@types/highlight.js": "^10.1.0",
+    "axios": "^1.16.1",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.300.0",
     "react": "^18.2.0",

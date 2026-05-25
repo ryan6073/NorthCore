@@ -9,6 +9,7 @@ export const mockAgents: Agent[] = [
     tags: ['任务拆解', '调度', '汇总'],
     status: 'online',
     category: 'orchestrator',
+    provider: 'mock',
     enabled: true,
     lastUsedAt: '2026-05-22 15:30',
     systemPrompt: '你是 Orchestrator，负责理解用户需求，智能拆解复杂任务，调度不同Agent协同工作，汇总所有输出结果。',
@@ -42,6 +43,7 @@ export const mockAgents: Agent[] = [
     tags: ['代码生成', '代码修改', '工程理解'],
     status: 'online',
     category: 'coding',
+    provider: 'claude-code',
     enabled: true,
     lastUsedAt: '2026-05-22 14:45',
     systemPrompt: '你是 Claude Code，专注于高质量代码生成、重构和工程理解。',
@@ -74,6 +76,7 @@ export const mockAgents: Agent[] = [
     tags: ['Bug修复', '代码理解', '云端任务'],
     status: 'online',
     category: 'coding',
+    provider: 'codex',
     enabled: true,
     lastUsedAt: '2026-05-21 10:20',
     systemPrompt: '你是 Codex，擅长快速修复代码Bug和处理云端代码任务。',
@@ -105,6 +108,7 @@ export const mockAgents: Agent[] = [
     tags: ['本地代码Agent', '文件修改'],
     status: 'offline',
     category: 'coding',
+    provider: 'opencode',
     enabled: true,
     lastUsedAt: '2026-05-20 09:15',
     systemPrompt: '你是 OpenCode，运行在本地，专注于本地项目文件修改与代码理解。',
@@ -135,6 +139,7 @@ export const mockAgents: Agent[] = [
     tags: ['代码审查', '质量检查'],
     status: 'mock',
     category: 'review',
+    provider: 'mock',
     enabled: true,
     lastUsedAt: '2026-05-22 15:00',
     systemPrompt: '你是 ReviewAgent，负责严格审查代码质量、安全性和最佳实践。',
@@ -163,6 +168,7 @@ export const mockAgents: Agent[] = [
     tags: ['README', '文档生成'],
     status: 'mock',
     category: 'document',
+    provider: 'mock',
     enabled: true,
     lastUsedAt: '2026-05-22 15:10',
     systemPrompt: '你是 DocAgent，擅长编写清晰专业的项目文档、README和使用说明。',
@@ -191,6 +197,7 @@ export const mockAgents: Agent[] = [
     tags: ['UI设计', '交互设计'],
     status: 'mock',
     category: 'design',
+    provider: 'mock',
     enabled: true,
     lastUsedAt: '2026-05-22 14:55',
     systemPrompt: '你是 DesignAgent，专注于现代美观的UI界面设计和优秀用户体验。',
@@ -218,7 +225,8 @@ export const mockConversations: Conversation[] = [
     mode: 'single',
     agentIds: ['agent-claude-code'],
     lastMessage: '已生成LoginPage.tsx',
-    updatedAt: '2026-05-22 14:30'
+    updatedAt: '2026-05-22 14:30',
+    createdAt: '2026-05-22 14:00'
   },
   {
     id: 'conv-group-website',
@@ -226,7 +234,8 @@ export const mockConversations: Conversation[] = [
     mode: 'group',
     agentIds: ['agent-orchestrator', 'agent-design', 'agent-codex', 'agent-review', 'agent-doc'],
     lastMessage: '所有产物已生成完毕',
-    updatedAt: '2026-05-22 15:20'
+    updatedAt: '2026-05-22 15:20',
+    createdAt: '2026-05-22 14:50'
   }
 ];
 
@@ -358,7 +367,7 @@ export default LoginPage;`,
     senderName: 'DesignAgent',
     role: 'agent',
     type: 'text',
-    content: '设计方案确定：顶部导航、Hero区域、功能特性卡片、底部页脚，整体采用蓝紫色渐变配色。',
+    content: '页面建议包含任务输入框、任务列表、完成状态和清空按钮。',
     createdAt: '2026-05-22 15:13'
   },
   {
@@ -434,6 +443,8 @@ export const mockArtifacts: Artifact[] = [
     conversationId: 'conv-single-login',
     title: 'LoginPage.tsx',
     type: 'code',
+    description: '登录页面组件',
+    size: 1024,
     content: `import React, { useState } from 'react';
 
 const LoginPage: React.FC = () => {
@@ -490,6 +501,8 @@ export default LoginPage;`,
     conversationId: 'conv-group-website',
     title: 'HomePage.tsx',
     type: 'code',
+    description: '官网首页组件',
+    size: 2048,
     content: `import React from 'react';
 
 const HomePage: React.FC = () => {
@@ -521,6 +534,8 @@ export default HomePage;`,
     conversationId: 'conv-group-website',
     title: 'index.html',
     type: 'html',
+    description: '交互预览页面',
+    size: 5120,
     content: `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -528,252 +543,36 @@ export default HomePage;`,
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AgentHub 交互预览</title>
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      min-height: 100vh;
-      background: linear-gradient(135deg, #eff6ff 0%, #eef2ff 100%);
-      color: #1e293b;
-    }
-
-    nav {
-      height: 64px;
-      background: white;
-      padding: 0 32px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
-    }
-
-    nav h1 {
-      color: #2563eb;
-      font-size: 22px;
-      font-weight: 800;
-    }
-
-    .status {
-      font-size: 14px;
-      color: #64748b;
-    }
-
-    main {
-      padding: 40px 24px;
-      max-width: 1100px;
-      margin: 0 auto;
-    }
-
-    .hero {
-      text-align: center;
-      margin-bottom: 36px;
-    }
-
-    .hero h2 {
-      font-size: 38px;
-      font-weight: 900;
-      margin-bottom: 14px;
-    }
-
-    .hero p {
-      font-size: 17px;
-      color: #475569;
-      line-height: 1.7;
-    }
-
-    .dashboard {
-      display: grid;
-      grid-template-columns: 260px 1fr;
-      gap: 24px;
-      align-items: start;
-    }
-
-    .panel {
-      background: white;
-      border-radius: 18px;
-      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
-      border: 1px solid #e2e8f0;
-      overflow: hidden;
-    }
-
-    .panel-header {
-      padding: 18px 20px;
-      border-bottom: 1px solid #e2e8f0;
-      font-weight: 800;
-    }
-
-    .agent-list {
-      padding: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .agent {
-      padding: 12px;
-      border-radius: 14px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      cursor: pointer;
-      transition: 0.2s;
-      border: 1px solid transparent;
-    }
-
-    .agent:hover {
-      background: #f8fafc;
-    }
-
-    .agent.active {
-      background: #eff6ff;
-      border-color: #93c5fd;
-    }
-
-    .avatar {
-      width: 38px;
-      height: 38px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: white;
-      font-weight: 800;
-      flex-shrink: 0;
-    }
-
-    .agent-info strong {
-      display: block;
-      font-size: 14px;
-    }
-
-    .agent-info span {
-      display: block;
-      margin-top: 3px;
-      font-size: 12px;
-      color: #64748b;
-    }
-
-    .workspace {
-      min-height: 480px;
-      display: flex;
-      flex-direction: column;
-    }
-
-    .messages {
-      flex: 1;
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-      background: #f8fafc;
-    }
-
-    .message {
-      max-width: 75%;
-      padding: 12px 14px;
-      border-radius: 14px;
-      line-height: 1.6;
-      font-size: 14px;
-      animation: fadeIn 0.25s ease;
-    }
-
-    .message.user {
-      align-self: flex-end;
-      background: #2563eb;
-      color: white;
-      border-bottom-right-radius: 4px;
-    }
-
-    .message.agent {
-      align-self: flex-start;
-      background: white;
-      color: #334155;
-      border: 1px solid #e2e8f0;
-      border-bottom-left-radius: 4px;
-    }
-
-    .composer {
-      padding: 16px;
-      background: white;
-      border-top: 1px solid #e2e8f0;
-      display: flex;
-      gap: 12px;
-    }
-
-    .composer input {
-      flex: 1;
-      border: 1px solid #cbd5e1;
-      border-radius: 12px;
-      padding: 12px 14px;
-      outline: none;
-      font-size: 14px;
-    }
-
-    .composer input:focus {
-      border-color: #2563eb;
-      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
-    }
-
-    button {
-      border: none;
-      border-radius: 12px;
-      padding: 0 18px;
-      background: #2563eb;
-      color: white;
-      font-weight: 700;
-      cursor: pointer;
-      transition: 0.2s;
-    }
-
-    button:hover {
-      background: #1d4ed8;
-      transform: translateY(-1px);
-    }
-
-    .quick-actions {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      padding: 0 20px 18px;
-      background: white;
-    }
-
-    .quick-actions button {
-      background: #f1f5f9;
-      color: #334155;
-      padding: 9px 12px;
-      font-size: 13px;
-    }
-
-    .quick-actions button:hover {
-      background: #e2e8f0;
-    }
-
-    @keyframes fadeIn {
-      from {
-        opacity: 0;
-        transform: translateY(8px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    @media (max-width: 800px) {
-      .dashboard {
-        grid-template-columns: 1fr;
-      }
-
-      .hero h2 {
-        font-size: 30px;
-      }
-    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; min-height: 100vh; background: linear-gradient(135deg, #eff6ff 0%, #eef2ff 100%); color: #1e293b; }
+    nav { height: 64px; background: white; padding: 0 32px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08); }
+    nav h1 { color: #2563eb; font-size: 22px; font-weight: 800; }
+    main { padding: 40px 24px; max-width: 1100px; margin: 0 auto; }
+    .dashboard { display: grid; grid-template-columns: 260px 1fr; gap: 24px; align-items: start; }
+    .panel { background: white; border-radius: 18px; box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08); border: 1px solid #e2e8f0; overflow: hidden; }
+    .panel-header { padding: 18px 20px; border-bottom: 1px solid #e2e8f0; font-weight: 800; }
+    .agent-list { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+    .agent { padding: 12px; border-radius: 14px; display: flex; align-items: center; gap: 12px; cursor: pointer; transition: 0.2s; border: 1px solid transparent; }
+    .agent:hover { background: #f8fafc; }
+    .agent.active { background: #eff6ff; border-color: #93c5fd; }
+    .avatar { width: 38px; height: 38px; border-radius: 50%; background: linear-gradient(135deg, #3b82f6, #8b5cf6); display: flex; align-items: center; justify-content: center; color: white; font-weight: 800; flex-shrink: 0; }
+    .agent-info strong { display: block; font-size: 14px; }
+    .agent-info span { display: block; margin-top: 3px; font-size: 12px; color: #64748b; }
+    .workspace { min-height: 480px; display: flex; flex-direction: column; }
+    .messages { flex: 1; padding: 20px; display: flex; flex-direction: column; gap: 14px; background: #f8fafc; }
+    .message { max-width: 75%; padding: 12px 14px; border-radius: 14px; line-height: 1.6; font-size: 14px; animation: fadeIn 0.25s ease; }
+    .message.user { align-self: flex-end; background: #2563eb; color: white; border-bottom-right-radius: 4px; }
+    .message.agent { align-self: flex-start; background: white; color: #334155; border: 1px solid #e2e8f0; border-bottom-left-radius: 4px; }
+    .composer { padding: 16px; background: white; border-top: 1px solid #e2e8f0; display: flex; gap: 12px; }
+    .composer input { flex: 1; border: 1px solid #cbd5e1; border-radius: 12px; padding: 12px 14px; outline: none; font-size: 14px; }
+    .composer input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }
+    button { border: none; border-radius: 12px; padding: 0 18px; background: #2563eb; color: white; font-weight: 700; cursor: pointer; transition: 0.2s; }
+    button:hover { background: #1d4ed8; transform: translateY(-1px); }
+    .quick-actions { display: flex; gap: 10px; flex-wrap: wrap; padding: 0 20px 18px; background: white; }
+    .quick-actions button { background: #f1f5f9; color: #334155; padding: 9px 12px; font-size: 13px; }
+    .quick-actions button:hover { background: #e2e8f0; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    @media (max-width: 800px) { .dashboard { grid-template-columns: 1fr; } .hero h2 { font-size: 30px; } }
   </style>
 </head>
 <body>
@@ -781,13 +580,11 @@ export default HomePage;`,
     <h1>AgentHub</h1>
     <div class="status" id="status">当前 Agent：代码助手</div>
   </nav>
-
   <main>
     <section class="hero">
       <h2>多 Agent 协作平台</h2>
       <p>点击左侧 Agent 切换角色，在输入框发送消息，体验一个简单的可交互 HTML 预览。</p>
     </section>
-
     <section class="dashboard">
       <aside class="panel">
         <div class="panel-header">Agent 联系人</div>
@@ -799,7 +596,6 @@ export default HomePage;`,
               <span>代码生成 / Debug</span>
             </div>
           </div>
-
           <div class="agent" data-name="产品经理" data-role="负责需求拆解、功能规划和用户故事">
             <div class="avatar">P</div>
             <div class="agent-info">
@@ -807,7 +603,6 @@ export default HomePage;`,
               <span>需求分析 / 原型规划</span>
             </div>
           </div>
-
           <div class="agent" data-name="测试专家" data-role="负责编写测试用例、发现边界问题">
             <div class="avatar">T</div>
             <div class="agent-info">
@@ -817,22 +612,16 @@ export default HomePage;`,
           </div>
         </div>
       </aside>
-
       <section class="panel workspace">
-        <div class="panel-header" id="chatTitle">与代码助手对话</div>
-
+        <div class="panel-header">与代码助手对话</div>
         <div class="messages" id="messages">
-          <div class="message agent">
-            你好，我是代码助手。你可以让我生成组件、检查错误或者解释代码。
-          </div>
+          <div class="message agent">你好，我是代码助手。你可以让我生成组件、检查错误或者解释代码。</div>
         </div>
-
         <div class="quick-actions">
           <button type="button" onclick="sendQuick('帮我生成一个 React 组件')">生成组件</button>
           <button type="button" onclick="sendQuick('检查这段代码有没有问题')">检查代码</button>
           <button type="button" onclick="sendQuick('把需求拆成开发任务')">拆分任务</button>
         </div>
-
         <div class="composer">
           <input id="input" placeholder="输入你的任务..." />
           <button type="button" onclick="sendMessage()">发送</button>
@@ -840,39 +629,22 @@ export default HomePage;`,
       </section>
     </section>
   </main>
-
   <script>
-    var currentAgent = {
-      name: "代码助手",
-      role: "负责代码生成、修复和解释"
-    };
-
+    var currentAgent = { name: "代码助手", role: "负责代码生成、修复和解释" };
     var agents = document.querySelectorAll(".agent");
     var statusEl = document.getElementById("status");
     var chatTitleEl = document.getElementById("chatTitle");
     var messagesEl = document.getElementById("messages");
     var inputEl = document.getElementById("input");
-
     agents.forEach(function(agentEl) {
       agentEl.addEventListener("click", function() {
-        agents.forEach(function(item) {
-          item.classList.remove("active");
-        });
-
+        agents.forEach(function(item) { item.classList.remove("active"); });
         agentEl.classList.add("active");
-
-        currentAgent = {
-          name: agentEl.getAttribute("data-name"),
-          role: agentEl.getAttribute("data-role")
-        };
-
+        currentAgent = { name: agentEl.getAttribute("data-name"), role: agentEl.getAttribute("data-role") };
         statusEl.textContent = "当前 Agent：" + currentAgent.name;
-        chatTitleEl.textContent = "与" + currentAgent.name + "对话";
-
         addMessage("agent", "已切换到" + currentAgent.name + "。我的职责是：" + currentAgent.role + "。");
       });
     });
-
     function addMessage(type, text) {
       var div = document.createElement("div");
       div.className = "message " + type;
@@ -880,48 +652,19 @@ export default HomePage;`,
       messagesEl.appendChild(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
-
-    function sendQuick(text) {
-      inputEl.value = text;
-      sendMessage();
-    }
-
+    function sendQuick(text) { inputEl.value = text; sendMessage(); }
     function sendMessage() {
-      var text = inputEl.value.trim();
-      if (!text) {
-        return;
-      }
-
-      addMessage("user", text);
-      inputEl.value = "";
-
-      setTimeout(function() {
-        var reply = makeReply(text);
-        addMessage("agent", reply);
-      }, 400);
+      var text = inputEl.value.trim(); if (!text) return;
+      addMessage("user", text); inputEl.value = "";
+      setTimeout(function() { var reply = makeReply(text); addMessage("agent", reply); }, 400);
     }
-
     function makeReply(text) {
-      if (currentAgent.name === "代码助手") {
-        return "我会从代码结构、类型定义、组件状态和边界情况四个方面处理这个任务：" + text;
-      }
-
-      if (currentAgent.name === "产品经理") {
-        return "我会把这个需求拆成：用户目标、核心流程、页面结构、交互规则和验收标准。当前需求是：" + text;
-      }
-
-      if (currentAgent.name === "测试专家") {
-        return "我会重点检查正常流程、异常流程、边界输入和回归影响。测试目标是：" + text;
-      }
-
+      if (currentAgent.name === "代码助手") return "我会从代码结构、类型定义、组件状态和边界情况四个方面处理这个任务：" + text;
+      if (currentAgent.name === "产品经理") return "我会把这个需求拆成：用户目标、核心流程、页面结构、交互规则和验收标准。当前需求是：" + text;
+      if (currentAgent.name === "测试专家") return "我会重点检查正常流程、异常流程、边界输入和回归影响。测试目标是：" + text;
       return "收到任务：" + text;
     }
-
-    inputEl.addEventListener("keydown", function(event) {
-      if (event.key === "Enter") {
-        sendMessage();
-      }
-    });
+    inputEl.addEventListener("keydown", function(event) { if (event.key === "Enter") { event.preventDefault(); sendMessage(); } });
   </script>
 </body>
 </html>`,
