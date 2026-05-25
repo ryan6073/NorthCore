@@ -39,7 +39,7 @@ function generateSingleAgentReply(params: {
     }
   ];
 
-  if (targetAgent.id === 'agent-code') {
+  if (targetAgent.id === 'agent-claude-code' || targetAgent.id === 'agent-codex') {
     const codeMsgId = createId('msg');
     messages.push({
       id: codeMsgId,
@@ -88,7 +88,7 @@ function generateGroupAgentReply(params: {
 }): MockReplyResult {
   const orchestrator = params.agents.find(a => a.id === 'agent-orchestrator');
   const designAgent = params.agents.find(a => a.id === 'agent-design');
-  const codeAgent = params.agents.find(a => a.id === 'agent-code');
+  const codeAgent = params.agents.find(a => a.id === 'agent-codex' || a.id === 'agent-claude-code');
   const reviewAgent = params.agents.find(a => a.id === 'agent-review');
   const docAgent = params.agents.find(a => a.id === 'agent-doc');
 

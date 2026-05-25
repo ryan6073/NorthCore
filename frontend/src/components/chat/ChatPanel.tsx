@@ -1,7 +1,8 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Conversation, Message, Agent, Artifact } from '@/types';
 import MessageBubble from './MessageBubble';
 import { Send, Paperclip, Smile, GripVertical } from 'lucide-react';
+import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface ChatPanelProps {
   conversation: Conversation | undefined;
@@ -30,7 +31,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [inputAreaHeight, setInputAreaHeight] = useState(130);
+  const [inputAreaHeight, setInputAreaHeight] = useState(160);
   const isDragging = useRef(false);
   const startY = useRef(0);
   const startHeight = useRef(0);
@@ -42,6 +43,76 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  const renameConversation = useAgentHubStore(state => state.renameConversation);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editedTitle, setEditedTitle] = useState('');
+
+  // Mention states
+  const [showMentionPopup, setShowMentionPopup] = useState(false);
+  const [mentionSearch, setMentionSearch] = useState('');
+  const [mentionIndex, setMentionIndex] = useState(0);
+
+  useEffect(() => {
+    if (conversation) {
+      setEditedTitle(conversation.title);
+    }
+    setIsEditingTitle(false);
+  }, [conversation]);
+
+  const handleSaveTitle = () => {
+    if (conversation && editedTitle.trim() && editedTitle !== conversation.title) {
+      renameConversation(conversation.id, editedTitle.trim());
+    }
+    setIsEditingTitle(false);
+  };
+
+  const filteredMentionAgents = useMemo(() => {
+    return agents.filter(a => 
+      a.id !== 'agent-orchestrator' &&
+      a.name.toLowerCase().includes(mentionSearch.toLowerCase())
+    );
+  }, [agents, mentionSearch]);
+
+  const selectMention = (agentName: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const cursor = textarea.selectionStart;
+    const text = inputValue;
+    const lastAtIdx = text.substring(0, cursor).lastIndexOf('@');
+    if (lastAtIdx === -1) return;
+
+    const before = text.substring(0, lastAtIdx);
+    const after = text.substring(cursor);
+    const newValue = `${before}@${agentName} ${after}`;
+
+    setInputValue(newValue);
+    setShowMentionPopup(false);
+
+    setTimeout(() => {
+      textarea.focus();
+      const newCursor = lastAtIdx + agentName.length + 2; // @ + name + space
+      textarea.setSelectionRange(newCursor, newCursor);
+    }, 0);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    setInputValue(value);
+
+    const cursor = e.target.selectionStart;
+    const textBeforeCursor = value.substring(0, cursor);
+    const lastAtIdx = textBeforeCursor.lastIndexOf('@');
+
+    if (lastAtIdx !== -1 && !textBeforeCursor.substring(lastAtIdx, cursor).includes(' ')) {
+      const search = textBeforeCursor.substring(lastAtIdx + 1, cursor);
+      setMentionSearch(search);
+      setShowMentionPopup(true);
+      setMentionIndex(0);
+    } else {
+      setShowMentionPopup(false);
+    }
+  };
 
   const handleDragStart = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -57,7 +128,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     if (!isDragging.current) return;
     const deltaY = startY.current - e.clientY;
     const newHeight = startHeight.current + deltaY;
-    if (newHeight >= 90 && newHeight <= 350) {
+    if (newHeight >= 130 && newHeight <= 350) {
       setInputAreaHeight(newHeight);
     }
   }, []);
@@ -85,7 +156,30 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     setShowEmojiPicker(false);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showMentionPopup && filteredMentionAgents.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionIndex(prev => (prev + 1) % filteredMentionAgents.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionIndex(prev => (prev - 1 + filteredMentionAgents.length) % filteredMentionAgents.length);
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        selectMention(filteredMentionAgents[mentionIndex].name);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setShowMentionPopup(false);
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -116,12 +210,57 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     <div className="flex-grow h-full flex flex-col bg-white">
       {/* Header */}
       <div className="px-5 py-3.5 border-b border-lark-border bg-white flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-2.5">
-          <h2 className="text-sm font-semibold text-lark-text-primary">
-            {conversation?.title || '选择一个会话'}
-          </h2>
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          {isEditingTitle ? (
+            <div className="flex items-center gap-1.5 flex-grow max-w-sm">
+              <input
+                type="text"
+                value={editedTitle}
+                onChange={(e) => setEditedTitle(e.target.value)}
+                onBlur={handleSaveTitle}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveTitle();
+                  if (e.key === 'Escape') {
+                    setEditedTitle(conversation?.title || '');
+                    setIsEditingTitle(false);
+                  }
+                }}
+                autoFocus
+                className="text-xs font-semibold text-lark-text-primary px-2 py-0.5 border border-lark-primary rounded-lg focus:outline-none focus:ring-1 focus:ring-lark-primary flex-grow"
+              />
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 min-w-0 max-w-full">
+              <h2 
+                className="text-sm font-semibold text-lark-text-primary truncate cursor-pointer hover:bg-slate-100 px-1 py-0.5 rounded transition-colors"
+                onClick={() => {
+                  if (conversation) {
+                    setEditedTitle(conversation.title);
+                    setIsEditingTitle(true);
+                  }
+                }}
+                title="点击重命名会话"
+              >
+                {conversation?.title || '选择一个会话'}
+              </h2>
+              {conversation && (
+                <button
+                  onClick={() => {
+                    setEditedTitle(conversation.title);
+                    setIsEditingTitle(true);
+                  }}
+                  className="p-1 text-slate-400 hover:text-lark-primary hover:bg-lark-bg-hover rounded transition-colors"
+                  title="重命名会话"
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          )}
           {conversation && (
-            <span className={`text-[10px] tracking-wide px-1.5 py-0.5 rounded font-medium ${
+            <span className={`text-[10px] tracking-wide px-1.5 py-0.5 rounded font-medium flex-shrink-0 ${
               conversation.mode === 'single'
                 ? 'bg-[#e1f9eb] text-[#00b04a]'
                 : 'bg-[#f2e9fc] text-[#7f3ec8]'
@@ -217,30 +356,49 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
               <span className="text-[10px] text-lark-text-tertiary">Shift + Enter 换行</span>
             </div>
 
-            {/* Text Area - 发送按钮在右下方，右边界与容器右边界对齐 */}
-            <div className="flex-1 p-2 bg-transparent flex flex-col min-h-0">
+            {/* Mention Popup */}
+            {showMentionPopup && filteredMentionAgents.length > 0 && (
+              <div className="absolute bottom-full left-4 mb-2 bg-white border border-lark-border rounded-xl shadow-xl z-30 w-60 max-h-52 overflow-y-auto p-1.5 animate-scale-in">
+                <div className="text-[10px] text-lark-text-tertiary px-2 py-1 font-semibold">选择要 @ 的 Agent</div>
+                {filteredMentionAgents.map((agent, idx) => (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    onClick={() => selectMention(agent.name)}
+                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left text-xs transition-colors ${
+                      idx === mentionIndex
+                        ? 'bg-lark-primary-light text-lark-primary font-medium'
+                        : 'hover:bg-lark-bg-hover text-lark-text-primary'
+                    }`}
+                  >
+                    <img src={agent.avatar} alt="" className="w-5 h-5 rounded object-cover flex-shrink-0 bg-slate-100" />
+                    <span className="truncate">{agent.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Text Area - 发送按钮在右侧，横向排列防止挤压 */}
+            <div className="flex-1 p-2 bg-transparent flex flex-row items-end gap-2 min-h-0">
               <textarea
                 ref={textareaRef}
                 value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
+                onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 placeholder="输入消息，发送任务..."
-                rows={2}
-                className="w-full px-2 py-1 text-sm outline-none resize-none text-lark-text-primary placeholder:text-lark-text-tertiary bg-transparent flex-1 min-h-0"
+                className="w-full px-2 py-1.5 text-sm outline-none resize-none text-lark-text-primary placeholder:text-lark-text-tertiary bg-transparent flex-1 h-full min-h-[36px]"
               />
-              <div className="flex justify-end mt-1">
-                <button
-                  onClick={handleSend}
-                  disabled={!inputValue.trim()}
-                  className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all flex-shrink-0 active:scale-95 ${
-                    inputValue.trim()
-                      ? 'bg-lark-primary text-white shadow-sm hover:bg-lark-primary-hover'
-                      : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                  }`}
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </div>
+              <button
+                onClick={handleSend}
+                disabled={!inputValue.trim()}
+                className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all flex-shrink-0 active:scale-95 mb-0.5 ${
+                  inputValue.trim()
+                    ? 'bg-lark-primary text-white shadow-sm hover:bg-lark-primary-hover'
+                    : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                }`}
+              >
+                <Send className="w-4 h-4" />
+              </button>
             </div>
           </div>
         </div>
