@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Conversation, Message, Agent, Artifact } from '@/types';
+import { Conversation, Message, Agent, Artifact, MessageAttachment } from '@/types';
 import MessageBubble from './MessageBubble';
-import { Send, Paperclip, Smile, GripVertical } from 'lucide-react';
+import { Send, Paperclip, Smile, GripVertical, X, FileCode } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface ChatPanelProps {
@@ -9,7 +9,7 @@ interface ChatPanelProps {
   agents: Agent[];
   messages: Message[];
   artifacts: Artifact[];
-  onSendMessage: (content: string) => void;
+  onSendMessage: (content: string, attachments?: MessageAttachment[]) => void;
 }
 
 const COMMON_EMOJIS = [
@@ -26,15 +26,72 @@ const COMMON_EMOJIS = [
   '🔥', '🎉', '💡', '🚀', '💻', '❤️', '✨', '🌟', '👀', '💯'
 ];
 
+const getFriendlyDateLabel = (timeStr: string) => {
+  if (!timeStr) return '';
+  try {
+    const datePart = timeStr.split(' ')[0].replace(/\//g, '-');
+    const parts = datePart.split('-');
+    
+    const d = new Date(
+      parseInt(parts[0], 10),
+      parseInt(parts[1], 10) - 1,
+      parseInt(parts[2], 10)
+    );
+    
+    if (isNaN(d.getTime())) return datePart;
+    
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+
+    const isSameDay = (d1: Date, d2: Date) =>
+      d1.getFullYear() === d2.getFullYear() &&
+      d1.getMonth() === d2.getMonth() &&
+      d1.getDate() === d2.getDate();
+
+    if (isSameDay(d, today)) {
+      return '今天';
+    } else if (isSameDay(d, yesterday)) {
+      return '昨天';
+    } else {
+      return `${parts[0]}年${parts[1]}月${parts[2]}日`;
+    }
+  } catch (e) {
+    return timeStr.split(' ')[0] || timeStr;
+  }
+};
+
+const normalizeDatePart = (timeStr: string) => {
+  if (!timeStr) return '';
+  try {
+    const datePart = timeStr.split(' ')[0].replace(/\//g, '-');
+    const parts = datePart.split('-');
+    if (parts.length < 3) return datePart;
+    return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+  } catch (e) {
+    return timeStr.split(' ')[0] || timeStr;
+  }
+};
+
 const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, artifacts: _artifacts, onSendMessage }) => {
   const [inputValue, setInputValue] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [inputAreaHeight, setInputAreaHeight] = useState(160);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const [inputAreaHeight, setInputAreaHeight] = useState(180);
   const isDragging = useRef(false);
   const startY = useRef(0);
   const startHeight = useRef(0);
+
+  const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([]);
+
+  // Phase 3 Store integration
+  const replyContext = useAgentHubStore(state => state.replyContext);
+  const setReplyContext = useAgentHubStore(state => state.setReplyContext);
+  const quoteArtifactRef = useAgentHubStore(state => state.quoteArtifactRef);
+  const setQuoteArtifactRef = useAgentHubStore(state => state.setQuoteArtifactRef);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -128,7 +185,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     if (!isDragging.current) return;
     const deltaY = startY.current - e.clientY;
     const newHeight = startHeight.current + deltaY;
-    if (newHeight >= 130 && newHeight <= 350) {
+    if (newHeight >= 150 && newHeight <= 350) {
       setInputAreaHeight(newHeight);
     }
   }, []);
@@ -150,9 +207,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
 
   const handleSend = () => {
     const trimmed = inputValue.trim();
-    if (!trimmed) return;
-    onSendMessage(trimmed);
+    if (!trimmed && pendingAttachments.length === 0) return;
+    onSendMessage(trimmed, pendingAttachments);
     setInputValue('');
+    setPendingAttachments([]);
     setShowEmojiPicker(false);
   };
 
@@ -204,6 +262,72 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
       setInputValue(prev => prev + emoji);
     }
     setShowEmojiPicker(false);
+  };
+
+  const handleFileClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    const newAttachments: MessageAttachment[] = Array.from(files).map(file => {
+      const isImage = file.type.startsWith('image/');
+      const isPdf = file.type === 'application/pdf' || file.name.endsWith('.pdf');
+      const isPpt = file.name.endsWith('.ppt') || file.name.endsWith('.pptx');
+      
+      let type: 'image' | 'pdf' | 'ppt' | 'other' = 'other';
+      if (isImage) type = 'image';
+      else if (isPdf) type = 'pdf';
+      else if (isPpt) type = 'ppt';
+
+      const url = URL.createObjectURL(file);
+      
+      return {
+        id: `attach-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        name: file.name,
+        type,
+        url,
+        size: file.size,
+        meta: type === 'pdf' ? { pages: Math.floor(Math.random() * 20) + 5 } : undefined
+      };
+    });
+    
+    setPendingAttachments(prev => [...prev, ...newAttachments]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const hasHeader = !!replyContext || !!quoteArtifactRef || pendingAttachments.length > 0;
+  const canSend = inputValue.trim() || pendingAttachments.length > 0;
+
+  // Render message timeline with date dividers
+  const renderMessageList = () => {
+    let lastDateLabel = '';
+    
+    return messages.map((msg) => {
+      const msgDateLabel = msg.createdAt ? normalizeDatePart(msg.createdAt) : '';
+      const showDivider = msgDateLabel && msgDateLabel !== lastDateLabel;
+      if (showDivider) {
+        lastDateLabel = msgDateLabel;
+      }
+      
+      const friendlyLabel = showDivider ? getFriendlyDateLabel(msg.createdAt) : '';
+
+      return (
+        <React.Fragment key={msg.id}>
+          {showDivider && (
+            <div className="flex items-center justify-center my-6 select-none animate-fade-in w-full">
+              <div className="h-[1px] bg-slate-200/80 flex-grow" />
+              <span className="bg-slate-100 text-lark-text-secondary text-[10px] font-semibold px-3 py-1 rounded-full border border-lark-border/60 mx-4 shadow-sm">
+                {friendlyLabel}
+              </span>
+              <div className="h-[1px] bg-slate-200/80 flex-grow" />
+            </div>
+          )}
+          <MessageBubble message={msg} agents={agents} />
+        </React.Fragment>
+      );
+    });
   };
 
   return (
@@ -284,9 +408,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
             </p>
           </div>
         ) : (
-          messages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} agents={agents} />
-          ))
+          renderMessageList()
         )}
         <div ref={messagesEndRef} />
       </div>
@@ -306,12 +428,81 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
           </div>
         </div>
 
-        <div className="flex-1 p-4 pt-1 border-t border-lark-border bg-white h-full flex flex-col">
-          <div className="border border-lark-border hover:border-lark-border/80 focus-within:border-lark-primary focus-within:ring-2 focus-within:ring-lark-primary/10 rounded-xl bg-white transition-all flex flex-col relative z-20 flex-1 min-h-0">
+        <div className="flex-1 p-4 pt-1 border-t border-lark-border bg-white h-full flex flex-col min-h-0">
+          <div className="border border-lark-border hover:border-lark-border/80 focus-within:border-lark-primary focus-within:ring-2 focus-within:ring-lark-primary/10 rounded-xl bg-white transition-all flex flex-col relative z-20 flex-1 min-h-0 overflow-hidden">
+            
+            {/* 1. Reply Context Bar */}
+            {replyContext && (
+              <div className="flex items-center justify-between px-3.5 py-1.5 bg-slate-50 border-b border-lark-border/40 text-[11px] text-slate-500 animate-slide-up flex-shrink-0 rounded-t-xl">
+                <span className="truncate flex items-center gap-1 min-w-0">
+                  <span className="font-semibold text-slate-700 flex-shrink-0">回复 @{replyContext.senderName}：</span>
+                  <span className="truncate text-slate-500">{replyContext.content}</span>
+                </span>
+                <button 
+                  type="button"
+                  onClick={() => setReplyContext(null)} 
+                  className="text-slate-400 hover:text-slate-600 p-0.5 hover:bg-slate-200/50 rounded-full transition-colors flex-shrink-0"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* 2. Artifact Reference Bar */}
+            {quoteArtifactRef && (
+              <div className="flex items-center justify-between px-3.5 py-1.5 bg-slate-50 border-b border-lark-border/40 text-[11px] text-slate-500 animate-slide-up flex-shrink-0 rounded-t-xl">
+                <span className="truncate flex items-center gap-2 min-w-0">
+                  <FileCode className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                  <span className="font-semibold text-slate-700 flex-shrink-0">引用产物 {quoteArtifactRef.artifactTitle} (v{quoteArtifactRef.version})</span>
+                  {quoteArtifactRef.startLine && (
+                    <span className="bg-emerald-50 text-emerald-700 px-1 rounded text-[9px] border border-emerald-100 font-mono flex-shrink-0">
+                      L{quoteArtifactRef.startLine}{quoteArtifactRef.endLine && quoteArtifactRef.endLine !== quoteArtifactRef.startLine && ` - L${quoteArtifactRef.endLine}`}
+                    </span>
+                  )}
+                  <span className="text-slate-400 font-mono italic truncate">"{quoteArtifactRef.quotedText}"</span>
+                </span>
+                <button 
+                  type="button"
+                  onClick={() => setQuoteArtifactRef(null)} 
+                  className="text-slate-400 hover:text-slate-600 p-0.5 hover:bg-slate-200/50 rounded-full transition-colors flex-shrink-0"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* 3. Pending Attachments Bar */}
+            {pendingAttachments.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 px-3.5 py-1.5 bg-slate-50/50 border-b border-lark-border/40 flex-shrink-0 select-none max-h-16 overflow-y-auto">
+                {pendingAttachments.map((attach) => (
+                  <div key={attach.id} className="flex items-center gap-1.5 px-2 py-0.5 bg-white border border-lark-border rounded-lg text-xs shadow-sm max-w-[180px]">
+                    <span className="truncate flex-1 text-slate-600 font-medium text-[10px]">{attach.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => setPendingAttachments(prev => prev.filter(a => a.id !== attach.id))}
+                      className="text-slate-400 hover:text-red-500 p-0.5 rounded-full hover:bg-slate-100"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Hidden File Input */}
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              onChange={handleFileChange} 
+              multiple 
+              className="hidden" 
+            />
+
             {/* Input Area Toolbar (Top of the Input Box) */}
-            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50/50 border-b border-lark-border/30 rounded-t-xl relative flex-shrink-0">
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 bg-slate-50/50 border-b border-lark-border/30 relative flex-shrink-0 ${hasHeader ? '' : 'rounded-t-xl'}`}>
               <button 
                 type="button"
+                onClick={handleFileClick}
                 className="p-1 rounded-lg text-lark-text-secondary hover:text-lark-primary hover:bg-lark-bg-hover transition-colors"
                 title="添加附件"
               >
@@ -379,7 +570,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
             )}
 
             {/* Text Area - 发送按钮在右侧，横向排列防止挤压 */}
-            <div className="flex-1 p-2 bg-transparent flex flex-row items-end gap-2 min-h-0">
+            <div className="flex-1 p-2 bg-transparent flex flex-row items-end gap-2 min-h-0 overflow-hidden">
               <textarea
                 ref={textareaRef}
                 value={inputValue}
@@ -390,9 +581,9 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
               />
               <button
                 onClick={handleSend}
-                disabled={!inputValue.trim()}
+                disabled={!canSend}
                 className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all flex-shrink-0 active:scale-95 mb-0.5 ${
-                  inputValue.trim()
+                  canSend
                     ? 'bg-lark-primary text-white shadow-sm hover:bg-lark-primary-hover'
                     : 'bg-slate-100 text-slate-400 cursor-not-allowed'
                 }`}

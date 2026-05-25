@@ -2,7 +2,36 @@ export type ConversationMode = 'single' | 'group';
 
 export type MessageRole = 'user' | 'agent' | 'orchestrator' | 'system';
 
-export type MessageType = 'text' | 'code' | 'artifact' | 'task-plan' | 'status';
+export type MessageType = 
+  | 'text' 
+  | 'code' 
+  | 'artifact' 
+  | 'task-plan' 
+  | 'status'
+  | 'image'      // 图片消息
+  | 'document';  // 文档消息 (ppt, pdf 等)
+
+export interface MessageAttachment {
+  id: string;
+  name: string;
+  type: 'image' | 'pdf' | 'ppt' | 'other';
+  url: string;
+  size?: number;
+  meta?: {
+    width?: number;
+    height?: number;
+    pages?: number;
+  };
+}
+
+export interface ArtifactReference {
+  artifactId: string;
+  artifactTitle: string;
+  version: number;
+  quotedText: string;
+  startLine?: number;
+  endLine?: number;
+}
 
 export type ArtifactType = 'code' | 'html' | 'markdown' | 'diff' | 'deploy';
 
@@ -93,6 +122,14 @@ export interface Message {
   language?: string;
   artifactId?: string;
   createdAt: string;
+  attachments?: MessageAttachment[];
+  quotedMessage?: {
+    id: string;
+    senderName: string;
+    content: string;
+  };
+  artifactRef?: ArtifactReference;
+  isPinned?: boolean;
 }
 
 export interface ArtifactMeta {

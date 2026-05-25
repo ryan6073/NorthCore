@@ -68,6 +68,31 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
 
   if (!open || !artifact) return null;
 
+  const renderCodeLines = (content: string) => {
+    const lines = content.split('\n');
+    return (
+      <pre className="bg-slate-900 p-4 rounded-xl text-sm text-slate-100 font-mono leading-relaxed border border-slate-800 flex flex-col gap-0.5 overflow-x-auto whitespace-pre-wrap break-words">
+        {lines.map((line, idx) => {
+          const lineNum = idx + 1;
+          return (
+            <div 
+              key={lineNum} 
+              data-line-number={lineNum}
+              className="flex hover:bg-slate-850 px-2 py-0.5 rounded transition-all duration-150 group relative"
+            >
+              <span className="w-10 select-none text-slate-500 text-right pr-4 font-mono border-r border-slate-800 mr-4 flex-shrink-0">
+                {lineNum}
+              </span>
+              <span className="flex-1 whitespace-pre-wrap font-mono">
+                {line || ' '}
+              </span>
+            </div>
+          );
+        })}
+      </pre>
+    );
+  };
+
   const renderContent = () => {
     if (activeTab === 'diff') {
       const oldValue = previousArtifact?.content || '';
@@ -98,9 +123,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
               <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
             </div>
           ) : (
-            <pre className="bg-slate-900 p-4 rounded-xl text-sm text-slate-100 font-mono leading-relaxed border border-slate-800 whitespace-pre-wrap break-words">
-              {artifact.content}
-            </pre>
+            renderCodeLines(artifact.content)
           )}
         </div>
       );
@@ -129,9 +152,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
               <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
             </div>
           ) : (
-            <pre className="bg-slate-900 p-4 rounded-xl text-sm text-slate-100 font-mono leading-relaxed border border-slate-800 whitespace-pre-wrap break-words">
-              {artifact.content}
-            </pre>
+            renderCodeLines(artifact.content)
           )}
         </div>
       );
@@ -175,9 +196,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
               <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
             </div>
           ) : (
-            <pre className="bg-slate-900 p-4 rounded-xl text-sm text-slate-100 font-mono leading-relaxed border border-slate-800 whitespace-pre-wrap break-words">
-              {artifact.content}
-            </pre>
+            renderCodeLines(artifact.content)
           )}
         </div>
       );
@@ -190,9 +209,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
             <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
           </div>
         ) : (
-          <pre className="bg-slate-900 p-4 rounded-xl text-sm text-slate-100 font-mono leading-relaxed border border-slate-800">
-            {artifact.content}
-          </pre>
+          renderCodeLines(artifact.content)
         )}
       </div>
     );

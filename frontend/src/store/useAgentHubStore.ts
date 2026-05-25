@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Conversation, Message, Agent, Artifact, CreateConversationPayload } from '@/types';
+import { Conversation, Message, Agent, Artifact, CreateConversationPayload, ArtifactReference, MessageAttachment } from '@/types';
 import { getAgentList, updateAgentDetail } from '@/services/http/agentService';
 import { getConversationList, createConversation as createConversationApi, updateConversation } from '@/services/http/conversationService';
 import { getMessageList } from '@/services/http/messageService';
@@ -28,6 +28,10 @@ interface AgentHubStore {
   useMockMode: boolean;
   wsStatus: 'connecting' | 'connected' | 'disconnected';
 
+  // Phase 3 states
+  replyContext: { id: string; senderName: string; content: string } | null;
+  quoteArtifactRef: ArtifactReference | null;
+
   // Actions
   initStore: () => Promise<void>;
   setUseMockMode: (mode: boolean) => void;
@@ -39,9 +43,15 @@ interface AgentHubStore {
   setSelectedAgentId: (id: string | null) => void;
   setLeftSidebarViewMode: (mode: 'conversations' | 'agents' | 'agent-detail') => void;
   
+  // Phase 3 Actions
+  setReplyContext: (reply: { id: string; senderName: string; content: string } | null) => void;
+  setQuoteArtifactRef: (ref: ArtifactReference | null) => void;
+  togglePinMessage: (messageId: string) => Promise<void>;
+  saveEditedArtifact: (artifactId: string, newContent: string) => Promise<void>;
+  
   loadConversationData: (convId: string) => Promise<void>;
   createConversation: (payload: CreateConversationPayload) => Promise<void>;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, attachments?: MessageAttachment[]) => Promise<void>;
   saveAgent: (agent: Agent) => Promise<void>;
   renameConversation: (id: string, newTitle: string) => Promise<void>;
   loadArtifactContent: (artifactId: string) => Promise<void>;
@@ -50,7 +60,7 @@ interface AgentHubStore {
   disconnectWS: () => void;
 }
 
-export const useAgentHubStore = create<AgentHubStore>((set, get) => ({
+export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   conversations: [],
   agents: [],
   messages: [],
@@ -65,6 +75,10 @@ export const useAgentHubStore = create<AgentHubStore>((set, get) => ({
   leftSidebarViewMode: 'conversations',
   useMockMode: USE_MOCK,
   wsStatus: 'disconnected',
+
+  // Phase 3 states
+  replyContext: null,
+  quoteArtifactRef: null,
 
   initStore: async () => {
     const { useMockMode } = get();
@@ -125,6 +139,8 @@ export const useAgentHubStore = create<AgentHubStore>((set, get) => ({
       selectedArtifactId: null,
       selectedArtifactVersion: null,
       isProcessing: false,
+      replyContext: null,
+      quoteArtifactRef: null,
     });
     if (id) {
       await get().loadConversationData(id);
@@ -211,8 +227,8 @@ export const useAgentHubStore = create<AgentHubStore>((set, get) => ({
     }
   },
 
-  sendMessage: async (content) => {
-    const { activeConversationId, useMockMode, conversations, agents } = get();
+  sendMessage: async (content, attachments) => {
+    const { activeConversationId, useMockMode, conversations, agents, replyContext, quoteArtifactRef } = get();
     if (!activeConversationId) return;
 
     const activeConv = conversations.find(c => c.id === activeConversationId);
@@ -227,16 +243,21 @@ export const useAgentHubStore = create<AgentHubStore>((set, get) => ({
       type: 'text',
       content,
       createdAt: getCurrentFullTime(),
+      quotedMessage: replyContext || undefined,
+      artifactRef: quoteArtifactRef || undefined,
+      attachments,
     };
 
     set(state => ({
       messages: [...state.messages, newUserMessage],
       conversations: state.conversations.map(c =>
         c.id === activeConversationId
-          ? { ...c, lastMessage: content, updatedAt: getCurrentFullTime() }
+          ? { ...c, lastMessage: content || (attachments && attachments.length > 0 ? '[文件/图片附件]' : ''), updatedAt: getCurrentFullTime() }
           : c
       ),
       isProcessing: true,
+      replyContext: null,
+      quoteArtifactRef: null,
     }));
 
     if (useMockMode) {
@@ -344,6 +365,9 @@ export const useAgentHubStore = create<AgentHubStore>((set, get) => ({
         wsClient.send('conversation.message.create', {
           conversationId: activeConversationId,
           content,
+          quotedMessageId: replyContext?.id,
+          artifactRef: quoteArtifactRef || undefined,
+          attachments,
         });
       } catch (e) {
         console.error('[Store] 发送 WS 消息失败', e);
@@ -433,11 +457,12 @@ export const useAgentHubStore = create<AgentHubStore>((set, get) => ({
 
     set({ wsStatus: 'connecting' });
 
+    // Clean up any existing connection and listeners first
+    get().disconnectWS();
+
     try {
       await wsClient.connect();
       set({ wsStatus: 'connected' });
-
-      get().disconnectWS();
 
       const unsubThinking = wsClient.on('agent.thinking.started', (event: any) => {
         const { agentId, agentName, conversationId } = event.data;
@@ -601,5 +626,65 @@ export const useAgentHubStore = create<AgentHubStore>((set, get) => ({
     }
     wsClient.disconnect();
     set({ wsStatus: 'disconnected' });
+  },
+
+  setReplyContext: (replyContext) => set({ replyContext }),
+  setQuoteArtifactRef: (quoteArtifactRef) => set({ quoteArtifactRef }),
+  togglePinMessage: async (messageId) => {
+    const { messages, useMockMode } = get();
+    const targetMsg = messages.find(m => m.id === messageId);
+    if (!targetMsg) return;
+
+    const newPinned = !targetMsg.isPinned;
+
+    if (useMockMode) {
+      set(state => ({
+        messages: state.messages.map(m => m.id === messageId ? { ...m, isPinned: newPinned } : m)
+      }));
+      return;
+    }
+
+    try {
+      set(state => ({
+        messages: state.messages.map(m => m.id === messageId ? { ...m, isPinned: newPinned } : m)
+      }));
+    } catch (e) {
+      console.error('[Store] Pin 消息失败', e);
+    }
+  },
+  saveEditedArtifact: async (artifactId, newContent) => {
+    const { artifacts } = get();
+    const originalArt = artifacts.find(a => a.id === artifactId);
+    if (!originalArt) return;
+
+    const versions = artifacts.filter(a => a.title === originalArt.title);
+    const nextVer = versions.length + 1;
+    const newArtId = `${originalArt.title}-v${nextVer}-${Date.now()}`;
+
+    const newArtifact: Artifact = {
+      ...originalArt,
+      id: newArtId,
+      content: newContent,
+      size: newContent.length,
+      createdAt: getCurrentFullTime(),
+    };
+
+    const editLogMsg: Message = {
+      id: createId('msg'),
+      conversationId: originalArt.conversationId,
+      senderId: 'system',
+      senderName: '系统',
+      role: 'system',
+      type: 'status',
+      content: `用户手动编辑了产物 ${originalArt.title}，已生成新版本 v${nextVer}`,
+      createdAt: getCurrentFullTime(),
+    };
+
+    set(state => ({
+      artifacts: [...state.artifacts, newArtifact],
+      selectedArtifactId: newArtId,
+      selectedArtifactVersion: nextVer,
+      messages: [...state.messages, editLogMsg],
+    }));
   },
 }));
