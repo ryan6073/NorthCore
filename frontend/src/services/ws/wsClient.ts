@@ -147,19 +147,54 @@ class AgentHubWSClient {
   }
 
   private getWebSocketUrl(): string {
-    let baseUrl = 'ws://localhost:8000/ws';
+    let baseUrl = '';
     try {
       const metaEnv = (import.meta as any).env;
       if (metaEnv?.VITE_WS_URL) {
         baseUrl = metaEnv.VITE_WS_URL;
       }
     } catch {
-      baseUrl = 'ws://localhost:8000/ws';
+      // ignore
     }
-    
+
+    if (!baseUrl) {
+      if (typeof window !== 'undefined') {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        baseUrl = `${protocol}//${window.location.host}/ws`;
+      } else {
+        baseUrl = 'ws://localhost:8000/ws';
+      }
+    } else {
+      if (baseUrl.startsWith('/')) {
+        if (typeof window !== 'undefined') {
+          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          baseUrl = `${protocol}//${window.location.host}${baseUrl}`;
+        } else {
+          baseUrl = `ws://localhost:8000${baseUrl}`;
+        }
+      }
+
+      if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+        if (baseUrl.startsWith('ws://')) {
+          baseUrl = baseUrl.replace(/^ws:\/\//, 'wss://');
+        } else if (baseUrl.startsWith('http://')) {
+          baseUrl = baseUrl.replace(/^http:\/\//, 'wss://');
+        } else if (baseUrl.startsWith('https://')) {
+          baseUrl = baseUrl.replace(/^https:\/\//, 'wss://');
+        }
+      } else {
+        if (baseUrl.startsWith('http://')) {
+          baseUrl = baseUrl.replace(/^http:\/\//, 'ws://');
+        } else if (baseUrl.startsWith('https://')) {
+          baseUrl = baseUrl.replace(/^https:\/\//, 'wss://');
+        }
+      }
+    }
+
     const token = localStorage.getItem('auth_token');
     if (token) {
-      return `${baseUrl}?token=${encodeURIComponent(token)}`;
+      const separator = baseUrl.includes('?') ? '&' : '?';
+      return `${baseUrl}${separator}token=${encodeURIComponent(token)}`;
     }
     return baseUrl;
   }
