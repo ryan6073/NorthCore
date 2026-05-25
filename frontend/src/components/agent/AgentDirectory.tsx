@@ -1,18 +1,20 @@
 import React, { useState } from 'react';
 import { Agent } from '@/types';
-import { Search, User } from 'lucide-react';
+import { Search, User, Plus } from 'lucide-react';
 import AgentContactCard from './AgentContactCard';
 
 interface AgentDirectoryProps {
   agents: Agent[];
   selectedAgentId?: string | null;
   onSelectAgent?: (agentId: string) => void;
+  onAddAgent?: () => void;
 }
 
 const AgentDirectory: React.FC<AgentDirectoryProps> = ({
   agents,
   selectedAgentId = null,
-  onSelectAgent
+  onSelectAgent,
+  onAddAgent
 }) => {
   const [keyword, setKeyword] = useState('');
 
@@ -26,7 +28,16 @@ const AgentDirectory: React.FC<AgentDirectoryProps> = ({
       <div className="p-4 border-b border-slate-200 bg-white">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold text-slate-800">联系人</h2>
-          <User className="w-4 h-4 text-slate-500" />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onAddAgent}
+              className="p-1 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-lark-primary transition-all active:scale-95 border border-slate-200 bg-white shadow-sm"
+              title="添加新 Agent"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+            <User className="w-4 h-4 text-slate-500" />
+          </div>
         </div>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />

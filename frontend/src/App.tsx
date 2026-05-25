@@ -31,6 +31,9 @@ function App() {
   const createConversation = useAgentHubStore(state => state.createConversation);
   const sendMessage = useAgentHubStore(state => state.sendMessage);
   const saveAgent = useAgentHubStore(state => state.saveAgent);
+  const createAgent = useAgentHubStore(state => state.createAgent);
+  const deleteAgent = useAgentHubStore(state => state.deleteAgent);
+  const deleteConversation = useAgentHubStore(state => state.deleteConversation);
 
   const activeConversation = conversations.find(
     item => item.id === activeConversationId
@@ -70,8 +73,20 @@ function App() {
   }, [setSelectedAgentId]);
 
   const handleSaveAgent = useCallback(async (updatedAgent: Agent) => {
-    await saveAgent(updatedAgent);
-  }, [saveAgent]);
+    if (updatedAgent.id === 'new') {
+      const { id, lastUsedAt, ...agentData } = updatedAgent;
+      const newId = await createAgent(agentData);
+      setSelectedAgentId(newId);
+    } else {
+      await saveAgent(updatedAgent);
+    }
+  }, [saveAgent, createAgent, setSelectedAgentId]);
+
+  const handleDeleteAgent = useCallback(async (agentId: string) => {
+    await deleteAgent(agentId);
+    setSelectedAgentId(null);
+    setLeftSidebarViewMode('agents');
+  }, [deleteAgent, setSelectedAgentId, setLeftSidebarViewMode]);
 
   const handleBackFromAgentDetail = useCallback(() => {
     setSelectedAgentId(null);
@@ -99,6 +114,8 @@ function App() {
             selectedAgentId={selectedAgentId}
             onSelectAgent={handleSelectAgent}
             onSaveAgent={handleSaveAgent}
+            onDeleteAgent={handleDeleteAgent}
+            onDeleteConversation={deleteConversation}
             onBackFromAgentDetail={handleBackFromAgentDetail}
             viewMode={leftSidebarViewMode}
             setViewMode={setLeftSidebarViewMode}

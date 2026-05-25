@@ -1,16 +1,20 @@
 import React, { useState } from 'react';
 import { Agent } from '@/types';
-import { Edit2, ArrowLeft, Circle, CircleDot, CircleDotDashed } from 'lucide-react';
+import { Edit2, ArrowLeft, Circle, CircleDot, CircleDotDashed, Trash2 } from 'lucide-react';
 import AgentConfigForm from './AgentConfigForm';
+import ConfirmModal from '../modal/ConfirmModal';
 
 interface AgentDetailPanelProps {
   agent: Agent;
   onSave: (updated: Agent) => void;
   onBack: () => void;
+  isNew?: boolean;
+  onDelete?: (id: string) => void;
 }
 
-const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBack }) => {
-  const [isEditing, setIsEditing] = useState(false);
+const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBack, isNew = false, onDelete }) => {
+  const [isEditing, setIsEditing] = useState(isNew);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const renderStatusIcon = () => {
     if (agent.status === 'online') {
@@ -23,7 +27,7 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
   };
 
   if (isEditing) {
-    return <AgentConfigForm agent={agent} onSave={(updated) => { onSave(updated); setIsEditing(false); }} onClose={() => setIsEditing(false)} />;
+    return <AgentConfigForm agent={agent} onSave={(updated) => { onSave(updated); setIsEditing(false); }} onClose={() => { if (isNew) { onBack(); } else { setIsEditing(false); } }} />;
   }
 
   return (
@@ -38,15 +42,28 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
-          <h3 className="text-sm font-semibold text-lark-text-primary">Agent 详情</h3>
+          <h3 className="text-sm font-semibold text-lark-text-primary">
+            {isNew ? '新建智能体' : 'Agent 详情'}
+          </h3>
         </div>
-        <button 
-          onClick={() => setIsEditing(true)} 
-          className="p-1.5 rounded-lg hover:bg-lark-bg-hover text-lark-text-secondary hover:text-lark-primary transition-all active:scale-95 border border-lark-border bg-white shadow-sm"
-          title="编辑配置"
-        >
-          <Edit2 className="w-3.5 h-3.5" />
-        </button>
+        <div className="flex items-center gap-2">
+          {!isNew && onDelete && (
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500 transition-all active:scale-95 border border-lark-border bg-white shadow-sm"
+              title="删除 Agent"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <button 
+            onClick={() => setIsEditing(true)} 
+            className="p-1.5 rounded-lg hover:bg-lark-bg-hover text-lark-text-secondary hover:text-lark-primary transition-all active:scale-95 border border-lark-border bg-white shadow-sm"
+            title="编辑配置"
+          >
+            <Edit2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Profile */}
@@ -133,6 +150,17 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
           </div>
         )}
       </div>
+
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="确认删除智能体吗？"
+        content={`确定要删除智能体 "${agent.name}" 吗？该操作将从系统联系人中永久移除，且不可恢复。`}
+        confirmText="删除"
+        cancelText="取消"
+        type="danger"
+        onConfirm={() => onDelete?.(agent.id)}
+        onClose={() => setShowDeleteConfirm(false)}
+      />
     </div>
   );
 };

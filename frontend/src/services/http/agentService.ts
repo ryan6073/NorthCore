@@ -34,10 +34,24 @@ export async function updateAgentDetail(
   return await http.put(`/agents/${agentId}`, payload);
 }
 
+export async function createAgent(
+  payload: Omit<AgentListItem, 'id' | 'lastUsedAt'>
+): Promise<BaseApiResponse<AgentDetail>> {
+  return await http.post('/agents', payload);
+}
+
+export async function deleteAgent(
+  agentId: string
+): Promise<BaseApiResponse<boolean>> {
+  return await http.delete(`/agents/${agentId}`);
+}
+
 const agentService = {
   getAgentList,
   getAgentDetail,
   updateAgentDetail,
+  createAgent,
+  deleteAgent,
 };
 
 export default agentService;

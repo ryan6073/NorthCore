@@ -14,6 +14,8 @@ interface MessageBubbleProps {
 
 const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
   const [copied, setCopied] = useState(false);
+  const [mouseY, setMouseY] = useState<number | null>(null);
+  const [isHoveringBar, setIsHoveringBar] = useState(false);
   const isUser = message.role === 'user';
   const isOrchestrator = message.role === 'orchestrator';
   const agentInfo = !isUser && message.senderName 
@@ -24,6 +26,22 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
   const togglePinMessage = useAgentHubStore(state => state.togglePinMessage);
   const setSelectedArtifactId = useAgentHubStore(state => state.setSelectedArtifactId);
   const setSelectedArtifactVersion = useAgentHubStore(state => state.setSelectedArtifactVersion);
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (isHoveringBar) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const relativeY = e.clientY - rect.top;
+    const barHeight = 34; // approximate height of the action bar
+    const padding = 6;    // padding from top/bottom edges
+    const minTop = padding;
+    const maxTop = Math.max(padding, rect.height - barHeight - padding);
+    const computedTop = Math.min(maxTop, Math.max(minTop, relativeY - barHeight / 2));
+    setMouseY(computedTop);
+  };
+
+  const handleMouseLeave = () => {
+    setIsHoveringBar(false);
+  };
 
   const getPreciseTime = (timeStr: string) => {
     if (!timeStr) return '';
@@ -131,13 +149,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
             )
           )}
 
-          {/* Golden Pin Badge */}
-          {message.isPinned && (
-            <div className="absolute -top-1.5 -right-1.5 bg-yellow-50 border border-yellow-200 text-yellow-600 rounded-full p-0.5 shadow-sm z-10 flex items-center justify-center" title="已 Pin 为长期记忆">
-              <Pin className="w-2.5 h-2.5 fill-yellow-500 text-yellow-600" />
-            </div>
-          )}
-
           <div className={`w-full flex flex-col gap-1.5 relative ${isUser ? 'items-end' : 'items-start'}`}>
             {/* 1. Reply quote display if exists */}
             {message.quotedMessage && (
@@ -177,17 +188,40 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
             )}
 
             {/* 3. Main Message bubble content */}
-            <div className={`relative group/bubble-content max-w-full ${
-              isBlockType 
-                ? 'w-full self-stretch' 
-                : isUser 
-                  ? 'self-end w-fit' 
-                  : 'self-start w-fit'
-            }`}>
+            <div 
+              onMouseMove={handleMouseMove}
+              onMouseLeave={handleMouseLeave}
+              className={`relative group/bubble-content max-w-full ${
+                isBlockType 
+                  ? 'w-full self-stretch' 
+                  : isUser 
+                    ? 'self-end w-fit' 
+                    : 'self-start w-fit'
+              }`}
+            >
+              {/* Golden Pin Badge (Clickable to Unpin) */}
+              {message.isPinned && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handlePin();
+                  }}
+                  className={`absolute -top-2 ${isUser ? '-left-2' : '-right-2'} bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-650 border border-amber-500 text-white rounded-full p-1 shadow-[0_0_8px_rgba(245,158,11,0.45)] z-20 flex items-center justify-center transition-all hover:scale-110 active:scale-95 animate-bounce-subtle`}
+                  title="点击取消 Pin"
+                >
+                  <Pin className="w-3 h-3 fill-white text-white" />
+                </button>
+              )}
+
               {/* Hover Action Bar: Right next to the bubble content box */}
               <div 
-                className={`absolute top-2 opacity-0 group-hover/bubble-content:opacity-100 transition-all duration-150 flex items-center gap-1 bg-white border border-slate-200 shadow-md rounded-lg p-1 z-30
-                  ${isUser ? 'right-full mr-3' : 'left-full ml-3'}`}
+                onMouseEnter={() => setIsHoveringBar(true)}
+                onMouseLeave={() => setIsHoveringBar(false)}
+                style={{ top: mouseY !== null ? `${mouseY}px` : '8px' }}
+                className={`absolute opacity-0 group-hover/bubble-content:opacity-100 transition-opacity duration-150 flex items-center gap-1 bg-white border border-slate-200 shadow-md rounded-lg p-1 z-30
+                  ${isUser 
+                    ? 'right-full mr-3 after:absolute after:-right-4 after:top-0 after:bottom-0 after:w-4 after:content-[\'\']' 
+                    : 'left-full ml-3 before:absolute before:-left-4 before:top-0 before:bottom-0 before:w-4 before:content-[\'\']'}`}
               >
                 <button
                   onClick={handleReply}
@@ -200,12 +234,12 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
                   onClick={handlePin}
                   className={`p-1 rounded transition-colors ${
                     message.isPinned 
-                      ? 'text-yellow-600 hover:bg-yellow-50' 
-                      : 'text-slate-400 hover:text-yellow-600 hover:bg-slate-50'
+                      ? 'text-amber-600 bg-amber-50 hover:bg-amber-100' 
+                      : 'text-slate-400 hover:text-amber-600 hover:bg-slate-50/50'
                   }`}
                   title={message.isPinned ? "取消 Pin 长期记忆" : "Pin 为长期记忆"}
                 >
-                  <Pin className={`w-3.5 h-3.5 ${message.isPinned ? 'fill-yellow-500' : ''}`} />
+                  <Pin className={`w-3.5 h-3.5 ${message.isPinned ? 'fill-amber-500 text-amber-600' : ''}`} />
                 </button>
                 <button
                   onClick={handleCopy}
@@ -222,16 +256,24 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
 
               {/* Main Content Box */}
               {isBlockType ? (
-                <div className="w-full self-stretch">
+                <div className={`w-full self-stretch transition-all duration-300 ${
+                  message.isPinned 
+                    ? 'shadow-[0_0_12px_rgba(245,158,11,0.15)] ring-1 ring-amber-400/25 rounded-xl border border-amber-300 p-1 bg-amber-50/20' 
+                    : ''
+                }`}>
                   {renderContent()}
                 </div>
               ) : (
-                <div className={`px-4 py-2.5 rounded-xl text-sm leading-relaxed shadow-sm ${
-                  isUser 
-                    ? 'bg-[#deebff] text-lark-text-primary rounded-tr-none border border-[#c3dbff]' 
-                    : isOrchestrator
-                      ? 'bg-[#f5f5fc] border border-indigo-100 text-lark-text-primary rounded-tl-none'
-                      : 'bg-white border border-lark-border text-lark-text-primary rounded-tl-none'
+                <div className={`px-4 py-2.5 rounded-xl text-sm leading-relaxed shadow-sm transition-all duration-300 ${
+                  message.isPinned
+                    ? `bg-amber-50/60 border border-amber-300 text-lark-text-primary shadow-[0_0_12px_rgba(245,158,11,0.15)] ring-1 ring-amber-400/20 ${
+                        isUser ? 'rounded-tr-none' : 'rounded-tl-none'
+                      }`
+                    : isUser 
+                      ? 'bg-[#deebff] text-lark-text-primary rounded-tr-none border border-[#c3dbff]' 
+                      : isOrchestrator
+                        ? 'bg-[#f5f5fc] border border-indigo-100 text-lark-text-primary rounded-tl-none'
+                        : 'bg-white border border-lark-border text-lark-text-primary rounded-tl-none'
                 }`}>
                   {renderContent()}
                 </div>

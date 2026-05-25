@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Conversation, Agent } from '@/types';
-import { Plus, Search, MessageSquare, Users } from 'lucide-react';
+import { Plus, Search, MessageSquare, Users, Trash2 } from 'lucide-react';
 import AgentDirectory from '../agent/AgentDirectory';
 import AgentDetailPanel from '../agent/AgentDetailPanel';
+import ConfirmModal from '../modal/ConfirmModal';
 
 interface LeftSidebarProps {
   conversations: Conversation[];
@@ -13,10 +14,43 @@ interface LeftSidebarProps {
   selectedAgentId: string | null;
   onSelectAgent: (agentId: string) => void;
   onSaveAgent: (updated: Agent) => void;
+  onDeleteAgent: (agentId: string) => void;
+  onDeleteConversation: (id: string) => void;
   onBackFromAgentDetail: () => void;
   viewMode: 'conversations' | 'agents' | 'agent-detail';
   setViewMode: (mode: 'conversations' | 'agents' | 'agent-detail') => void;
 }
+
+const getNewAgentTemplate = (): Agent => ({
+  id: 'new',
+  name: '新建智能体',
+  avatar: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=cute%20robot%20avatar%20cartoon%20avatar&image_size=square',
+  description: '这是一个自定义配置的开发/功能型 AI 智能体。',
+  tags: ['新建'],
+  status: 'offline',
+  category: 'coding',
+  provider: 'custom',
+  enabled: true,
+  lastUsedAt: '',
+  systemPrompt: '你是一个专业的协作助手，协助用户处理各种任务。',
+  modelConfig: {
+    provider: 'custom',
+    modelName: 'gpt-4o',
+    temperature: 0.7,
+    maxTokens: 4096
+  },
+  tools: [
+    { id: 'file_read', name: '读文件', description: '读取文件内容', enabled: false },
+    { id: 'file_write', name: '写文件', description: '写入或修改文件', enabled: false }
+  ],
+  permissions: {
+    canReadFiles: false,
+    canWriteFiles: false,
+    canRunCommands: false,
+    canGenerateArtifacts: false,
+    canDeploy: false
+  }
+});
 
 const LeftSidebar: React.FC<LeftSidebarProps> = ({
   conversations,
@@ -27,11 +61,15 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
   selectedAgentId,
   onSelectAgent,
   onSaveAgent,
+  onDeleteAgent,
+  onDeleteConversation,
   onBackFromAgentDetail,
   viewMode,
   setViewMode
 }) => {
   const [keyword, setKeyword] = useState('');
+  const [deleteConvId, setDeleteConvId] = useState<string | null>(null);
+  const [deleteConvTitle, setDeleteConvTitle] = useState<string>('');
 
   const filteredConversations = conversations.filter(conv =>
     conv.title.toLowerCase().includes(keyword.toLowerCase())
@@ -88,7 +126,9 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
     );
   };
 
-  const selectedAgent = agents.find(a => a.id === selectedAgentId);
+  const selectedAgent = selectedAgentId === 'new'
+    ? getNewAgentTemplate()
+    : agents.find(a => a.id === selectedAgentId);
 
   return (
     <div className="w-full h-full bg-lark-sidebar-bg flex flex-col border-r border-lark-border overflow-hidden">
@@ -158,7 +198,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                 <div
                   key={conv.id}
                   onClick={() => onSelectConversation(conv.id)}
-                  className={`p-2.5 rounded-lg cursor-pointer transition-all duration-150 relative ${
+                  className={`p-2.5 rounded-lg cursor-pointer transition-all duration-150 relative group ${
                     isActive
                       ? 'bg-lark-primary-light text-lark-primary'
                       : 'hover:bg-lark-bg-hover'
@@ -169,14 +209,14 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                   )}
                   <div className="flex items-center gap-3">
                     {renderConversationAvatar(conv)}
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-0 pr-4">
                       <div className="flex items-center justify-between mb-0.5">
                         <div className="flex items-center gap-1.5 min-w-0">
                           <h3 className={`text-sm font-medium truncate ${
                             isActive ? 'text-lark-primary font-semibold' : 'text-lark-text-primary'
                           }`}>{conv.title}</h3>
                         </div>
-                        <span className="text-[10px] text-lark-text-tertiary flex-shrink-0 font-normal">
+                        <span className="text-[10px] text-lark-text-tertiary flex-shrink-0 font-normal group-hover:opacity-0 transition-opacity">
                           {conv.updatedAt.split(' ').pop()}
                         </span>
                       </div>
@@ -185,6 +225,19 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                       }`}>{conv.lastMessage || '暂无消息'}</p>
                     </div>
                   </div>
+
+                  {/* Hover Delete Button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteConvId(conv.id);
+                      setDeleteConvTitle(conv.title);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity absolute right-2.5 top-1/2 -translate-y-1/2 bg-white/95 hover:bg-red-50 hover:text-red-500 text-slate-400 p-1.5 rounded-lg shadow-sm border border-lark-border/50 z-20 active:scale-95 flex items-center justify-center"
+                    title="删除会话"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               );
             })
@@ -200,19 +253,40 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
             onSelectAgent(agentId);
             setViewMode('agent-detail');
           }}
+          onAddAgent={() => {
+            onSelectAgent('new');
+            setViewMode('agent-detail');
+          }}
         />
       )}
 
       {viewMode === 'agent-detail' && selectedAgent && (
         <AgentDetailPanel
           agent={selectedAgent}
+          isNew={selectedAgentId === 'new'}
           onSave={onSaveAgent}
+          onDelete={onDeleteAgent}
           onBack={() => {
             onBackFromAgentDetail();
             setViewMode('agents');
           }}
         />
       )}
+
+      <ConfirmModal
+        open={deleteConvId !== null}
+        title="确认删除会话吗？"
+        content={`删除会话 "${deleteConvTitle}" 将会清空所有聊天记录与历史消息。该操作不可撤销，请谨慎操作。`}
+        confirmText="删除"
+        cancelText="取消"
+        type="danger"
+        onConfirm={() => {
+          if (deleteConvId) {
+            onDeleteConversation(deleteConvId);
+          }
+        }}
+        onClose={() => setDeleteConvId(null)}
+      />
     </div>
   );
 };

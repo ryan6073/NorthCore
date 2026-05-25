@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem } from '@/types';
-import { getAgentList, updateAgentDetail } from '@/services/http/agentService';
-import { getConversationList, createConversation as createConversationApi, updateConversation, compressContext, pinMessage, unpinMessage } from '@/services/http/conversationService';
+import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem } from '@/types';
+import { getAgentList, updateAgentDetail, createAgent as createAgentApi, deleteAgent as deleteAgentApi } from '@/services/http/agentService';
+import { getConversationList, createConversation as createConversationApi, updateConversation, compressContext, pinMessage, unpinMessage, getPins, getMemories, deleteMemory, deleteConversation } from '@/services/http/conversationService';
 import { getMessageList, getMentionAgents as getMentionAgentsApi } from '@/services/http/messageService';
 import { getArtifactMetaList, getArtifactDetail, getArtifactVersions, updateArtifactContent } from '@/services/http/artifactService';
 import wsClient from '@/services/ws/wsClient';
@@ -18,6 +18,8 @@ interface AgentHubStore {
   messages: Message[];
   artifacts: Artifact[];
   artifactVersions: Record<string, ArtifactVersion[]>;
+  pins: PinItem[];
+  memories: MemoryItem[];
   activeConversationId: string | null;
   selectedArtifactId: string | null;
   selectedArtifactVersion: number | null;
@@ -53,10 +55,14 @@ interface AgentHubStore {
   getMentionAgents: (keyword?: string) => Promise<AgentMentionItem[]>;
   compressContext: () => Promise<void>;
   togglePinMessage: (messageId: string) => Promise<void>;
+  deleteMemory: (memoryId: string) => Promise<void>;
   saveEditedArtifact: (artifactId: string, newContent: string) => Promise<void>;
   
   sendMessage: (content: string, attachments?: MessageAttachment[], targetAgentId?: string) => Promise<void>;
   saveAgent: (agent: Agent) => Promise<void>;
+  createAgent: (agent: Omit<Agent, 'id' | 'lastUsedAt'>) => Promise<string>;
+  deleteAgent: (agentId: string) => Promise<void>;
+  deleteConversation: (id: string) => Promise<void>;
   renameConversation: (id: string, newTitle: string) => Promise<void>;
   loadArtifactContent: (artifactId: string) => Promise<void>;
   
@@ -70,6 +76,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   messages: [],
   artifacts: [],
   artifactVersions: {},
+  pins: [],
+  memories: [],
   activeConversationId: null,
   selectedArtifactId: null,
   selectedArtifactVersion: null,
@@ -182,9 +190,53 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     if (useMockMode) {
       const activeMsgs = mockMessages.filter(m => m.conversationId === convId);
       const activeArts = mockArtifacts.filter(a => a.conversationId === convId);
+      const activePins = activeMsgs.filter(m => m.isPinned).map(m => ({
+        id: `pin-${m.id}`,
+        conversationId: convId,
+        messageId: m.id,
+        createdAt: m.createdAt,
+        message: m
+      }));
+      const mockMemories = [
+        {
+          id: `mem-${convId}-1`,
+          conversationId: convId,
+          category: 'constraint' as const,
+          content: '用户偏好使用 TypeScript + TailwindCSS 进行前端组件化设计',
+          confidence: 0.95,
+          sourceMessageId: activeMsgs[0]?.id || 'msg-1',
+          active: true,
+          createdAt: getCurrentFullTime(),
+          updatedAt: getCurrentFullTime()
+        },
+        {
+          id: `mem-${convId}-2`,
+          conversationId: convId,
+          category: 'project' as const,
+          content: '当前项目为 AgentHub 多智能体协作平台，支持双向分栏与实时产物预览',
+          confidence: 0.9,
+          sourceMessageId: activeMsgs[0]?.id || 'msg-1',
+          active: true,
+          createdAt: getCurrentFullTime(),
+          updatedAt: getCurrentFullTime()
+        },
+        {
+          id: `mem-${convId}-3`,
+          conversationId: convId,
+          category: 'preference' as const,
+          content: '聊天信息交互需保持响应迅速，动画过渡流畅，并支持代码级划词引用',
+          confidence: 0.88,
+          sourceMessageId: activeMsgs[0]?.id || 'msg-1',
+          active: true,
+          createdAt: getCurrentFullTime(),
+          updatedAt: getCurrentFullTime()
+        }
+      ];
       set({
         messages: activeMsgs,
         artifacts: activeArts,
+        pins: activePins,
+        memories: mockMemories,
       });
       if (activeArts.length > 0) {
         set({ selectedArtifactId: activeArts[0].id });
@@ -193,11 +245,37 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     }
 
     try {
-      const msgRes = await getMessageList(convId);
-      if (msgRes.code === 0) {
-        set({ messages: msgRes.data.list });
+      const [msgRes, pinsRes, memoriesRes, artifactRes] = await Promise.all([
+        getMessageList(convId),
+        getPins(convId),
+        getMemories(convId),
+        getArtifactMetaList(convId)
+      ]);
+
+      let pinsData: PinItem[] = [];
+      if (pinsRes.code === 0) {
+        pinsData = pinsRes.data;
       }
-      const artifactRes = await getArtifactMetaList(convId);
+
+      let memoriesData: MemoryItem[] = [];
+      if (memoriesRes.code === 0) {
+        memoriesData = memoriesRes.data;
+      }
+
+      let messagesData: Message[] = [];
+      if (msgRes.code === 0) {
+        messagesData = msgRes.data.list.map((m: Message) => ({
+          ...m,
+          isPinned: pinsData.some(p => p.messageId === m.id)
+        }));
+      }
+
+      set({
+        messages: messagesData,
+        pins: pinsData,
+        memories: memoriesData
+      });
+
       if (artifactRes.code === 0) {
         const arts: Artifact[] = artifactRes.data;
         set({ artifacts: arts });
@@ -509,6 +587,82 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     }
   },
 
+  createAgent: async (agentData) => {
+    const { useMockMode } = get();
+    if (!useMockMode) {
+      try {
+        const res = await createAgentApi(agentData);
+        if (res.code === 0) {
+          set(state => ({
+            agents: [...state.agents, res.data]
+          }));
+          return res.data.id;
+        }
+      } catch (e) {
+        console.error('[Store] 创建 Agent 失败，降级至 Mock 模式处理', e);
+      }
+    }
+
+    // Mock Mode fallback
+    const newId = createId('agent');
+    const newAgent: Agent = {
+      ...agentData,
+      id: newId,
+      lastUsedAt: getCurrentFullTime()
+    } as Agent;
+
+    set(state => ({
+      agents: [...state.agents, newAgent]
+    }));
+    return newId;
+  },
+
+  deleteAgent: async (agentId) => {
+    const { useMockMode } = get();
+    if (!useMockMode) {
+      try {
+        const res = await deleteAgentApi(agentId);
+        if (res.code === 0) {
+          set(state => ({
+            agents: state.agents.filter(a => a.id !== agentId)
+          }));
+        }
+      } catch (e) {
+        console.error('[Store] 删除 Agent 失败，降级至 Mock 模式处理', e);
+      }
+    } else {
+      set(state => ({
+        agents: state.agents.filter(a => a.id !== agentId)
+      }));
+    }
+  },
+
+  deleteConversation: async (id) => {
+    const { useMockMode, activeConversationId, conversations } = get();
+    if (!useMockMode) {
+      try {
+        const res = await deleteConversation(id);
+        if (res.code === 0) {
+          const updatedConversations = conversations.filter(c => c.id !== id);
+          set({ conversations: updatedConversations });
+          if (activeConversationId === id) {
+            const nextActiveId = updatedConversations.length > 0 ? updatedConversations[0].id : null;
+            await get().setActiveConversationId(nextActiveId);
+          }
+        }
+      } catch (e) {
+        console.error('[Store] 删除会话失败', e);
+      }
+    } else {
+      const updatedConversations = conversations.filter(c => c.id !== id);
+      set({ conversations: updatedConversations });
+      if (activeConversationId === id) {
+        const nextActiveId = updatedConversations.length > 0 ? updatedConversations[0].id : null;
+        await get().setActiveConversationId(nextActiveId);
+      }
+    }
+  },
+
   renameConversation: async (id, newTitle) => {
     const { useMockMode } = get();
     if (!useMockMode) {
@@ -744,15 +898,29 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   setReplyContext: (replyContext) => set({ replyContext }),
   setQuoteArtifactRef: (quoteArtifactRef) => set({ quoteArtifactRef }),
   togglePinMessage: async (messageId) => {
-    const { messages, useMockMode, activeConversationId } = get();
+    const { messages, useMockMode, activeConversationId, pins } = get();
     const targetMsg = messages.find(m => m.id === messageId);
     if (!targetMsg) return;
 
     const newPinned = !targetMsg.isPinned;
 
     if (useMockMode) {
+      let updatedPins = [...pins];
+      if (newPinned) {
+        updatedPins.push({
+          id: `pin-${messageId}-${Date.now()}`,
+          conversationId: activeConversationId || '',
+          messageId: messageId,
+          createdAt: getCurrentFullTime(),
+          message: { ...targetMsg, isPinned: true }
+        });
+      } else {
+        updatedPins = updatedPins.filter(p => p.messageId !== messageId);
+      }
+
       set(state => ({
-        messages: state.messages.map(m => m.id === messageId ? { ...m, isPinned: newPinned } : m)
+        messages: state.messages.map(m => m.id === messageId ? { ...m, isPinned: newPinned } : m),
+        pins: updatedPins
       }));
       return;
     }
@@ -761,15 +929,46 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     
     try {
       if (newPinned) {
-        await pinMessage(activeConversationId, messageId);
+        const res = await pinMessage(activeConversationId, messageId);
+        if (res.code === 0) {
+          set(state => ({
+            messages: state.messages.map(m => m.id === messageId ? { ...m, isPinned: true } : m),
+            pins: [...state.pins, res.data]
+          }));
+        }
       } else {
-        await unpinMessage(activeConversationId, messageId);
+        const res = await unpinMessage(activeConversationId, messageId);
+        if (res.code === 0) {
+          set(state => ({
+            messages: state.messages.map(m => m.id === messageId ? { ...m, isPinned: false } : m),
+            pins: state.pins.filter(p => p.messageId !== messageId)
+          }));
+        }
       }
-      set(state => ({
-        messages: state.messages.map(m => m.id === messageId ? { ...m, isPinned: newPinned } : m)
-      }));
     } catch (e) {
       console.error('[Store] Pin 消息失败', e);
+    }
+  },
+
+  deleteMemory: async (memoryId) => {
+    const { useMockMode, activeConversationId } = get();
+    if (useMockMode) {
+      set(state => ({
+        memories: state.memories.filter(m => m.id !== memoryId)
+      }));
+      return;
+    }
+
+    if (!activeConversationId) return;
+    try {
+      const res = await deleteMemory(activeConversationId, memoryId);
+      if (res.code === 0) {
+        set(state => ({
+          memories: state.memories.filter(m => m.id !== memoryId)
+        }));
+      }
+    } catch (e) {
+      console.error('[Store] 删除记忆失败', e);
     }
   },
   saveEditedArtifact: async (artifactId, newContent) => {
