@@ -25,14 +25,14 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
       return <TaskPlanCard content={message.content} />;
     }
     if (message.type === 'artifact') {
-      return <ArtifactMessage content={message.content} />;
+      return <ArtifactMessage message={message} />;
     }
     return <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>;
   };
 
   if (isOrchestrator) {
     return (
-      <div className="flex gap-3.5 mb-4 w-full max-w-3xl animate-fade-in">
+      <div id={`msg-${message.id}`} className="flex gap-3.5 mb-4 w-full max-w-3xl animate-fade-in transition-all duration-300">
         <div className="w-9 h-9 rounded-lg bg-indigo-100 border border-indigo-200 flex-shrink-0 overflow-hidden flex items-center justify-center shadow-sm">
           <Sparkles className="w-4 h-4 text-indigo-600" />
         </div>
@@ -50,7 +50,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
   }
 
   return (
-    <div className={`flex gap-3.5 mb-4 w-full ${isUser ? 'flex-row-reverse' : ''} animate-fade-in`}>
+    <div id={`msg-${message.id}`} className={`flex gap-3.5 mb-4 w-full ${isUser ? 'flex-row-reverse' : ''} animate-fade-in transition-all duration-300`}>
       {/* Avatar */}
       <div className={`w-9 h-9 flex-shrink-0 overflow-hidden flex items-center justify-center shadow-sm ${
         isUser ? 'rounded-full bg-lark-primary' : 'rounded-lg bg-white border border-lark-border'

@@ -2,23 +2,19 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Artifact, Agent } from '@/types';
 import AgentList from '../agent/AgentList';
 import ArtifactList from '../artifact/ArtifactList';
-import ArtifactPreview from '../artifact/ArtifactPreview';
+import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface RightPanelProps {
   agents: Agent[];
   artifacts: Artifact[];
-  selectedArtifactId: string | null;
   onSelectArtifact: (artifactId: string) => void;
-  selectedArtifact: Artifact | null;
   onOpenFullScreenPreview: () => void;
 }
 
 const RightPanel: React.FC<RightPanelProps> = ({
   agents,
   artifacts,
-  selectedArtifactId,
   onSelectArtifact,
-  selectedArtifact,
   onOpenFullScreenPreview
 }) => {
   const [topHeight, setTopHeight] = useState(240);
@@ -60,6 +56,30 @@ const RightPanel: React.FC<RightPanelProps> = ({
     };
   }, [handleMouseMove, handleMouseUp]);
 
+  // Jump to the message where this artifact was created
+  const handleJumpToMessage = useCallback((artifactId: string) => {
+    const messages = useAgentHubStore.getState().messages;
+    const msg = messages.find(m => m.artifactId === artifactId);
+    if (msg) {
+      const element = document.getElementById(`msg-${msg.id}`);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        element.classList.add('animate-highlight-flash');
+        setTimeout(() => {
+          element.classList.remove('animate-highlight-flash');
+        }, 1500);
+      }
+    }
+  }, []);
+
+  // Set selected artifact and open fullscreen modal
+  const handleFullScreenPreview = useCallback((artifactId: string) => {
+    onSelectArtifact(artifactId);
+    setTimeout(() => {
+      onOpenFullScreenPreview();
+    }, 50);
+  }, [onSelectArtifact, onOpenFullScreenPreview]);
+
   return (
     <div className="bg-lark-sidebar-bg h-full flex flex-col border-l border-lark-border w-full min-w-0">
       <div style={{ height: topHeight, minHeight: 150 }} className="border-b border-lark-border/60 overflow-hidden bg-white">
@@ -72,20 +92,12 @@ const RightPanel: React.FC<RightPanelProps> = ({
           before:content-[''] before:absolute before:-top-1 before:bottom-1 before:left-0 before:right-0 before:h-3 before:bg-transparent"
       />
 
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0 bg-white">
+      <div className="flex-grow flex flex-col overflow-hidden min-w-0 bg-white">
         <ArtifactList
           artifacts={artifacts}
-          selectedArtifactId={selectedArtifactId}
-          onSelectArtifact={onSelectArtifact}
+          onJumpToMessage={handleJumpToMessage}
+          onFullScreenPreview={handleFullScreenPreview}
         />
-        {selectedArtifact && (
-          <div className="flex-1 border-t border-lark-border/60 overflow-hidden min-h-0 bg-white">
-            <ArtifactPreview 
-              artifact={selectedArtifact} 
-              onOpenFullScreen={onOpenFullScreenPreview}
-            />
-          </div>
-        )}
       </div>
     </div>
   );

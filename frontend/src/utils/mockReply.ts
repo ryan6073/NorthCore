@@ -40,19 +40,6 @@ function generateSingleAgentReply(params: {
   ];
 
   if (targetAgent.id === 'agent-claude-code' || targetAgent.id === 'agent-codex') {
-    const codeMsgId = createId('msg');
-    messages.push({
-      id: codeMsgId,
-      conversationId: params.conversation.id,
-      senderId: targetAgent.id,
-      senderName: targetAgent.name,
-      role: 'agent',
-      type: 'code',
-      language: 'tsx',
-      content: `import React from 'react';\n\n// 自动生成的组件\nconst GeneratedPage: React.FC = () => {\n  return <div>Hello World</div>;\n};\n\nexport default GeneratedPage;`,
-      createdAt: getCurrentFullTime()
-    });
-
     const newArtifactId = createId('art');
     messages.push({
       id: createId('msg'),
@@ -80,7 +67,6 @@ function generateSingleAgentReply(params: {
 
   return { messages, artifacts: [] };
 }
-
 function generateGroupAgentReply(params: {
   conversation: Conversation;
   agents: Agent[];
@@ -91,6 +77,9 @@ function generateGroupAgentReply(params: {
   const codeAgent = params.agents.find(a => a.id === 'agent-codex' || a.id === 'agent-claude-code');
   const reviewAgent = params.agents.find(a => a.id === 'agent-review');
   const docAgent = params.agents.find(a => a.id === 'agent-doc');
+
+  const pageArtifactId = createId('art');
+  const readmeArtifactId = createId('art');
 
   const messages: Message[] = [];
 
@@ -132,16 +121,15 @@ function generateGroupAgentReply(params: {
   }
 
   if (codeAgent) {
-    const codeMsgId = createId('msg');
     messages.push({
-      id: codeMsgId,
+      id: createId('msg'),
       conversationId: params.conversation.id,
       senderId: codeAgent.id,
       senderName: codeAgent.name,
       role: 'agent',
-      type: 'code',
-      language: 'tsx',
-      content: `import React from 'react';\n\nconst AutoPage: React.FC = () => {\n  return (\n    <div className="min-h-screen bg-white">\n      <h1 className="text-2xl font-bold">Auto Generated Page</h1>\n    </div>\n  );\n};\n\nexport default AutoPage;`,
+      type: 'artifact',
+      artifactId: pageArtifactId,
+      content: '生成产物 AutoPage.tsx',
       createdAt: getCurrentFullTime()
     });
   }
@@ -170,6 +158,18 @@ function generateGroupAgentReply(params: {
       content: 'README文档已生成，包含项目介绍和使用说明。',
       createdAt: getCurrentFullTime()
     });
+
+    messages.push({
+      id: createId('msg'),
+      conversationId: params.conversation.id,
+      senderId: docAgent.id,
+      senderName: docAgent.name,
+      role: 'agent',
+      type: 'artifact',
+      artifactId: readmeArtifactId,
+      content: '生成产物 README.md',
+      createdAt: getCurrentFullTime()
+    });
   }
 
   if (orchestrator) {
@@ -187,7 +187,7 @@ function generateGroupAgentReply(params: {
 
   const artifacts: Artifact[] = [
     {
-      id: createId('art'),
+      id: pageArtifactId,
       conversationId: params.conversation.id,
       title: 'AutoPage.tsx',
       type: 'code',
@@ -195,7 +195,7 @@ function generateGroupAgentReply(params: {
       createdAt: getCurrentFullTime()
     },
     {
-      id: createId('art'),
+      id: readmeArtifactId,
       conversationId: params.conversation.id,
       title: 'README.md',
       type: 'markdown',

@@ -49,3 +49,19 @@ body {
 *:hover {
   scrollbar-color: rgba(148, 163, 184, 0.5) transparent;
 }
+
+/* Highlight Flash Animation for jumping to message */
+@keyframes highlight-flash {
+  0% {
+    background-color: rgba(37, 99, 235, 0.2);
+    box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.15);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
+
+.animate-highlight-flash {
+  animation: highlight-flash 1.5s ease-out;
+}

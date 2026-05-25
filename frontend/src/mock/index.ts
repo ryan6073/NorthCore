@@ -261,65 +261,6 @@ export const mockMessages: Message[] = [
     createdAt: '2026-05-22 14:29'
   },
   {
-    id: 'msg-3',
-    conversationId: 'conv-single-login',
-    senderId: 'agent-claude-code',
-    senderName: 'Claude Code',
-    role: 'agent',
-    type: 'code',
-    language: 'tsx',
-    content: `import React, { useState } from 'react';
-
-const LoginPage: React.FC = () => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    console.log('Login:', { username, password });
-  };
-  
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-100">
-      <div className="bg-white p-8 rounded-2xl shadow-lg w-96">
-        <h2 className="text-2xl font-bold text-center mb-6">登录</h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">用户名</label>
-            <input 
-              type="text" 
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full px-4 py-2 border border-slate-300 rounded-lg"
-              placeholder="请输入用户名"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">密码</label>
-            <input 
-              type="password" 
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-2 border border-slate-300 rounded-lg"
-              placeholder="请输入密码"
-            />
-          </div>
-          <button 
-            type="submit" 
-            className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700"
-          >
-            登录
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-};
-
-export default LoginPage;`,
-    createdAt: '2026-05-22 14:30'
-  },
-  {
     id: 'msg-4',
     conversationId: 'conv-single-login',
     senderId: 'agent-claude-code',
@@ -371,37 +312,14 @@ export default LoginPage;`,
     createdAt: '2026-05-22 15:13'
   },
   {
-    id: 'msg-g5',
+    id: 'msg-g5-artifact',
     conversationId: 'conv-group-website',
     senderId: 'agent-codex',
     senderName: 'Codex',
     role: 'agent',
-    type: 'code',
-    language: 'tsx',
-    content: `import React from 'react';
-
-const HomePage: React.FC = () => {
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
-      <nav className="px-8 py-4 bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <h1 className="text-xl font-bold text-blue-600">AgentHub</h1>
-          <div className="space-x-6 text-slate-600">
-            <a href="#" className="hover:text-blue-600">功能</a>
-            <a href="#" className="hover:text-blue-600">文档</a>
-            <a href="#" className="hover:text-blue-600">关于</a>
-          </div>
-        </div>
-      </nav>
-      <section className="py-20 text-center">
-        <h2 className="text-4xl font-bold text-slate-800 mb-4">多Agent协作平台</h2>
-        <p className="text-lg text-slate-600 max-w-2xl mx-auto">让多个AI Agent协同工作，高效完成复杂任务</p>
-      </section>
-    </div>
-  );
-};
-
-export default HomePage;`,
+    type: 'artifact',
+    artifactId: 'art-home-page',
+    content: '生成产物 HomePage.tsx',
     createdAt: '2026-05-22 15:15'
   },
   {

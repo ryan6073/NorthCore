@@ -7,30 +7,44 @@ import CodeDiffViewer from './CodeDiffViewer';
 
 interface ArtifactPreviewProps {
   artifact: Artifact | null;
-  onOpenFullScreen?: () => void;
+  onOpenFullScreen?: (artifactId: string) => void;
 }
 
 const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullScreen }) => {
   const [activeTab, setActiveTab] = useState<'preview' | 'source' | 'diff'>('preview');
   const [copied, setCopied] = useState(false);
   const [splitView, setSplitView] = useState(true);
+  const [localArtifactId, setLocalArtifactId] = useState<string | null>(null);
 
   const allArtifacts = useAgentHubStore(state => state.artifacts);
   const loadArtifactContent = useAgentHubStore(state => state.loadArtifactContent);
-  const onSelectArtifact = useAgentHubStore(state => state.setSelectedArtifactId);
+
+  // Sync local version state with the incoming prop
+  useEffect(() => {
+    if (artifact) {
+      setLocalArtifactId(artifact.id);
+    } else {
+      setLocalArtifactId(null);
+    }
+  }, [artifact]);
+
+  const currentArtifact = useMemo(() => {
+    if (!localArtifactId) return artifact;
+    return allArtifacts.find(a => a.id === localArtifactId) || artifact;
+  }, [localArtifactId, allArtifacts, artifact]);
 
   // Group all versions of this artifact (same title, sorted by creation date ascending)
   const versions = useMemo(() => {
-    if (!artifact) return [];
+    if (!currentArtifact) return [];
     return allArtifacts
-      .filter(a => a.title === artifact.title)
+      .filter(a => a.title === currentArtifact.title)
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-  }, [artifact, allArtifacts]);
+  }, [currentArtifact, allArtifacts]);
 
   const currentVersionIndex = useMemo(() => {
-    if (!artifact) return -1;
-    return versions.findIndex(v => v.id === artifact.id);
-  }, [artifact, versions]);
+    if (!currentArtifact) return -1;
+    return versions.findIndex(v => v.id === currentArtifact.id);
+  }, [currentArtifact, versions]);
 
   const previousArtifact = useMemo(() => {
     if (currentVersionIndex > 0) {
@@ -41,10 +55,10 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
   // Proactively load current artifact content if missing
   useEffect(() => {
-    if (artifact && !artifact.content) {
-      loadArtifactContent(artifact.id);
+    if (currentArtifact && !currentArtifact.content) {
+      loadArtifactContent(currentArtifact.id);
     }
-  }, [artifact, loadArtifactContent]);
+  }, [currentArtifact, loadArtifactContent]);
 
   // Proactively load previous version's content when in diff view
   useEffect(() => {
@@ -54,18 +68,18 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   }, [activeTab, previousArtifact, loadArtifactContent]);
 
   const handleCopy = async () => {
-    if (!artifact) return;
-    await navigator.clipboard.writeText(artifact.content);
+    if (!currentArtifact) return;
+    await navigator.clipboard.writeText(currentArtifact.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const htmlSrcDoc = useMemo(() => {
-    if (!artifact || artifact.type !== 'html') return undefined;
-    return artifact.content;
-  }, [artifact]);
+    if (!currentArtifact || currentArtifact.type !== 'html') return undefined;
+    return currentArtifact.content;
+  }, [currentArtifact]);
 
-  if (!artifact) {
+  if (!currentArtifact) {
     return (
       <div className="h-full w-full flex items-center justify-center text-center p-4">
         <p className="text-sm text-slate-400">请选择一个产物进行预览</p>
@@ -76,7 +90,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   const renderContent = () => {
     if (activeTab === 'diff') {
       const oldValue = previousArtifact?.content || '';
-      const newValue = artifact.content || '';
+      const newValue = currentArtifact.content || '';
       return (
         <div className="h-full w-full overflow-hidden p-3 flex flex-col bg-slate-950">
           <div className="flex items-center justify-between px-2 pb-2 flex-shrink-0 text-xs text-slate-400">
@@ -95,33 +109,33 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       );
     }
 
-    if (artifact.type === 'code') {
+    if (currentArtifact.type === 'code') {
       return (
         <div className="h-full w-full overflow-y-auto p-4 bg-slate-950">
-          {!artifact.content ? (
+          {!currentArtifact.content ? (
             <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
               <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
             </div>
           ) : (
             <pre className="bg-slate-900/50 text-slate-100 p-4 rounded-xl text-xs overflow-x-auto font-mono leading-relaxed whitespace-pre-wrap break-words border border-slate-800">
-              {artifact.content}
+              {currentArtifact.content}
             </pre>
           )}
         </div>
       );
     }
 
-    if (artifact.type === 'markdown') {
+    if (currentArtifact.type === 'markdown') {
       if (activeTab === 'preview') {
         return (
           <div className="h-full w-full overflow-y-auto p-5 bg-[#fafbfb]">
-            {!artifact.content ? (
+            {!currentArtifact.content ? (
               <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
                 <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
               </div>
             ) : (
               <article className="prose prose-sm max-w-none text-lark-text-primary bg-white border border-lark-border p-6 rounded-2xl shadow-sm leading-relaxed">
-                <ReactMarkdown>{artifact.content}</ReactMarkdown>
+                <ReactMarkdown>{currentArtifact.content}</ReactMarkdown>
               </article>
             )}
           </div>
@@ -129,20 +143,20 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       }
       return (
         <div className="h-full w-full overflow-y-auto p-4 bg-slate-950">
-          {!artifact.content ? (
+          {!currentArtifact.content ? (
             <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
               <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
             </div>
           ) : (
             <pre className="bg-slate-900/50 text-slate-100 p-4 rounded-xl text-xs overflow-x-auto font-mono leading-relaxed whitespace-pre-wrap break-words border border-slate-800">
-              {artifact.content}
+              {currentArtifact.content}
             </pre>
           )}
         </div>
       );
     }
 
-    if (artifact.type === 'html') {
+    if (currentArtifact.type === 'html') {
       if (activeTab === 'preview') {
         return (
           <div className="h-full w-full p-4 overflow-hidden flex flex-col bg-[#fafbfb]">
@@ -154,12 +168,12 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
                 <div className="w-3 h-3 rounded-full bg-[#27c93f]" />
               </div>
               <div className="flex-grow mx-4 bg-white rounded-md border border-slate-200 py-1 px-3.5 text-[10px] text-slate-400 font-sans truncate select-all flex items-center gap-1.5 shadow-inner">
-                <span className="text-slate-300">https://</span>localhost:5173/{artifact.title.toLowerCase()}
+                <span className="text-slate-300">https://</span>localhost:5173/{currentArtifact.title.toLowerCase()}
               </div>
             </div>
             {/* Browser Content */}
             <div className="flex-1 min-h-0 border-l border-r border-b border-slate-200 rounded-b-xl bg-white overflow-hidden shadow-sm">
-              {!artifact.content ? (
+              {!currentArtifact.content ? (
                 <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
                   <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
                 </div>
@@ -177,13 +191,13 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       }
       return (
         <div className="h-full w-full overflow-y-auto p-4 bg-slate-950">
-          {!artifact.content ? (
+          {!currentArtifact.content ? (
             <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
               <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
             </div>
           ) : (
             <pre className="bg-slate-900/50 text-slate-100 p-4 rounded-xl text-xs overflow-x-auto font-mono leading-relaxed whitespace-pre-wrap break-words border border-slate-800">
-              {artifact.content}
+              {currentArtifact.content}
             </pre>
           )}
         </div>
@@ -192,13 +206,13 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
     return (
       <div className="h-full w-full overflow-y-auto p-4 bg-slate-950">
-        {!artifact.content ? (
+        {!currentArtifact.content ? (
           <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
             <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
           </div>
         ) : (
           <pre className="bg-slate-900 text-slate-100 p-4 rounded-xl text-xs overflow-x-auto font-mono whitespace-pre-wrap break-words">
-            {artifact.content}
+            {currentArtifact.content}
           </pre>
         )}
       </div>
@@ -206,26 +220,26 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   };
 
   const getTypeIcon = () => {
-    if (artifact.type === 'code') return <FileCode className="w-4 h-4 text-green-500" />;
-    if (artifact.type === 'markdown') return <FileText className="w-4 h-4 text-blue-500" />;
-    if (artifact.type === 'html') return <Globe className="w-4 h-4 text-orange-500" />;
+    if (currentArtifact.type === 'code') return <FileCode className="w-4 h-4 text-green-500" />;
+    if (currentArtifact.type === 'markdown') return <FileText className="w-4 h-4 text-blue-500" />;
+    if (currentArtifact.type === 'html') return <Globe className="w-4 h-4 text-orange-500" />;
     return <FileText className="w-4 h-4 text-slate-500" />;
   };
 
-  const needTabs = artifact.type !== undefined && ['code', 'markdown', 'html'].includes(artifact.type);
+  const needTabs = currentArtifact.type !== undefined && ['code', 'markdown', 'html'].includes(currentArtifact.type);
 
   return (
     <div className="h-full w-full flex flex-col overflow-hidden text-lark-text-primary bg-white">
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-lark-border bg-white flex-shrink-0 flex-wrap gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className="flex-shrink-0">{getTypeIcon()}</span>
-          <h4 className="text-xs font-semibold text-lark-text-primary truncate max-w-[120px]" title={artifact.title}>{artifact.title}</h4>
+          <h4 className="text-xs font-semibold text-lark-text-primary truncate max-w-[120px]" title={currentArtifact.title}>{currentArtifact.title}</h4>
           
           {/* Version Dropdown Select */}
           {versions.length > 1 && (
             <select
-              value={artifact.id}
-              onChange={(e) => onSelectArtifact(e.target.value)}
+              value={currentArtifact.id}
+              onChange={(e) => setLocalArtifactId(e.target.value)}
               className="bg-[#f2f4f6] border border-lark-border/60 text-lark-text-secondary text-[10px] rounded px-1.5 py-0.5 outline-none font-medium focus:ring-1 focus:ring-lark-primary cursor-pointer hover:bg-lark-bg-hover"
             >
               {versions.slice().reverse().map((v, idx) => {
@@ -289,7 +303,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
           </button>
           {onOpenFullScreen && (
             <button
-              onClick={onOpenFullScreen}
+              onClick={() => onOpenFullScreen(currentArtifact.id)}
               className="p-1.5 rounded-lg hover:bg-lark-bg-hover text-lark-text-secondary hover:text-lark-primary transition-all border border-lark-border shadow-sm bg-white"
               title="放大全屏预览"
             >

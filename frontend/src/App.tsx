@@ -117,9 +117,7 @@ function App() {
           <RightPanel
             agents={activeAgents}
             artifacts={artifacts}
-            selectedArtifactId={selectedArtifactId}
             onSelectArtifact={setSelectedArtifactId}
-            selectedArtifact={selectedArtifact}
             onOpenFullScreenPreview={handleOpenFullScreenPreview}
           />
         }
