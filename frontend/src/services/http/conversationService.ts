@@ -6,6 +6,7 @@ import type {
   BaseApiResponse,
   PaginatedData,
   ConversationMode,
+  CompressContextResponse,
 } from '@/types';
 
 interface GetConversationListParams {
@@ -40,6 +41,12 @@ export async function updateConversation(
   return await http.put(`/conversations/${conversationId}`, payload);
 }
 
+export async function compressContext(
+  conversationId: string
+): Promise<BaseApiResponse<CompressContextResponse>> {
+  return await http.post(`/conversations/${conversationId}/compress`);
+}
+
 export async function deleteConversation(
   conversationId: string
 ): Promise<BaseApiResponse<boolean>> {
@@ -51,6 +58,7 @@ const conversationService = {
   createConversation,
   getConversationDetail,
   updateConversation,
+  compressContext,
   deleteConversation,
 };
 

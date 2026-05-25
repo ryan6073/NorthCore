@@ -1,6 +1,6 @@
 # AgentHub API 接口规范
 
-版本：v1.0.0  
+版本：v1.1.0  
 适用阶段：前后端联调 / MVP Demo / 后续 WebSocket 流式扩展  
 通信模式：HTTP + WebSocket 混合架构
 
@@ -420,10 +420,46 @@ export type MessageType =
   | 'code'
   | 'artifact'
   | 'task-plan'
-  | 'status';
+  | 'status'
+  | 'image'      // 图片消息
+  | 'document';  // 文档消息 (ppt, pdf 等)
 ```
 
-### 6.13 Message
+### 6.13 MessageAttachment
+
+附件类型定义，支持上传图片、PDF、PPT 等文件。
+
+```ts
+export interface MessageAttachment {
+  id: string;
+  name: string;
+  type: 'image' | 'pdf' | 'ppt' | 'other';
+  url: string;
+  size?: number;
+  meta?: {
+    width?: number;
+    height?: number;
+    pages?: number;
+  };
+}
+```
+
+### 6.14 ArtifactReference
+
+产物引用类型，支持回复引用指定产物的代码片段。
+
+```ts
+export interface ArtifactReference {
+  artifactId: string;
+  artifactTitle: string;
+  version: number;
+  quotedText: string;
+  startLine?: number;
+  endLine?: number;
+}
+```
+
+### 6.15 Message
 
 ```ts
 export interface Message {
@@ -437,6 +473,14 @@ export interface Message {
   language?: string;
   artifactId?: string;
   createdAt: string;
+  attachments?: MessageAttachment[];
+  quotedMessage?: {
+    id: string;
+    senderName: string;
+    content: string;
+  };
+  artifactRef?: ArtifactReference;
+  isPinned?: boolean;
 }
 ```
 
@@ -915,7 +959,43 @@ GET /api/v1/conversations?page=1&pageSize=20
 
 ---
 
-## 7.3.5 删除会话
+## 7.3.5 压缩会话上下文
+
+### POST /conversations/{conversationId}/compress
+
+用于对当前会话的历史消息进行智能压缩，将多条历史消息总结成精简摘要，减少 Token 占用，同时保留关键信息。
+
+#### 请求示例
+
+```http
+POST /api/v1/conversations/conv-todo-page/compress
+```
+
+#### 响应示例
+
+```json
+{
+  "code": 0,
+  "message": "上下文已成功压缩",
+  "data": {
+    "originalMessageCount": 42,
+    "compressedMessageCount": 8,
+    "summary": "用户需求为生成一个 React 登录页，包含邮箱密码输入框、验证码、登录按钮、记住我选项，历史消息中已生成 LoginPage.tsx 代码和样式产物。"
+  }
+}
+```
+
+#### 字段说明
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| originalMessageCount | number | 压缩前的历史消息总数 |
+| compressedMessageCount | number | 压缩后保留的精简消息/摘要数量 |
+| summary | string | 生成的上下文压缩摘要文本 |
+
+---
+
+## 7.3.6 删除会话
 
 ### DELETE /conversations/{conversationId}
 
@@ -992,7 +1072,42 @@ GET /api/v1/conversations/conv-todo-page/messages?page=1&pageSize=50
 
 ---
 
-## 7.4.2 发送消息：HTTP 非流式版本
+## 7.4.2 通知已 @ 指定 Agent（实时预通知）
+
+### POST /conversations/{conversationId}/mention
+
+当用户在输入框实时 @ 某个 Agent 选中时，立即发送该 POST 请求通知后端，让后端可以提前预热、预热 Agent 上下文或更新 Agent 在线状态为被提及。
+
+#### 请求体
+
+```json
+{
+  "agentId": "agent-claude-code"
+}
+```
+
+#### 字段说明
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| agentId | string | 是 | 被 @ 的 Agent ID |
+
+#### 响应示例
+
+```json
+{
+  "code": 0,
+  "message": "已通知 Agent 准备就绪",
+  "data": {
+    "agentId": "agent-claude-code",
+    "status": "preparing"
+  }
+}
+```
+
+---
+
+## 7.4.3 发送消息：HTTP 非流式版本
 
 ### POST /conversations/{conversationId}/messages
 
@@ -1002,9 +1117,18 @@ MVP 阶段建议使用该接口完成发送消息和 Agent Mock 回复。
 
 ```json
 {
-  "content": "帮我生成一个 Todo List 页面，需要设计、代码、审查和说明文档。"
+  "content": "帮我生成一个 Todo List 页面，需要设计、代码、审查和说明文档。",
+  "targetAgentId": "agent-claude-code"
 }
 ```
+
+#### 字段说明
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| content | string | 是 | 用户消息内容 |
+| targetAgentId | string | 否 | 可选，在群聊里 @ 指定 Agent 单独工作，不传走完整 Orchestrator 调度 |
+| attachments | MessageAttachment[] | 否 | 可选，图片、PDF、PPT 等附件列表 |
 
 #### 处理逻辑
 
@@ -1307,7 +1431,17 @@ wss://your-domain.com/ws
   "eventId": "evt-local-123456",
   "data": {
     "conversationId": "conv-todo-page",
-    "content": "帮我生成一个 Todo List 页面"
+    "content": "帮我生成一个 Todo List 页面",
+    "targetAgentId": "agent-claude-code",
+    "quotedMessageId": "msg-xxx",
+    "artifactRef": {
+      "artifactId": "artifact-123",
+      "artifactTitle": "LoginPage.tsx",
+      "version": 1,
+      "quotedText": "export default function LoginPage()",
+      "startLine": 10
+    },
+    "attachments": []
   }
 }
 ```
@@ -1770,6 +1904,9 @@ const useMock = import.meta.env.VITE_USE_MOCK === 'true';
 | 版本 | 日期 | 说明 |
 |---|---|---|
 | v1.0.0 | 2026-05-24 | 初始版本，定义 HTTP + WebSocket 混合架构，并按 P0/P1/P2 分阶段实现 |
+| v1.1.0 | 2026-05-25 | 新增 @指定Agent 功能，扩展 MessageAttachment / ArtifactReference 等类型，支持附件上传、消息回复、产物引用功能 |
+| v1.2.0 | 2026-05-25 | 新增 POST /conversations/{conversationId}/mention 接口，用户实时选中 @Agent 时立即通知后端，支持 Agent 提前预热上下文 |
+| v1.3.0 | 2026-05-25 | 新增 POST /conversations/{conversationId}/compress 压缩上下文接口，一键精简历史消息，减少 Token 占用，以系统消息展示压缩结果 |
 
 ---
 

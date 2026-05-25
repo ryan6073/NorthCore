@@ -161,6 +161,22 @@ export interface UpdateConversationPayload {
 
 export interface SendMessageRequest {
   content: string;
+  targetAgentId?: string;
+}
+
+export interface NotifyMentionAgentRequest {
+  agentId: string;
+}
+
+export interface NotifyMentionAgentResponse {
+  agentId: string;
+  status: 'preparing';
+}
+
+export interface CompressContextResponse {
+  originalMessageCount: number;
+  compressedMessageCount: number;
+  summary: string;
 }
 
 export interface SendMessageResponse {

@@ -5,6 +5,8 @@ import type {
   SendMessageResponse,
   BaseApiResponse,
   PaginatedData,
+  NotifyMentionAgentRequest,
+  NotifyMentionAgentResponse,
 } from '@/types';
 
 interface GetMessageListParams {
@@ -20,6 +22,13 @@ export async function getMessageList(
   return await http.get(`/conversations/${conversationId}/messages`, { params });
 }
 
+export async function notifyMentionAgent(
+  conversationId: string,
+  payload: NotifyMentionAgentRequest
+): Promise<BaseApiResponse<NotifyMentionAgentResponse>> {
+  return await http.post(`/conversations/${conversationId}/mention`, payload);
+}
+
 export async function sendMessageNonStreaming(
   conversationId: string,
   payload: SendMessageRequest
@@ -29,6 +38,7 @@ export async function sendMessageNonStreaming(
 
 const messageService = {
   getMessageList,
+  notifyMentionAgent,
   sendMessageNonStreaming,
 };
 
