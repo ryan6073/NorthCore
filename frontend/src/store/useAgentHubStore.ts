@@ -1,8 +1,8 @@
 import { create } from 'zustand';
-import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem } from '@/types';
+import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem, SendMessageRequest } from '@/types';
 import { getAgentList, updateAgentDetail, createAgent as createAgentApi, deleteAgent as deleteAgentApi } from '@/services/http/agentService';
 import { getConversationList, createConversation as createConversationApi, updateConversation, compressContext, pinMessage, unpinMessage, getPins, getMemories, deleteMemory, deleteConversation } from '@/services/http/conversationService';
-import { getMessageList, getMentionAgents as getMentionAgentsApi } from '@/services/http/messageService';
+import { getMessageList, sendMessageNonStreaming } from '@/services/http/messageService';
 import { getArtifactMetaList, getArtifactDetail, getArtifactVersions, updateArtifactContent } from '@/services/http/artifactService';
 import wsClient from '@/services/ws/wsClient';
 import { mockConversations, mockMessages, mockAgents as initialAgents, mockArtifacts, mockArtifactVersions } from '@/mock';
@@ -370,22 +370,19 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
 
   getMentionAgents: async (keyword) => {
-    const { activeConversationId, useMockMode, agents } = get();
+    const { activeConversationId, conversations, agents } = get();
     if (!activeConversationId) return [];
-    
-    if (!useMockMode) {
-      try {
-        const res = await getMentionAgentsApi(activeConversationId, keyword ? { keyword } : undefined);
-        if (res.code === 0) {
-          return res.data;
-        }
-      } catch (e) {
-        console.warn('[Store] getMentionAgents API 调用失败，返回 Mock 列表', e);
-      }
-    }
-    
-    const mockItems: AgentMentionItem[] = agents
-      .filter(a => !a.category.includes('orchestrator') && a.enabled)
+
+    const activeConv = conversations.find(c => c.id === activeConversationId);
+    const conversationAgentIds = activeConv ? activeConv.agentIds : [];
+
+    const candidateAgents = agents.filter(a =>
+      (conversationAgentIds.length > 0 ? conversationAgentIds.includes(a.id) : true) &&
+      !a.category.includes('orchestrator') &&
+      a.enabled
+    );
+
+    const items: AgentMentionItem[] = candidateAgents
       .filter(a => !keyword || a.name.toLowerCase().includes(keyword.toLowerCase()))
       .map(a => ({
         id: a.id,
@@ -395,7 +392,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         tags: a.tags,
         status: a.status === 'online' ? 'online' : 'offline',
       }));
-    return mockItems;
+    return items;
   },
 
   compressContext: async () => {
@@ -604,17 +601,57 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       })();
     } else {
       try {
-        wsClient.send('conversation.message.create', {
-          conversationId: activeConversationId,
+        const payload: SendMessageRequest = {
           content,
-          quotedMessageId: replyContext?.id,
+          targetAgentId,
+          quotedMessageId: replyContext?.id || undefined,
           artifactRef: quoteArtifactRef || undefined,
           attachments,
-          targetAgentId,
-        });
+        };
+        const res = await sendMessageNonStreaming(activeConversationId, payload);
+        if (res.code === 0) {
+          const { userMessage, agentMessages, artifacts } = res.data;
+          set(state => {
+            // Replace the optimistic message with the actual user message
+            const updatedMessages = state.messages.map(m =>
+              m.id === newUserMessage.id ? userMessage : m
+            );
+
+            // Filter out thinking indicators and append new agent messages
+            let finalMessages = [...updatedMessages];
+            agentMessages.forEach(msg => {
+              finalMessages = finalMessages.filter(m => m.id !== `thinking-${msg.senderId}`);
+              if (!finalMessages.some(m => m.id === msg.id)) {
+                finalMessages.push(msg);
+              }
+            });
+
+            // Merge new artifacts
+            const currentArtifacts = [...state.artifacts];
+            artifacts.forEach(art => {
+              if (!currentArtifacts.some(a => a.id === art.id)) {
+                currentArtifacts.push(art);
+              }
+            });
+
+            return {
+              messages: finalMessages,
+              artifacts: currentArtifacts,
+              isProcessing: false,
+            };
+          });
+        } else {
+          set(state => ({
+            messages: state.messages.filter(m => m.id !== newUserMessage.id),
+            isProcessing: false,
+          }));
+        }
       } catch (e) {
-        console.error('[Store] 发送 WS 消息失败', e);
-        set({ isProcessing: false });
+        console.error('[Store] 发送消息 HTTP 失败', e);
+        set(state => ({
+          messages: state.messages.filter(m => m.id !== newUserMessage.id),
+          isProcessing: false,
+        }));
       }
     }
   },

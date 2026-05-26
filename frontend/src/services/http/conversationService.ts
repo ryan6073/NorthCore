@@ -88,6 +88,12 @@ export async function deleteConversation(
   return await http.delete(`/conversations/${conversationId}`);
 }
 
+export async function getContextUsage(
+  conversationId: string
+): Promise<BaseApiResponse<{ contextUsagePercent: number; contextUsageChars: number; contextLimitChars: number }>> {
+  return await http.get(`/conversations/${conversationId}/context/usage`);
+}
+
 const conversationService = {
   getConversationList,
   createConversation,
@@ -100,6 +106,7 @@ const conversationService = {
   pinMessage,
   unpinMessage,
   deleteConversation,
+  getContextUsage,
 };
 
 export default conversationService;

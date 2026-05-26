@@ -62,8 +62,8 @@ function App() {
     setLeftSidebarViewMode('conversations');
   }, [setActiveConversationId, setLeftSidebarViewMode]);
 
-  const handleSendMessage = useCallback(async (content: string, attachments?: any[]) => {
-    await sendMessage(content, attachments);
+  const handleSendMessage = useCallback(async (content: string, attachments?: any[], targetAgentId?: string) => {
+    await sendMessage(content, attachments, targetAgentId);
   }, [sendMessage]);
 
   const handleCreateConversation = useCallback(async (payload: CreateConversationPayload) => {

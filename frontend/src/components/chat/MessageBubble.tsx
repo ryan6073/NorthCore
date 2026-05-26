@@ -264,7 +264,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
               ) : (
                 <div className={`px-4 py-2.5 rounded-xl text-sm leading-relaxed shadow-sm transition-all duration-300 ${
                   message.isPinned
-                    ? `bg-amber-50/60 dark:bg-amber-950/15 border border-amber-300 dark:border-amber-900 text-lark-text-primary dark:text-amber-250 shadow-[0_0_12px_rgba(245,158,11,0.15)] ring-1 ring-amber-400/20 ${
+                    ? `bg-amber-50/60 dark:bg-amber-950/15 border border-amber-300 dark:border-amber-900 text-lark-text-primary dark:text-amber-200 shadow-[0_0_12px_rgba(245,158,11,0.15)] ring-1 ring-amber-400/20 ${
                         isUser ? 'rounded-tr-none' : 'rounded-tl-none'
                       }`
                     : isUser 

@@ -2,11 +2,11 @@ export type ConversationMode = 'single' | 'group';
 
 export type MessageRole = 'user' | 'agent' | 'orchestrator' | 'system';
 
-export type MessageType = 
-  | 'text' 
-  | 'code' 
-  | 'artifact' 
-  | 'task-plan' 
+export type MessageType =
+  | 'text'
+  | 'code'
+  | 'artifact'
+  | 'task-plan'
   | 'status'
   | 'image'      // 图片消息
   | 'document';  // 文档消息 (ppt, pdf 等)
@@ -109,6 +109,9 @@ export interface Conversation {
   lastMessage: string;
   updatedAt: string;
   createdAt?: string;
+  contextUsagePercent?: number;
+  contextUsageChars?: number;
+  contextLimitChars?: number;
 }
 
 export interface Message {
@@ -155,16 +158,16 @@ export interface ArtifactVersion {
   changeSummary?: string;
   createdBy: string;
   createdByType:
-    | 'user'
-    | 'agent'
-    | 'orchestrator';
+  | 'user'
+  | 'agent'
+  | 'orchestrator';
   parentVersionId?: string;
   metadata?: Record<string, any>;
   createdAt: string;
 }
 
-export interface ArtifactDetail extends Artifact {  
-  currentVersion: ArtifactVersion;  
+export interface ArtifactDetail extends Artifact {
+  currentVersion: ArtifactVersion;
   content: string; // 兼容旧前端，等于 currentVersion.content  
   size?: number;   // 兼容旧前端，等于 currentVersion.size 
 }
@@ -205,6 +208,9 @@ export interface ConversationSummary {
 export interface CompressContextResult {
   summary: ConversationSummary;
   compressed: boolean;
+  contextUsagePercent?: number;
+  contextUsageChars?: number;
+  contextLimitChars?: number;
 }
 
 export interface MemoryItem {
@@ -235,13 +241,18 @@ export interface GetMentionAgentsRequest {
 export interface SendMessageRequest {
   content: string;
   targetAgentId?: string;
-  targetAgentID?: string;
+  quotedMessageId?: string;
+  artifactRef?: ArtifactReference;
+  attachments?: MessageAttachment[];
 }
 
 export interface SendMessageResponse {
   userMessage: Message;
   agentMessages: Message[];
   artifacts: Artifact[];
+  contextUsagePercent?: number;
+  contextUsageChars?: number;
+  contextLimitChars?: number;
 }
 
 export interface BaseApiResponse<T = any> {
@@ -355,6 +366,11 @@ export interface ConversationAllTasksCompletedEvent {
     summary: string;
     totalMessages: number;
     totalArtifacts: number;
+    contextUsage?: {
+      contextUsagePercent: number;
+      contextUsageChars: number;
+      contextLimitChars: number;
+    };
   };
 }
 

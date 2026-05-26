@@ -74,7 +74,7 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1 flex-wrap">
-              <h2 className="text-base font-semibold text-lark-text-primary dark:text-slate-205">{agent.name}</h2>
+              <h2 className="text-base font-semibold text-lark-text-primary dark:text-slate-100">{agent.name}</h2>
               <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
                 {renderStatusIcon()}
                 <span className="text-[10px] text-lark-text-secondary dark:text-slate-400 font-medium uppercase">{agent.status}</span>
