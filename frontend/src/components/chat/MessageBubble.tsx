@@ -112,8 +112,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
         } animate-fade-in transition-all duration-300`}
       >
         {/* Avatar */}
-        <div className={`w-9 h-9 flex-shrink-0 overflow-hidden flex items-center justify-center shadow-sm ${
-          isUser ? 'rounded-full bg-lark-primary' : 'rounded-lg bg-white border border-lark-border'
+        <div className={`w-9 h-9 flex-shrink-0 overflow-hidden flex items-center justify-center shadow-sm transition-colors ${
+          isUser ? 'rounded-full bg-lark-primary' : 'rounded-lg bg-white dark:bg-slate-950 border border-lark-border dark:border-slate-800'
         }`}>
           {isUser ? (
             <User className="w-4 h-4 text-white" />
@@ -150,10 +150,9 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
           )}
 
           <div className={`w-full flex flex-col gap-1.5 relative ${isUser ? 'items-end' : 'items-start'}`}>
-            {/* 1. Reply quote display if exists */}
             {message.quotedMessage && (
-              <div className="w-full self-stretch p-2 bg-slate-50 border-l-2 border-slate-300 rounded-r-lg text-[10px] text-slate-500 mb-1 flex flex-col gap-0.5 select-none shadow-sm">
-                <span className="font-semibold text-slate-700">回复 @{message.quotedMessage.senderName}：</span>
+              <div className="w-full self-stretch p-2 bg-slate-50 dark:bg-slate-900 border-l-2 border-slate-300 dark:border-slate-700 rounded-r-lg text-[10px] text-slate-500 dark:text-slate-400 mb-1 flex flex-col gap-0.5 select-none shadow-sm transition-colors">
+                <span className="font-semibold text-slate-700 dark:text-slate-300">回复 @{message.quotedMessage.senderName}：</span>
                 <span className="truncate">{message.quotedMessage.content}</span>
               </div>
             )}
@@ -162,7 +161,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
             {message.artifactRef && (
               <div 
                 onClick={handleRefClick}
-                className="w-full self-stretch p-2 bg-slate-900 border border-slate-800 text-slate-300 rounded-xl mb-1 cursor-pointer hover:bg-slate-850 hover:border-slate-700 transition-all select-none shadow-md flex flex-col gap-1.5"
+                className="w-full self-stretch p-2 bg-slate-900 border border-slate-800 text-slate-300 rounded-xl mb-1 cursor-pointer hover:bg-slate-800 hover:border-slate-700 transition-all select-none shadow-md flex flex-col gap-1.5"
                 title="点击在右侧定位此行代码"
               >
                 <div className="flex items-center justify-between text-[10px] text-slate-400 font-semibold border-b border-slate-800 pb-1">
@@ -213,19 +212,18 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
                 </button>
               )}
 
-              {/* Hover Action Bar: Right next to the bubble content box */}
               <div 
                 onMouseEnter={() => setIsHoveringBar(true)}
                 onMouseLeave={() => setIsHoveringBar(false)}
                 style={{ top: mouseY !== null ? `${mouseY}px` : '8px' }}
-                className={`absolute opacity-0 group-hover/bubble-content:opacity-100 transition-opacity duration-150 flex items-center gap-1 bg-white border border-slate-200 shadow-md rounded-lg p-1 z-30
+                className={`absolute opacity-0 group-hover/bubble-content:opacity-100 transition-opacity duration-150 flex items-center gap-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 shadow-md rounded-lg p-1 z-30 transition-colors
                   ${isUser 
                     ? 'right-full mr-3 after:absolute after:-right-4 after:top-0 after:bottom-0 after:w-4 after:content-[\'\']' 
                     : 'left-full ml-3 before:absolute before:-left-4 before:top-0 before:bottom-0 before:w-4 before:content-[\'\']'}`}
               >
                 <button
                   onClick={handleReply}
-                  className="p-1 rounded text-slate-400 hover:text-lark-primary hover:bg-slate-50 transition-colors"
+                  className="p-1 rounded text-slate-400 hover:text-lark-primary hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
                   title="回复此消息"
                 >
                   <CornerUpLeft className="w-3.5 h-3.5" />
@@ -234,8 +232,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
                   onClick={handlePin}
                   className={`p-1 rounded transition-colors ${
                     message.isPinned 
-                      ? 'text-amber-600 bg-amber-50 hover:bg-amber-100' 
-                      : 'text-slate-400 hover:text-amber-600 hover:bg-slate-50/50'
+                      ? 'text-amber-600 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/40' 
+                      : 'text-slate-400 hover:text-amber-600 hover:bg-slate-50/50 dark:hover:bg-slate-800/50'
                   }`}
                   title={message.isPinned ? "取消 Pin 长期记忆" : "Pin 为长期记忆"}
                 >
@@ -243,11 +241,11 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
                 </button>
                 <button
                   onClick={handleCopy}
-                  className="p-1 rounded text-slate-400 hover:text-lark-primary hover:bg-slate-50 transition-colors"
+                  className="p-1 rounded text-slate-400 hover:text-lark-primary hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
                   title="复制消息内容"
                 >
                   {copied ? (
-                    <span className="text-[9px] text-green-600 font-semibold px-0.5">已复制</span>
+                    <span className="text-[9px] text-green-600 dark:text-green-400 font-semibold px-0.5">已复制</span>
                   ) : (
                     <Copy className="w-3.5 h-3.5" />
                   )}
@@ -266,14 +264,14 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
               ) : (
                 <div className={`px-4 py-2.5 rounded-xl text-sm leading-relaxed shadow-sm transition-all duration-300 ${
                   message.isPinned
-                    ? `bg-amber-50/60 border border-amber-300 text-lark-text-primary shadow-[0_0_12px_rgba(245,158,11,0.15)] ring-1 ring-amber-400/20 ${
+                    ? `bg-amber-50/60 dark:bg-amber-950/15 border border-amber-300 dark:border-amber-900 text-lark-text-primary dark:text-amber-250 shadow-[0_0_12px_rgba(245,158,11,0.15)] ring-1 ring-amber-400/20 ${
                         isUser ? 'rounded-tr-none' : 'rounded-tl-none'
                       }`
                     : isUser 
-                      ? 'bg-[#deebff] text-lark-text-primary rounded-tr-none border border-[#c3dbff]' 
+                      ? 'bg-[#deebff] dark:bg-violet-950/40 text-lark-text-primary dark:text-violet-300 rounded-tr-none border border-[#c3dbff] dark:border-violet-900/50' 
                       : isOrchestrator
-                        ? 'bg-[#f5f5fc] border border-indigo-100 text-lark-text-primary rounded-tl-none'
-                        : 'bg-white border border-lark-border text-lark-text-primary rounded-tl-none'
+                        ? 'bg-[#f5f5fc] dark:bg-slate-900 border border-indigo-100 dark:border-indigo-950/60 text-lark-text-primary dark:text-slate-100 rounded-tl-none shadow-[0_0_12px_rgba(99,102,241,0.05)]'
+                        : 'bg-white dark:bg-slate-950 border border-lark-border dark:border-slate-800 text-lark-text-primary dark:text-slate-100 rounded-tl-none'
                 }`}>
                   {renderContent()}
                 </div>

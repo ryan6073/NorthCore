@@ -51,7 +51,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
     setSelectionBox(null);
   };
 
-  const handleContainerMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
+  const triggerSelection = (e: React.MouseEvent<HTMLDivElement> | MouseEvent | null) => {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed) {
       setSelectionBox(null);
@@ -60,6 +60,11 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
     const text = selection.toString().trim();
     if (!text) {
       setSelectionBox(null);
+      return;
+    }
+
+    // Check if selection is within the parent container
+    if (containerRef.current && !containerRef.current.contains(selection.anchorNode)) {
       return;
     }
 
@@ -74,7 +79,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
 
         const findLineNumber = (node: Node | null): number | undefined => {
           let curr = node;
-          while (curr && curr !== e.currentTarget) {
+          while (curr && curr !== containerRef.current) {
             if (curr instanceof HTMLElement && curr.hasAttribute('data-line-number')) {
               const val = curr.getAttribute('data-line-number');
               if (val) return parseInt(val, 10);
@@ -96,27 +101,47 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
       }
     }
 
-    try {
-      const range = selection.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-      const parentRect = e.currentTarget.getBoundingClientRect();
-      
+    if (!containerRef.current) return;
+    const parentRect = containerRef.current.getBoundingClientRect();
+
+    if (e && e.clientX !== 0 && e.clientY !== 0) {
+      // Position near the mouse cursor
+      const x = Math.max(10, Math.min(parentRect.width - 10, e.clientX - parentRect.left));
+      const y = Math.max(10, e.clientY - parentRect.top - 45);
       setSelectionBox({
-        x: rect.left - parentRect.left + (rect.width / 2) + e.currentTarget.scrollLeft,
-        y: rect.top - parentRect.top - 40 + e.currentTarget.scrollTop,
+        x,
+        y,
         text,
         startLine,
         endLine
       });
-    } catch (err) {
-      const rect = e.currentTarget.getBoundingClientRect();
-      setSelectionBox({
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top - 40,
-        text,
-        startLine,
-        endLine
-      });
+    } else {
+      // Fallback to selection bounding box
+      try {
+        const range = selection.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        const x = Math.max(10, Math.min(parentRect.width - 10, rect.left - parentRect.left + (rect.width / 2)));
+        const y = Math.max(10, rect.top - parentRect.top - 45);
+        setSelectionBox({
+          x,
+          y,
+          text,
+          startLine,
+          endLine
+        });
+      } catch (err) {
+        console.error('Failed to calculate selection rect fallback', err);
+      }
+    }
+  };
+
+  const handleMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
+    triggerSelection(e);
+  };
+
+  const handleKeyUp = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.shiftKey && (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End' || e.key === 'PageUp' || e.key === 'PageDown')) {
+      triggerSelection(null);
     }
   };
   const [editedContent, setEditedContent] = useState('');
@@ -247,7 +272,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
 
     if (artifact.type === 'code') {
       return (
-        <div ref={containerRef} onMouseUp={handleContainerMouseUp} className="h-full p-6 overflow-auto bg-slate-950 relative">
+        <div className="h-full p-6 overflow-auto bg-slate-950 relative">
           {!currentVersion ? (
             <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
               <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
@@ -262,13 +287,13 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
     if (artifact.type === 'markdown') {
       if (activeTab === 'preview') {
         return (
-          <div className="h-full p-6 overflow-auto bg-[#fafbfb]">
+          <div className="h-full p-6 overflow-auto bg-[#fafbfb] dark:bg-slate-950">
             {!currentVersion ? (
               <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
                 <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
               </div>
             ) : (
-              <article className="prose prose-lg max-w-none text-slate-800 bg-white border border-slate-200 p-8 rounded-2xl shadow-sm">
+              <article className="prose prose-lg dark:prose-invert max-w-none text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-8 rounded-2xl shadow-sm">
                 <ReactMarkdown>{currentVersion.content}</ReactMarkdown>
               </article>
             )}
@@ -276,7 +301,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
         );
       }
       return (
-        <div ref={containerRef} onMouseUp={handleContainerMouseUp} className="h-full p-6 overflow-auto bg-slate-950 relative">
+        <div className="h-full p-6 overflow-auto bg-slate-950 relative">
           {!currentVersion ? (
             <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
               <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
@@ -291,18 +316,18 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
     if (artifact.type === 'html') {
       if (activeTab === 'preview') {
         return (
-          <div className="h-full p-6 bg-[#fafbfb] flex flex-col">
-            <div className="flex items-center gap-2 px-4 py-2 bg-slate-100 border border-slate-200 rounded-t-xl flex-shrink-0">
+          <div className="h-full p-6 bg-[#fafbfb] dark:bg-slate-950 flex flex-col">
+            <div className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-t-xl flex-shrink-0">
               <div className="flex gap-1.5">
                 <div className="w-3 h-3 rounded-full bg-[#ff5f56]" />
                 <div className="w-3 h-3 rounded-full bg-[#ffbd2e]" />
                 <div className="w-3 h-3 rounded-full bg-[#27c93f]" />
               </div>
-              <div className="flex-grow mx-4 bg-white rounded border border-slate-200 py-0.5 px-3 text-xs text-slate-400 truncate">
+              <div className="flex-grow mx-4 bg-white dark:bg-slate-950 rounded border border-slate-200 dark:border-slate-800 py-0.5 px-3 text-xs text-slate-400 dark:text-slate-500 truncate">
                 https://localhost:5173/{artifact.title.toLowerCase()}
               </div>
             </div>
-            <div className="flex-1 min-h-0 border-l border-r border-b border-slate-200 rounded-b-xl bg-white overflow-hidden">
+            <div className="flex-1 min-h-0 border-l border-r border-b border-slate-200 dark:border-slate-800 rounded-b-xl bg-white dark:bg-slate-900 overflow-hidden">
               {!currentVersion ? (
                 <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
                   <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
@@ -320,7 +345,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
         );
       }
       return (
-        <div ref={containerRef} onMouseUp={handleContainerMouseUp} className="h-full p-6 overflow-auto bg-slate-950 relative">
+        <div className="h-full p-6 overflow-auto bg-slate-950 relative">
           {!currentVersion ? (
             <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
               <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
@@ -333,7 +358,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
     }
 
     return (
-      <div ref={containerRef} onMouseUp={handleContainerMouseUp} className="h-full p-6 overflow-auto bg-slate-950 relative">
+      <div className="h-full p-6 overflow-auto bg-slate-950 relative">
         {!currentVersion ? (
           <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
             <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
@@ -356,11 +381,11 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full h-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-scale-in">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-slate-50 flex-shrink-0 flex-wrap gap-2">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full h-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-scale-in">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex-shrink-0 flex-wrap gap-2">
           <div className="flex items-center gap-3 min-w-0">
-            <span className="text-blue-600 flex-shrink-0">{getTypeIcon()}</span>
-            <h2 className="text-lg font-bold text-slate-800 truncate max-w-[200px]" title={artifact.title}>{artifact.title}</h2>
+            <span className="text-blue-600 dark:text-blue-450 flex-shrink-0">{getTypeIcon()}</span>
+            <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100 truncate max-w-[200px]" title={artifact.title}>{artifact.title}</h2>
 
             {/* Version dropdown select in full screen modal */}
             {versions.length > 1 && currentVersion && (
@@ -372,11 +397,11 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
                     useAgentHubStore.getState().setSelectedArtifactVersion(selectedVer.version);
                   }
                 }}
-                className="bg-white border border-slate-200 text-slate-700 text-xs rounded-lg px-2.5 py-1 outline-none font-medium focus:ring-1 focus:ring-lark-primary cursor-pointer hover:bg-slate-100"
+                className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs rounded-lg px-2.5 py-1 outline-none font-medium focus:ring-1 focus:ring-lark-primary dark:focus:ring-violet-600 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700"
               >
                 {versions.slice().reverse().map((v) => {
                   return (
-                    <option key={v.id} value={v.id}>
+                    <option key={v.id} value={v.id} className="dark:bg-slate-900 dark:text-slate-300">
                       v{v.version} {v.version === artifact.latestVersion ? '(最新)' : ''}
                     </option>
                   );
@@ -397,7 +422,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
               </button>
               <button
                 onClick={() => setIsEditing(false)}
-                className="px-3.5 py-1.5 text-xs rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-700 transition-all shadow-sm bg-white flex items-center gap-1 active:scale-95"
+                className="px-3.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-350 transition-all shadow-sm bg-white dark:bg-slate-900 flex items-center gap-1 active:scale-95"
                 title="取消"
               >
                 <X className="w-4 h-4" />
@@ -407,13 +432,13 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
           ) : (
             <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
               {needTabs && (
-                <div className="flex bg-slate-200 rounded-md p-0.5 border border-slate-200">
+                <div className="flex bg-slate-200 dark:bg-slate-950 rounded-md p-0.5 border border-slate-200 dark:border-slate-800">
                   <button
                     onClick={() => setActiveTab('preview')}
                     className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
                       activeTab === 'preview'
-                        ? 'bg-white text-slate-800 shadow-sm font-semibold'
-                        : 'text-slate-500 hover:text-slate-800'
+                        ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 shadow-sm font-semibold'
+                        : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
                     }`}
                   >
                     预览
@@ -422,8 +447,8 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
                     onClick={() => setActiveTab('source')}
                     className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
                       activeTab === 'source'
-                        ? 'bg-white text-slate-800 shadow-sm font-semibold'
-                        : 'text-slate-500 hover:text-slate-800'
+                        ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 shadow-sm font-semibold'
+                        : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
                     }`}
                   >
                     源码
@@ -432,8 +457,8 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
                     onClick={() => setActiveTab('diff')}
                     className={`px-3 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1 ${
                       activeTab === 'diff'
-                        ? 'bg-white text-slate-800 shadow-sm font-semibold'
-                        : 'text-slate-500 hover:text-slate-800'
+                        ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 shadow-sm font-semibold'
+                        : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
                     }`}
                   >
                     <GitCompare className="w-3.5 h-3.5" />
@@ -447,42 +472,48 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
                   setEditedContent(currentVersion?.content || '');
                   setIsEditing(true);
                 }}
-                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-700 hover:text-blue-600 transition-all border border-slate-200 shadow-sm bg-white flex items-center gap-1 active:scale-95"
+                className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-305 hover:text-blue-600 dark:hover:text-violet-400 transition-all border border-slate-200 dark:border-slate-700 shadow-sm bg-white dark:bg-slate-900 flex items-center gap-1 active:scale-95"
                 title="编辑"
               >
                 <Edit3 className="w-4 h-4" />
                 <span className="text-xs font-semibold pr-0.5">编辑</span>
               </button>
 
-              <div className="w-px h-6 bg-slate-300 mx-0.5" />
+              <div className="w-px h-6 bg-slate-300 dark:bg-slate-800 mx-0.5" />
               <button
                 onClick={handleCopy}
-                className="p-2 rounded-md hover:bg-slate-200 transition-colors flex items-center justify-center"
+                className="p-2 rounded-md hover:bg-slate-250 dark:hover:bg-slate-800 transition-colors flex items-center justify-center"
                 title="复制"
               >
                 {copied ? (
                   <span className="text-xs text-green-600 font-medium px-1">已复制</span>
                 ) : (
-                  <Copy className="w-5 h-5 text-slate-500" />
+                  <Copy className="w-5 h-5 text-slate-500 dark:text-slate-400" />
                 )}
               </button>
               <button
                 onClick={onClose}
-                className="p-2 rounded-md hover:bg-slate-200 transition-colors flex items-center justify-center"
+                className="p-2 rounded-md hover:bg-slate-250 dark:hover:bg-slate-800 transition-colors flex items-center justify-center"
                 title="关闭"
               >
-                <X className="w-5 h-5 text-slate-500" />
+                <X className="w-5 h-5 text-slate-500 dark:text-slate-400" />
               </button>
             </div>
           )}
         </div>
-        <div className="flex-1 overflow-hidden bg-white relative">
+        <div 
+          ref={containerRef}
+          onMouseUp={handleMouseUp}
+          onKeyUp={handleKeyUp}
+          className="flex-1 overflow-hidden bg-white dark:bg-slate-900 relative"
+        >
           {renderContent()}
 
           {/* Floating Selection Popover */}
           {!isEditing && selectionBox && (
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={handleQuoteSelection}
               className="absolute bg-slate-900 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg shadow-xl hover:bg-slate-800 border border-slate-700 z-50 flex items-center gap-1 hover:scale-105 active:scale-95 transition-all select-none"
               style={{

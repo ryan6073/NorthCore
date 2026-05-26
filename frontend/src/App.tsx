@@ -7,6 +7,8 @@ import NewConversationModal from './components/modal/NewConversationModal';
 import ArtifactFullScreenModal from './components/modal/ArtifactFullScreenModal';
 import { useAgentHubStore } from './store/useAgentHubStore';
 import { CreateConversationPayload, Agent } from './types';
+import { LoginView } from './components/auth/LoginView';
+import { SettingsModal } from './components/modal/SettingsModal';
 
 function App() {
   const conversations = useAgentHubStore(state => state.conversations);
@@ -20,6 +22,7 @@ function App() {
   const selectedAgentId = useAgentHubStore(state => state.selectedAgentId);
   const leftSidebarViewMode = useAgentHubStore(state => state.leftSidebarViewMode);
   const useMockMode = useAgentHubStore(state => state.useMockMode);
+  const currentUser = useAgentHubStore(state => state.currentUser);
 
   const initStore = useAgentHubStore(state => state.initStore);
   const setActiveConversationId = useAgentHubStore(state => state.setActiveConversationId);
@@ -101,6 +104,10 @@ function App() {
     }
   }, [selectedArtifact, useMockMode, setIsFullScreenOpen]);
 
+  if (!currentUser || !currentUser.isLoggedIn) {
+    return <LoginView />;
+  }
+
   return (
     <>
       <AppLayout
@@ -150,6 +157,7 @@ function App() {
         artifact={selectedArtifact}
         onClose={() => setIsFullScreenOpen(false)}
       />
+      <SettingsModal />
     </>
   );
 }

@@ -125,3 +125,47 @@ body {
   animation: scale-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 
+/* Smooth transitions for theme switching */
+body, div, nav, button, select, input, textarea, pre, h1, h2, h3, h4, h5, h6, p, span, article {
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease;
+}
+
+/* Dark mode basic body fallback style */
+html.dark body {
+  background-color: #06070d;
+  color: #f8fafc;
+}
+
+/* Custom selection styling for dark mode */
+.dark ::selection {
+  background-color: rgba(124, 58, 237, 0.3);
+  color: #ffffff;
+}
+
+/* Glow shadows for input fields in dark mode */
+.dark-input-glow {
+  box-shadow: 0 0 15px rgba(124, 58, 237, 0.06);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.dark-input-glow:focus-within {
+  box-shadow: 0 0 20px rgba(124, 58, 237, 0.15), 0 0 0 1px rgba(124, 58, 237, 0.3);
+  border-color: rgba(124, 58, 237, 0.4) !important;
+}
+
+/* Dark scrollbar hover override */
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.25) !important;
+}
+
+/* Shake animation for validation errors */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+.animate-shake {
+  animation: shake 0.2s ease-in-out 2;
+}
+
+

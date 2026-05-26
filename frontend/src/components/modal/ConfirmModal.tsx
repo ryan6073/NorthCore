@@ -28,18 +28,18 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
     switch (type) {
       case 'danger':
         return {
-          iconBg: 'bg-red-50 text-red-500 border border-red-100',
+          iconBg: 'bg-red-50 dark:bg-red-950/30 text-red-500 dark:text-red-400 border border-red-100 dark:border-red-900/40',
           btnBg: 'bg-red-600 hover:bg-red-700 text-white focus:ring-red-500/30',
         };
       case 'warning':
         return {
-          iconBg: 'bg-amber-50 text-amber-500 border border-amber-100',
+          iconBg: 'bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400 border border-amber-100 dark:border-amber-900/40',
           btnBg: 'bg-amber-500 hover:bg-amber-600 text-white focus:ring-amber-500/30',
         };
       case 'info':
       default:
         return {
-          iconBg: 'bg-blue-50 text-blue-500 border border-blue-100',
+          iconBg: 'bg-blue-50 dark:bg-blue-950/30 text-blue-500 dark:text-blue-400 border border-blue-100 dark:border-blue-900/40',
           btnBg: 'bg-lark-primary hover:bg-lark-primary-hover text-white focus:ring-lark-primary/30',
         };
     }
@@ -56,15 +56,15 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
       />
       
       {/* Dialog box */}
-      <div className="bg-white border border-lark-border rounded-2xl shadow-2xl max-w-sm w-full z-10 overflow-hidden transform transition-all duration-300 animate-scale-in flex flex-col relative">
+      <div className="bg-white dark:bg-slate-900 border border-lark-border dark:border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full z-10 overflow-hidden transform transition-all duration-300 animate-scale-in flex flex-col relative transition-colors">
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors"
+          className="absolute right-4 top-4 p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
           title="关闭"
         >
           <X className="w-4 h-4" />
         </button>
-
+ 
         <div className="p-5 flex gap-4 items-start">
           <div className={`p-2.5 rounded-xl flex-shrink-0 ${theme.iconBg}`}>
             {type === 'info' ? (
@@ -74,15 +74,15 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
             )}
           </div>
           <div className="flex-1 min-w-0 pr-4">
-            <h3 className="text-sm font-semibold text-slate-800 mb-1.5 leading-snug">{title}</h3>
-            <p className="text-xs text-slate-500 leading-relaxed">{content}</p>
+            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100 mb-1.5 leading-snug">{title}</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{content}</p>
           </div>
         </div>
 
-        <div className="px-5 py-3.5 bg-slate-50/50 border-t border-slate-100 flex items-center justify-end gap-2">
+        <div className="px-5 py-3.5 bg-slate-50/50 dark:bg-slate-950/20 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2">
           <button
             onClick={onClose}
-            className="px-4 py-2 border border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-slate-700 text-xs font-semibold rounded-xl transition-all duration-155 active:scale-95"
+            className="px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 text-xs font-semibold rounded-xl transition-all duration-155 active:scale-95 bg-white dark:bg-slate-900"
           >
             {cancelText}
           </button>

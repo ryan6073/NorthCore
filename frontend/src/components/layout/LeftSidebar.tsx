@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { Conversation, Agent } from '@/types';
-import { Plus, Search, MessageSquare, Users, Trash2 } from 'lucide-react';
+import { Plus, Search, MessageSquare, Users, Trash2, MoreVertical, Settings, LogOut } from 'lucide-react';
 import AgentDirectory from '../agent/AgentDirectory';
 import AgentDetailPanel from '../agent/AgentDetailPanel';
 import ConfirmModal from '../modal/ConfirmModal';
+import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface LeftSidebarProps {
   conversations: Conversation[];
@@ -70,6 +71,11 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
   const [keyword, setKeyword] = useState('');
   const [deleteConvId, setDeleteConvId] = useState<string | null>(null);
   const [deleteConvTitle, setDeleteConvTitle] = useState<string>('');
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+
+  const currentUser = useAgentHubStore(state => state.currentUser);
+  const logout = useAgentHubStore(state => state.logout);
+  const setIsSettingsOpen = useAgentHubStore(state => state.setIsSettingsOpen);
 
   const filteredConversations = conversations.filter(conv =>
     conv.title.toLowerCase().includes(keyword.toLowerCase())
@@ -82,7 +88,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
   const renderConversationAvatar = (conv: Conversation) => {
     if (conv.mode === 'single') {
       return (
-        <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-slate-100 border border-lark-border/50 shadow-sm">
+        <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-slate-100 dark:bg-slate-900 border border-lark-border/50 dark:border-slate-800/60 shadow-sm">
           <img 
             src={getAgentAvatar(conv.agentIds[0])} 
             alt={conv.title} 
@@ -92,7 +98,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
       );
     }
     return (
-      <div className="w-10 h-10 rounded-lg bg-indigo-50 border border-lark-border/50 flex-shrink-0 flex items-center justify-center overflow-hidden relative shadow-sm">
+      <div className="w-10 h-10 rounded-lg bg-indigo-50 dark:bg-indigo-950/20 border border-lark-border/50 dark:border-slate-800/60 flex-shrink-0 flex items-center justify-center overflow-hidden relative shadow-sm">
         {conv.agentIds.length <= 2 ? (
           <div className="w-full h-full flex">
             {conv.agentIds.slice(0, 2).map((agentId, idx) => (
@@ -131,29 +137,29 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
     : agents.find(a => a.id === selectedAgentId);
 
   return (
-    <div className="w-full h-full bg-lark-sidebar-bg flex flex-col border-r border-lark-border overflow-hidden">
+    <div className="w-full h-full bg-lark-sidebar-bg dark:bg-[#090a12] flex flex-col border-r border-lark-border dark:border-[#161828] overflow-hidden transition-colors">
       {viewMode !== 'agent-detail' && (
         <div className="p-4 pb-2 bg-transparent flex-shrink-0">
           <div className="flex items-center justify-between mb-3">
-            <h1 className="text-lg font-bold font-sans text-lark-text-primary tracking-tight" style={{ fontFamily: 'Outfit, sans-serif' }}>
+            <h1 className="text-lg font-bold font-sans text-lark-text-primary dark:text-slate-100 tracking-tight" style={{ fontFamily: 'Outfit, sans-serif' }}>
               AgentHub
             </h1>
             <button
               onClick={onOpenNewConversation}
-              className="w-8 h-8 rounded-lg bg-white border border-lark-border text-lark-text-secondary hover:text-lark-primary hover:bg-lark-bg-hover hover:border-lark-primary/30 flex items-center justify-center transition-all shadow-sm active:scale-95"
+              className="w-8 h-8 rounded-lg bg-white dark:bg-slate-900 border border-lark-border dark:border-slate-800 text-lark-text-secondary dark:text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 hover:bg-lark-bg-hover dark:hover:bg-slate-800 hover:border-lark-primary/30 dark:hover:border-violet-500/30 flex items-center justify-center transition-all shadow-sm active:scale-95"
               title="新建会话"
             >
               <Plus className="w-4 h-4" />
             </button>
           </div>
 
-          <div className="flex bg-[#eef0f2] rounded-lg p-0.5 mb-3 border border-lark-border/30">
+          <div className="flex bg-[#eef0f2] dark:bg-slate-950 rounded-lg p-0.5 mb-3 border border-lark-border/30 dark:border-slate-800/60">
             <button
               onClick={() => setViewMode('conversations')}
               className={`flex-1 py-1.5 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-all ${
                 viewMode === 'conversations'
-                  ? 'bg-white text-lark-primary shadow-sm font-semibold'
-                  : 'text-lark-text-secondary hover:text-lark-text-primary'
+                  ? 'bg-white dark:bg-slate-800 text-lark-primary dark:text-violet-400 shadow-sm font-semibold'
+                  : 'text-lark-text-secondary dark:text-slate-400 hover:text-lark-text-primary dark:hover:text-slate-200'
               }`}
             >
               <MessageSquare className="w-3.5 h-3.5" />
@@ -163,8 +169,8 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
               onClick={() => setViewMode('agents')}
               className={`flex-1 py-1.5 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-all ${
                 viewMode === 'agents'
-                  ? 'bg-white text-lark-primary shadow-sm font-semibold'
-                  : 'text-lark-text-secondary hover:text-lark-text-primary'
+                  ? 'bg-white dark:bg-slate-800 text-lark-primary dark:text-violet-400 shadow-sm font-semibold'
+                  : 'text-lark-text-secondary dark:text-slate-400 hover:text-lark-text-primary dark:hover:text-slate-200'
               }`}
             >
               <Users className="w-3.5 h-3.5" />
@@ -174,13 +180,13 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
 
           {viewMode === 'conversations' && (
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-lark-text-tertiary" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-lark-text-tertiary dark:text-slate-500" />
               <input
                 type="text"
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
                 placeholder="搜索会话..."
-                className="w-full pl-9 pr-4 py-1.5 bg-[#eff0f1] rounded-lg text-xs text-lark-text-primary placeholder:text-lark-text-tertiary border border-transparent outline-none focus:bg-white focus:border-lark-primary focus:ring-1 focus:ring-lark-primary/20 transition-all"
+                className="w-full pl-9 pr-4 py-1.5 bg-[#eff0f1] dark:bg-slate-900 rounded-lg text-xs text-lark-text-primary dark:text-slate-100 placeholder:text-lark-text-tertiary dark:placeholder:text-slate-600 border border-transparent outline-none focus:bg-white dark:focus:bg-slate-950 focus:border-lark-primary dark:focus:border-violet-650 focus:ring-1 focus:ring-lark-primary/20 dark:focus:ring-violet-650/20 transition-all"
               />
             </div>
           )}
@@ -190,7 +196,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
       {viewMode === 'conversations' && (
         <div className="flex-1 overflow-y-auto px-2 pb-4 space-y-0.5 min-h-0">
           {filteredConversations.length === 0 ? (
-            <p className="text-xs text-lark-text-tertiary text-center py-8">没有找到相关会话</p>
+            <p className="text-xs text-lark-text-tertiary dark:text-slate-500 text-center py-8">没有找到相关会话</p>
           ) : (
             filteredConversations.map((conv) => {
               const isActive = activeConversationId === conv.id;
@@ -200,28 +206,28 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                   onClick={() => onSelectConversation(conv.id)}
                   className={`p-2.5 rounded-lg cursor-pointer transition-all duration-150 relative group ${
                     isActive
-                      ? 'bg-lark-primary-light text-lark-primary'
-                      : 'hover:bg-lark-bg-hover'
+                      ? 'bg-lark-primary-light dark:bg-gradient-to-r dark:from-violet-950/40 dark:to-indigo-950/20 text-lark-primary dark:text-white'
+                      : 'hover:bg-slate-200/50 dark:hover:bg-slate-800/50'
                   }`}
                 >
                   {isActive && (
-                    <div className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full bg-lark-primary" />
+                    <div className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full bg-lark-primary dark:bg-gradient-to-b dark:from-violet-500 dark:to-indigo-550" />
                   )}
                   <div className="flex items-center gap-3">
                     {renderConversationAvatar(conv)}
                     <div className="flex-1 min-w-0 pr-4">
                       <div className="flex items-center justify-between mb-0.5">
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <h3 className={`text-sm font-medium truncate ${
-                            isActive ? 'text-lark-primary font-semibold' : 'text-lark-text-primary'
+                          <h3 className={`text-sm font-medium truncate transition-colors ${
+                            isActive ? 'text-lark-primary dark:text-white font-semibold' : 'text-lark-text-primary dark:text-slate-200 group-hover:text-slate-900 dark:group-hover:text-white'
                           }`}>{conv.title}</h3>
                         </div>
-                        <span className="text-[10px] text-lark-text-tertiary flex-shrink-0 font-normal group-hover:opacity-0 transition-opacity">
+                        <span className="text-[10px] text-lark-text-tertiary dark:text-slate-500 flex-shrink-0 font-normal group-hover:opacity-0 transition-opacity">
                           {conv.updatedAt.split(' ').pop()}
                         </span>
                       </div>
-                      <p className={`text-xs truncate ${
-                        isActive ? 'text-lark-primary/80' : 'text-lark-text-secondary'
+                      <p className={`text-xs truncate transition-colors ${
+                        isActive ? 'text-lark-primary/80 dark:text-violet-200/90' : 'text-lark-text-secondary dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-300'
                       }`}>{conv.lastMessage || '暂无消息'}</p>
                     </div>
                   </div>
@@ -233,7 +239,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                       setDeleteConvId(conv.id);
                       setDeleteConvTitle(conv.title);
                     }}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity absolute right-2.5 top-1/2 -translate-y-1/2 bg-white/95 hover:bg-red-50 hover:text-red-500 text-slate-400 p-1.5 rounded-lg shadow-sm border border-lark-border/50 z-20 active:scale-95 flex items-center justify-center"
+                    className="opacity-0 group-hover:opacity-100 transition-opacity absolute right-2.5 top-1/2 -translate-y-1/2 bg-white/95 dark:bg-slate-900/95 hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-500 text-slate-400 dark:text-slate-500 p-1.5 rounded-lg shadow-sm border border-lark-border/50 dark:border-slate-800/80 z-20 active:scale-95 flex items-center justify-center"
                     title="删除会话"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -271,6 +277,64 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
             setViewMode('agents');
           }}
         />
+      )}
+
+      {/* Sidebar bottom user info card */}
+      {currentUser && (
+        <div className="p-3 border-t border-lark-border/60 dark:border-slate-800/60 bg-white/50 dark:bg-slate-950/40 backdrop-blur-sm flex-shrink-0 relative">
+          <div
+            onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+            className="flex items-center justify-between p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/60 cursor-pointer transition-colors group select-none"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-full overflow-hidden border border-slate-200 dark:border-slate-800 shadow-sm flex-shrink-0 bg-slate-100 dark:bg-slate-900">
+                <img src={currentUser.avatar} alt={currentUser.name} className="w-full h-full object-cover" />
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">{currentUser.name}</h4>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{currentUser.email}</p>
+              </div>
+            </div>
+            <MoreVertical className="w-4 h-4 text-slate-400 group-hover:text-slate-650 dark:group-hover:text-slate-300 transition-colors" />
+          </div>
+
+          {/* Floating Dropdown popover */}
+          {isUserMenuOpen && (
+            <>
+              {/* Click outside backdrop overlay */}
+              <div
+                className="fixed inset-0 z-30"
+                onClick={() => setIsUserMenuOpen(false)}
+              />
+
+              <div className="absolute bottom-16 left-3 right-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl p-1.5 z-40 animate-scale-in flex flex-col gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSettingsOpen(true);
+                    setIsUserMenuOpen(false);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors"
+                >
+                  <Settings className="w-3.5 h-3.5 text-slate-400" />
+                  <span>个人与系统设置</span>
+                </button>
+                <div className="h-px bg-slate-100 dark:bg-slate-800 my-1 mx-1" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    logout();
+                    setIsUserMenuOpen(false);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-slate-400 hover:text-red-500" />
+                  <span>退出登录</span>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       )}
 
       <ConfirmModal

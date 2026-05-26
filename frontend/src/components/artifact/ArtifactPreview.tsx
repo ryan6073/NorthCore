@@ -144,7 +144,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     setSelectionBox(null);
   };
 
-  const handleContainerMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
+  const triggerSelection = (e: React.MouseEvent<HTMLDivElement> | MouseEvent | null) => {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed) {
       setSelectionBox(null);
@@ -153,6 +153,11 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     const text = selection.toString().trim();
     if (!text) {
       setSelectionBox(null);
+      return;
+    }
+
+    // Check if selection is within the parent container
+    if (containerRef.current && !containerRef.current.contains(selection.anchorNode)) {
       return;
     }
 
@@ -167,7 +172,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
         const findLineNumber = (node: Node | null): number | undefined => {
           let curr = node;
-          while (curr && curr !== e.currentTarget) {
+          while (curr && curr !== containerRef.current) {
             if (curr instanceof HTMLElement && curr.hasAttribute('data-line-number')) {
               const val = curr.getAttribute('data-line-number');
               if (val) return parseInt(val, 10);
@@ -189,27 +194,47 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       }
     }
 
-    try {
-      const range = selection.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-      const parentRect = e.currentTarget.getBoundingClientRect();
-      
+    if (!containerRef.current) return;
+    const parentRect = containerRef.current.getBoundingClientRect();
+
+    if (e && e.clientX !== 0 && e.clientY !== 0) {
+      // Position near the mouse cursor
+      const x = Math.max(10, Math.min(parentRect.width - 10, e.clientX - parentRect.left));
+      const y = Math.max(10, e.clientY - parentRect.top - 45);
       setSelectionBox({
-        x: rect.left - parentRect.left + (rect.width / 2) + e.currentTarget.scrollLeft,
-        y: rect.top - parentRect.top - 40 + e.currentTarget.scrollTop,
+        x,
+        y,
         text,
         startLine,
         endLine
       });
-    } catch (err) {
-      const rect = e.currentTarget.getBoundingClientRect();
-      setSelectionBox({
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top - 40,
-        text,
-        startLine,
-        endLine
-      });
+    } else {
+      // Fallback to selection bounding box
+      try {
+        const range = selection.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        const x = Math.max(10, Math.min(parentRect.width - 10, rect.left - parentRect.left + (rect.width / 2)));
+        const y = Math.max(10, rect.top - parentRect.top - 45);
+        setSelectionBox({
+          x,
+          y,
+          text,
+          startLine,
+          endLine
+        });
+      } catch (err) {
+        console.error('Failed to calculate selection rect fallback', err);
+      }
+    }
+  };
+
+  const handleMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
+    triggerSelection(e);
+  };
+
+  const handleKeyUp = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.shiftKey && (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End' || e.key === 'PageUp' || e.key === 'PageDown')) {
+      triggerSelection(null);
     }
   };
 
@@ -245,8 +270,8 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
   if (!currentArtifact) {
     return (
-      <div className="h-full w-full flex items-center justify-center text-center p-4">
-        <p className="text-sm text-slate-400">请选择一个产物进行预览</p>
+      <div className="h-full w-full flex items-center justify-center text-center p-4 bg-white dark:bg-slate-900">
+        <p className="text-sm text-slate-400 dark:text-slate-500">请选择一个产物进行预览</p>
       </div>
     );
   }
@@ -285,8 +310,6 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     if (currentArtifact.type === 'code') {
       return (
         <div 
-          ref={containerRef}
-          onMouseUp={handleContainerMouseUp}
           className="h-full w-full overflow-y-auto p-4 bg-slate-950 relative"
         >
           {!currentVersion ? (
@@ -303,13 +326,13 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     if (currentArtifact.type === 'markdown') {
       if (activeTab === 'preview') {
         return (
-          <div className="h-full w-full overflow-y-auto p-5 bg-[#fafbfb]">
+          <div className="h-full w-full overflow-y-auto p-5 bg-[#fafbfb] dark:bg-slate-950">
             {!currentVersion ? (
               <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
                 <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
               </div>
             ) : (
-              <article className="prose prose-sm max-w-none text-lark-text-primary bg-white border border-lark-border p-6 rounded-2xl shadow-sm leading-relaxed">
+              <article className="prose prose-sm dark:prose-invert max-w-none text-lark-text-primary dark:text-slate-200 bg-white dark:bg-slate-900 border border-lark-border dark:border-slate-800 p-6 rounded-2xl shadow-sm leading-relaxed">
                 <ReactMarkdown>{currentVersion.content}</ReactMarkdown>
               </article>
             )}
@@ -318,8 +341,6 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       }
       return (
         <div 
-          ref={containerRef}
-          onMouseUp={handleContainerMouseUp}
           className="h-full w-full overflow-y-auto p-4 bg-slate-950 relative"
         >
           {!currentVersion ? (
@@ -336,20 +357,20 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     if (currentArtifact.type === 'html') {
       if (activeTab === 'preview') {
         return (
-          <div className="h-full w-full p-4 overflow-hidden flex flex-col bg-[#fafbfb]">
+          <div className="h-full w-full p-4 overflow-hidden flex flex-col bg-[#fafbfb] dark:bg-slate-950">
             {/* Browser Header Bar */}
-            <div className="flex items-center gap-2.5 px-4 py-2.5 bg-slate-100 border-t border-l border-r border-slate-200 rounded-t-xl flex-shrink-0 shadow-sm">
+            <div className="flex items-center gap-2.5 px-4 py-2.5 bg-slate-100 dark:bg-slate-900 border-t border-l border-r border-slate-200 dark:border-slate-800 rounded-t-xl flex-shrink-0 shadow-sm">
               <div className="flex items-center gap-1.5 flex-shrink-0">
                 <div className="w-3 h-3 rounded-full bg-[#ff5f56]" />
                 <div className="w-3 h-3 rounded-full bg-[#ffbd2e]" />
                 <div className="w-3 h-3 rounded-full bg-[#27c93f]" />
               </div>
-              <div className="flex-grow mx-4 bg-white rounded-md border border-slate-200 py-1 px-3.5 text-[10px] text-slate-400 font-sans truncate select-all flex items-center gap-1.5 shadow-inner">
-                <span className="text-slate-300">https://</span>localhost:5173/{currentArtifact.title.toLowerCase()}
+              <div className="flex-grow mx-4 bg-white dark:bg-slate-950 rounded-md border border-slate-200 dark:border-slate-800 py-1 px-3.5 text-[10px] text-slate-400 dark:text-slate-500 font-sans truncate select-all flex items-center gap-1.5 shadow-inner">
+                <span className="text-slate-300 dark:text-slate-700">https://</span>localhost:5173/{currentArtifact.title.toLowerCase()}
               </div>
             </div>
             {/* Browser Content */}
-            <div className="flex-1 min-h-0 border-l border-r border-b border-slate-200 rounded-b-xl bg-white overflow-hidden shadow-sm">
+            <div className="flex-1 min-h-0 border-l border-r border-b border-slate-200 dark:border-slate-800 rounded-b-xl bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
               {!currentVersion ? (
                 <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
                   <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
@@ -368,8 +389,6 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       }
       return (
         <div 
-          ref={containerRef}
-          onMouseUp={handleContainerMouseUp}
           className="h-full w-full overflow-y-auto p-4 bg-slate-950 relative"
         >
           {!currentVersion ? (
@@ -407,11 +426,11 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   const isEditable = true;
 
   return (
-    <div className="h-full w-full flex flex-col overflow-hidden text-lark-text-primary bg-white relative">
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-lark-border bg-white flex-shrink-0 flex-wrap gap-2">
+    <div className="h-full w-full flex flex-col overflow-hidden text-lark-text-primary dark:text-slate-100 bg-white dark:bg-slate-900 relative">
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-lark-border dark:border-slate-800 bg-white dark:bg-slate-900 flex-shrink-0 flex-wrap gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className="flex-shrink-0">{getTypeIcon()}</span>
-          <h4 className="text-xs font-semibold text-lark-text-primary truncate max-w-[120px]" title={currentArtifact.title}>{currentArtifact.title}</h4>
+          <h4 className="text-xs font-semibold text-lark-text-primary dark:text-slate-200 truncate max-w-[120px]" title={currentArtifact.title}>{currentArtifact.title}</h4>
           
           {/* Version Dropdown Select */}
           {!isEditing && versions.length > 1 && currentVersion && (
@@ -423,11 +442,11 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
                   useAgentHubStore.getState().setSelectedArtifactVersion(selectedVer.version);
                 }
               }}
-              className="bg-[#f2f4f6] border border-lark-border/60 text-lark-text-secondary text-[10px] rounded px-1.5 py-0.5 outline-none font-medium focus:ring-1 focus:ring-lark-primary cursor-pointer hover:bg-lark-bg-hover"
+              className="bg-[#f2f4f6] dark:bg-slate-800 border border-lark-border/60 dark:border-slate-700 text-lark-text-secondary dark:text-slate-300 text-[10px] rounded px-1.5 py-0.5 outline-none font-medium focus:ring-1 focus:ring-lark-primary dark:focus:ring-violet-600 cursor-pointer hover:bg-lark-bg-hover dark:hover:bg-slate-700"
             >
               {versions.slice().reverse().map((v) => {
                 return (
-                  <option key={v.id} value={v.id}>
+                  <option key={v.id} value={v.id} className="dark:bg-slate-900 dark:text-slate-300">
                     v{v.version} {v.version === currentArtifact.latestVersion ? '(最新)' : ''}
                   </option>
                 );
@@ -448,7 +467,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
             </button>
             <button
               onClick={() => setIsEditing(false)}
-              className="px-2.5 py-1 text-[10px] rounded-lg border border-lark-border hover:bg-lark-bg-hover text-lark-text-secondary transition-all shadow-sm bg-white flex items-center gap-1 active:scale-95"
+              className="px-2.5 py-1 text-[10px] rounded-lg border border-lark-border dark:border-slate-700 hover:bg-lark-bg-hover dark:hover:bg-slate-800 text-lark-text-secondary dark:text-slate-350 transition-all shadow-sm bg-white dark:bg-slate-900 flex items-center gap-1 active:scale-95"
               title="取消"
             >
               <X className="w-3.5 h-3.5" />
@@ -458,13 +477,13 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
         ) : (
           <div className="flex items-center gap-1.5 flex-shrink-0 ml-auto">
             {needTabs && (
-              <div className="flex bg-[#eef0f2] rounded-lg p-0.5 border border-lark-border/30">
+              <div className="flex bg-[#eef0f2] dark:bg-slate-950 rounded-lg p-0.5 border border-lark-border/30 dark:border-slate-800">
                 <button
                   onClick={() => setActiveTab('preview')}
                   className={`px-2.5 py-0.5 text-[10px] rounded-md transition-all ${
                     activeTab === 'preview'
-                      ? 'bg-white text-lark-primary shadow-sm font-semibold'
-                      : 'text-lark-text-secondary hover:text-lark-text-primary'
+                      ? 'bg-white dark:bg-slate-800 text-lark-primary dark:text-violet-400 shadow-sm font-semibold'
+                      : 'text-lark-text-secondary dark:text-slate-400 hover:text-lark-text-primary dark:hover:text-slate-200'
                   }`}
                 >
                   预览
@@ -473,8 +492,8 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
                   onClick={() => setActiveTab('source')}
                   className={`px-2.5 py-0.5 text-[10px] rounded-md transition-all ${
                     activeTab === 'source'
-                      ? 'bg-white text-lark-primary shadow-sm font-semibold'
-                      : 'text-lark-text-secondary hover:text-lark-text-primary'
+                      ? 'bg-white dark:bg-slate-800 text-lark-primary dark:text-violet-400 shadow-sm font-semibold'
+                      : 'text-lark-text-secondary dark:text-slate-400 hover:text-lark-text-primary dark:hover:text-slate-200'
                   }`}
                 >
                   源码
@@ -483,8 +502,8 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
                   onClick={() => setActiveTab('diff')}
                   className={`px-2.5 py-0.5 text-[10px] rounded-md transition-all flex items-center gap-0.5 ${
                     activeTab === 'diff'
-                      ? 'bg-white text-lark-primary shadow-sm font-semibold'
-                      : 'text-lark-text-secondary hover:text-lark-text-primary'
+                      ? 'bg-white dark:bg-slate-800 text-lark-primary dark:text-violet-400 shadow-sm font-semibold'
+                      : 'text-lark-text-secondary dark:text-slate-400 hover:text-lark-text-primary dark:hover:text-slate-200'
                   }`}
                 >
                   <GitCompare className="w-2.5 h-2.5" />
@@ -498,7 +517,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
                   setEditedContent(currentVersion?.content || '');
                   setIsEditing(true);
                 }}
-                className="p-1.5 rounded-lg hover:bg-lark-bg-hover text-lark-text-secondary hover:text-lark-primary transition-all border border-lark-border shadow-sm bg-white flex items-center gap-1 active:scale-95"
+                className="p-1.5 rounded-lg hover:bg-lark-bg-hover dark:hover:bg-slate-800 text-lark-text-secondary dark:text-slate-350 hover:text-lark-primary dark:hover:text-violet-400 transition-all border border-lark-border dark:border-slate-800 shadow-sm bg-white dark:bg-slate-900 flex items-center gap-1 active:scale-95"
                 title="编辑内容"
               >
                 <Edit3 className="w-3.5 h-3.5" />
@@ -507,7 +526,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
             )}
             <button
               onClick={handleCopy}
-              className="p-1.5 rounded-lg hover:bg-lark-bg-hover text-lark-text-secondary hover:text-lark-primary transition-all border border-lark-border shadow-sm bg-white"
+              className="p-1.5 rounded-lg hover:bg-lark-bg-hover dark:hover:bg-slate-800 text-lark-text-secondary dark:text-slate-350 hover:text-lark-primary dark:hover:text-violet-400 transition-all border border-lark-border dark:border-slate-800 shadow-sm bg-white dark:bg-slate-900"
               title="复制内容"
             >
               {copied ? (
@@ -519,7 +538,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
             {onOpenFullScreen && (
               <button
                 onClick={() => onOpenFullScreen(currentArtifact.id)}
-                className="p-1.5 rounded-lg hover:bg-lark-bg-hover text-lark-text-secondary hover:text-lark-primary transition-all border border-lark-border shadow-sm bg-white"
+                className="p-1.5 rounded-lg hover:bg-lark-bg-hover dark:hover:bg-slate-800 text-lark-text-secondary dark:text-slate-350 hover:text-lark-primary dark:hover:text-violet-400 transition-all border border-lark-border dark:border-slate-800 shadow-sm bg-white dark:bg-slate-900"
                 title="放大全屏预览"
               >
                 <Maximize2 className="w-3.5 h-3.5" />
@@ -528,13 +547,19 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
           </div>
         )}
       </div>
-      <div className="flex-1 overflow-hidden min-h-0 bg-[#fafbfb] relative">
+      <div 
+        ref={containerRef}
+        onMouseUp={handleMouseUp}
+        onKeyUp={handleKeyUp}
+        className="flex-1 overflow-hidden min-h-0 bg-[#fafbfb] dark:bg-slate-950 relative"
+      >
         {renderContent()}
 
         {/* Floating Selection Popover */}
         {!isEditing && selectionBox && (
           <button
             type="button"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={handleQuoteSelection}
             className="absolute bg-slate-900 text-white text-xs font-semibold px-2.5 py-1.5 rounded-lg shadow-xl hover:bg-slate-800 border border-slate-700 z-50 flex items-center gap-1 hover:scale-105 active:scale-95 transition-all select-none"
             style={{

@@ -81,18 +81,18 @@ const RightPanel: React.FC<RightPanelProps> = ({
   }, [onSelectArtifact, onOpenFullScreenPreview]);
 
   return (
-    <div className="bg-lark-sidebar-bg h-full flex flex-col border-l border-lark-border w-full min-w-0">
-      <div style={{ height: topHeight, minHeight: 150 }} className="border-b border-lark-border/60 overflow-hidden bg-white">
+    <div className="bg-lark-sidebar-bg dark:bg-slate-950 h-full flex flex-col border-l border-lark-border dark:border-slate-800 w-full min-w-0 transition-colors">
+      <div style={{ height: topHeight, minHeight: 150 }} className="border-b border-lark-border/60 dark:border-slate-800/60 overflow-hidden bg-white dark:bg-slate-900 transition-colors">
         <AgentList agents={agents} />
       </div>
 
       <div
         onMouseDown={handleMouseDown}
-        className="h-[2px] bg-lark-border hover:bg-lark-primary active:bg-lark-primary cursor-ns-resize transition-colors flex-shrink-0 z-10 relative
+        className="h-[2px] bg-lark-border dark:bg-slate-800 hover:bg-lark-primary active:bg-lark-primary cursor-ns-resize transition-colors flex-shrink-0 z-10 relative
           before:content-[''] before:absolute before:-top-1 before:bottom-1 before:left-0 before:right-0 before:h-3 before:bg-transparent"
       />
 
-      <div className="flex-grow flex flex-col overflow-hidden min-w-0 bg-white">
+      <div className="flex-grow flex flex-col overflow-hidden min-w-0 bg-white dark:bg-slate-900 transition-colors">
         <ArtifactList
           artifacts={artifacts}
           onJumpToMessage={handleJumpToMessage}

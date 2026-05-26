@@ -99,7 +99,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
   }, [handleMouseMove, handleMouseUp]);
 
   return (
-    <div className="h-screen w-screen flex bg-white overflow-hidden text-lark-text-primary">
+    <div className="h-screen w-screen flex bg-white dark:bg-[#06070d] overflow-hidden text-lark-text-primary dark:text-slate-100 transition-colors">
       {/* 左侧区域 */}
       <aside
         style={{
@@ -108,7 +108,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
           maxWidth: LEFT_MAX,
           flex: `0 0 ${leftWidth}px`
         }}
-        className="h-full min-w-0 overflow-hidden border-r border-lark-border bg-lark-sidebar-bg"
+        className="h-full min-w-0 overflow-hidden border-r border-lark-border dark:border-[#161828] bg-lark-sidebar-bg dark:bg-[#090a12] transition-colors"
       >
         <div className="h-full w-full min-w-0 overflow-hidden">
           {leftSidebar}
@@ -120,7 +120,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
         onMouseDown={handleLeftMouseDown}
         className="
           h-full w-[2px] flex-none cursor-col-resize
-          bg-lark-border hover:bg-lark-primary active:bg-lark-primary
+          bg-lark-border dark:bg-[#1b1e32] hover:bg-lark-primary active:bg-lark-primary
           transition-colors select-none z-20 relative
           before:content-[''] before:absolute before:-left-1 before:right-1 before:top-0 before:bottom-0 before:w-3 before:bg-transparent
         "
@@ -130,7 +130,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
       <main
         className="
           h-full flex-1 min-w-0 overflow-hidden
-          bg-white
+          bg-white dark:bg-[#0b0c16] transition-colors
         "
       >
         <div className="h-full w-full min-w-0 overflow-hidden">
@@ -143,7 +143,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
         onMouseDown={handleRightMouseDown}
         className="
           h-full w-[2px] flex-none cursor-col-resize
-          bg-lark-border hover:bg-lark-primary active:bg-lark-primary
+          bg-lark-border dark:bg-[#1b1e32] hover:bg-lark-primary active:bg-lark-primary
           transition-colors select-none z-20 relative
           before:content-[''] before:absolute before:-left-1 before:right-1 before:top-0 before:bottom-0 before:w-3 before:bg-transparent
         "
@@ -157,7 +157,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
           maxWidth: RIGHT_MAX,
           flex: `0 0 ${rightWidth}px`
         }}
-        className="h-full min-w-0 overflow-hidden border-l border-lark-border bg-lark-sidebar-bg"
+        className="h-full min-w-0 overflow-hidden border-l border-lark-border dark:border-[#161828] bg-lark-sidebar-bg dark:bg-[#090a12] transition-colors"
       >
         <div className="h-full w-full min-w-0 overflow-hidden">
           {rightPanel}

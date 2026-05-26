@@ -18,7 +18,7 @@ const AttachmentCard: React.FC<AttachmentCardProps> = ({ attachment }) => {
 
   if (attachment.type === 'image') {
     return (
-      <div className="relative group max-w-sm rounded-xl overflow-hidden border border-slate-200/80 bg-white shadow-sm hover:shadow-md transition-all duration-200 my-1 animate-fade-in">
+      <div className="relative group max-w-sm rounded-xl overflow-hidden border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm hover:shadow-md transition-all duration-200 my-1 animate-fade-in">
         <img
           src={attachment.url}
           alt={attachment.name}
@@ -29,14 +29,14 @@ const AttachmentCard: React.FC<AttachmentCardProps> = ({ attachment }) => {
           onClick={() => setShowLightBox(true)}
           className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-zoom-in gap-2"
         >
-          <div className="p-2 rounded-full bg-white/90 text-slate-800 shadow hover:scale-105 active:scale-95 transition-all">
+          <div className="p-2 rounded-full bg-white/90 dark:bg-slate-800/90 text-slate-800 dark:text-slate-200 shadow hover:scale-105 active:scale-95 transition-all">
             <ZoomIn className="w-4 h-4" />
           </div>
           <a
             href={attachment.url}
             download={attachment.name}
             onClick={(e) => e.stopPropagation()}
-            className="p-2 rounded-full bg-white/90 text-slate-800 shadow hover:scale-105 active:scale-95 transition-all"
+            className="p-2 rounded-full bg-white/90 dark:bg-slate-800/90 text-slate-800 dark:text-slate-200 shadow hover:scale-105 active:scale-95 transition-all"
             title="下载"
           >
             <Download className="w-4 h-4" />
@@ -66,38 +66,38 @@ const AttachmentCard: React.FC<AttachmentCardProps> = ({ attachment }) => {
   const isPpt = attachment.type === 'ppt';
 
   const getDocIcon = () => {
-    if (isPdf) return <FileText className="w-6 h-6 text-red-600" />;
-    if (isPpt) return <Presentation className="w-6 h-6 text-orange-600" />;
-    return <File className="w-6 h-6 text-slate-500" />;
+    if (isPdf) return <FileText className="w-6 h-6 text-red-600 dark:text-red-400" />;
+    if (isPpt) return <Presentation className="w-6 h-6 text-orange-600 dark:text-orange-400" />;
+    return <File className="w-6 h-6 text-slate-500 dark:text-slate-400" />;
   };
 
   const getIconBg = () => {
-    if (isPdf) return 'bg-red-50 border-red-100';
-    if (isPpt) return 'bg-orange-50 border-orange-100';
-    return 'bg-slate-50 border-slate-100';
+    if (isPdf) return 'bg-red-50 dark:bg-red-950/20 border-red-100 dark:border-red-900/30';
+    if (isPpt) return 'bg-orange-50 dark:bg-orange-950/20 border-orange-100 dark:border-orange-900/30';
+    return 'bg-slate-50 dark:bg-slate-900/60 border-slate-100 dark:border-slate-800/60';
   };
 
   return (
-    <div className="p-3 bg-white border border-slate-200/80 rounded-xl hover:border-slate-350 hover:shadow-md transition-all duration-200 my-1 max-w-sm flex flex-col gap-2.5 shadow-sm animate-fade-in">
+    <div className="p-3 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-xl hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-md transition-all duration-200 my-1 max-w-sm flex flex-col gap-2.5 shadow-sm animate-fade-in">
       <div className="flex items-center gap-3 min-w-0">
         <div className={`w-11 h-11 rounded-xl border flex items-center justify-center flex-shrink-0 shadow-sm ${getIconBg()}`}>
           {getDocIcon()}
         </div>
         <div className="min-w-0 flex-1">
-          <h4 className="text-xs font-semibold text-slate-800 truncate" title={attachment.name}>
+          <h4 className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate" title={attachment.name}>
             {attachment.name}
           </h4>
-          <p className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1.5 font-medium">
+          <p className="text-[10px] text-slate-400 dark:text-slate-550 mt-0.5 flex items-center gap-1.5 font-medium">
             <span className="uppercase">{attachment.type}</span>
             {attachment.size && (
               <>
-                <span className="w-1 h-1 rounded-full bg-slate-300" />
+                <span className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-700" />
                 <span>{formatSize(attachment.size)}</span>
               </>
             )}
             {attachment.meta?.pages && (
               <>
-                <span className="w-1 h-1 rounded-full bg-slate-300" />
+                <span className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-700" />
                 <span>{attachment.meta.pages} 页</span>
               </>
             )}
@@ -105,23 +105,23 @@ const AttachmentCard: React.FC<AttachmentCardProps> = ({ attachment }) => {
         </div>
       </div>
 
-      <div className="border-t border-slate-100" />
+      <div className="border-t border-slate-100 dark:border-slate-800/85" />
 
       <div className="flex items-center justify-end gap-2">
         {isPdf && (
           <button
             onClick={() => window.open(attachment.url, '_blank')}
-            className="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-semibold rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 hover:text-slate-800 transition-all active:scale-95 shadow-sm"
+            className="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-semibold rounded-lg bg-slate-50 dark:bg-slate-955/50 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-all active:scale-95 shadow-sm"
             title="在线预览"
           >
-            <Eye className="w-3 h-3 text-slate-400" />
+            <Eye className="w-3 h-3 text-slate-400 dark:text-slate-500" />
             <span>在线预览</span>
           </button>
         )}
         <a
           href={attachment.url}
           download={attachment.name}
-          className="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-semibold rounded-lg bg-lark-primary-light hover:bg-lark-primary/10 border border-lark-primary/20 text-lark-primary transition-all active:scale-95 shadow-sm"
+          className="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-semibold rounded-lg bg-lark-primary-light dark:bg-violet-950/40 hover:bg-lark-primary/10 dark:hover:bg-violet-900/40 border border-lark-primary/20 dark:border-violet-850/40 text-lark-primary dark:text-violet-400 transition-all active:scale-95 shadow-sm"
           title="下载附件"
         >
           <Download className="w-3 h-3" />
@@ -129,6 +129,7 @@ const AttachmentCard: React.FC<AttachmentCardProps> = ({ attachment }) => {
         </a>
       </div>
     </div>
+
   );
 };
 

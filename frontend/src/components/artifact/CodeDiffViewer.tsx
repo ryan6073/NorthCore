@@ -15,6 +15,7 @@ const CodeDiffViewer: React.FC<CodeDiffViewerProps> = ({ oldValue, newValue, spl
         newValue={newValue}
         splitView={splitView}
         compareMethod={DiffMethod.WORDS}
+        useDarkTheme={true}
         styles={{
           variables: {
             dark: {

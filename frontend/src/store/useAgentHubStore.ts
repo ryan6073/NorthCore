@@ -49,6 +49,24 @@ interface AgentHubStore {
   // Phase 3 Actions
   setReplyContext: (reply: { id: string; senderName: string; content: string } | null) => void;
   setQuoteArtifactRef: (ref: ArtifactReference | null) => void;
+
+  // User and Settings state
+  currentUser: { name: string; email: string; avatar: string; isLoggedIn: boolean } | null;
+  settings: {
+    theme: 'light' | 'dark';
+    apiKey: string;
+    activeProvider: string;
+    modelName: string;
+    temperature: number;
+    maxTokens: number;
+  };
+  isSettingsOpen: boolean;
+
+  login: (name: string, email: string, avatar: string) => void;
+  logout: () => void;
+  updateProfile: (name: string, email: string, avatar: string) => void;
+  updateSettings: (settings: Partial<AgentHubStore['settings']>) => void;
+  setIsSettingsOpen: (open: boolean) => void;
   
   loadConversationData: (convId: string) => Promise<void>;
   createConversation: (payload: CreateConversationPayload) => Promise<void>;
@@ -93,7 +111,41 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   replyContext: null,
   quoteArtifactRef: null,
 
+  // User and Settings initial state
+  currentUser: null,
+  settings: {
+    theme: 'light',
+    apiKey: '',
+    activeProvider: 'custom',
+    modelName: 'gpt-4o',
+    temperature: 0.7,
+    maxTokens: 4096,
+  },
+  isSettingsOpen: false,
+
   initStore: async () => {
+    // Load from LocalStorage
+    try {
+      const storedUser = localStorage.getItem('ag_user');
+      if (storedUser) {
+        set({ currentUser: JSON.parse(storedUser) });
+      }
+      const storedSettings = localStorage.getItem('ag_settings');
+      if (storedSettings) {
+        const parsedSettings = JSON.parse(storedSettings);
+        set({ settings: { ...get().settings, ...parsedSettings } });
+        
+        // Apply theme
+        if (parsedSettings.theme === 'dark') {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load settings from localStorage', e);
+    }
+
     const { useMockMode } = get();
     if (!useMockMode) {
       try {
@@ -897,6 +949,39 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
   setReplyContext: (replyContext) => set({ replyContext }),
   setQuoteArtifactRef: (quoteArtifactRef) => set({ quoteArtifactRef }),
+
+  login: (name, email, avatar) => {
+    const user = { name, email, avatar, isLoggedIn: true };
+    set({ currentUser: user });
+    localStorage.setItem('ag_user', JSON.stringify(user));
+  },
+
+  logout: () => {
+    set({ currentUser: null, activeConversationId: null, messages: [], pins: [], memories: [] });
+    localStorage.removeItem('ag_user');
+  },
+
+  updateProfile: (name, email, avatar) => {
+    const user = { name, email, avatar, isLoggedIn: true };
+    set({ currentUser: user });
+    localStorage.setItem('ag_user', JSON.stringify(user));
+  },
+
+  updateSettings: (newSettings) => {
+    const updated = { ...get().settings, ...newSettings };
+    set({ settings: updated });
+    localStorage.setItem('ag_settings', JSON.stringify(updated));
+
+    if (newSettings.theme) {
+      if (newSettings.theme === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    }
+  },
+
+  setIsSettingsOpen: (isSettingsOpen) => set({ isSettingsOpen }),
   togglePinMessage: async (messageId) => {
     const { messages, useMockMode, activeConversationId, pins } = get();
     const targetMsg = messages.find(m => m.id === messageId);
