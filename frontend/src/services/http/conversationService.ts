@@ -9,6 +9,7 @@ import type {
   CompressContextResult,
   MemoryItem,
   PinItem,
+  ContextUsage,
 } from '@/types';
 
 interface GetConversationListParams {
@@ -90,7 +91,7 @@ export async function deleteConversation(
 
 export async function getContextUsage(
   conversationId: string
-): Promise<BaseApiResponse<{ contextUsagePercent: number; contextUsageChars: number; contextLimitChars: number }>> {
+): Promise<BaseApiResponse<ContextUsage>> {
   return await http.get(`/conversations/${conversationId}/context/usage`);
 }
 

@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Conversation, Message, Agent, Artifact, MessageAttachment, AgentMentionItem } from '@/types';
 import MessageBubble from './MessageBubble';
-import { Send, Paperclip, Smile, GripVertical, X, FileCode, Scissors, Brain, Pin, Trash2, ArrowUpRight } from 'lucide-react';
+import ContextUsageRing from '@/components/common/ContextUsageRing';
+import { Send, Paperclip, Smile, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface ChatPanelProps {
@@ -99,12 +100,13 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const memories = useAgentHubStore(state => state.memories);
   const deleteMemory = useAgentHubStore(state => state.deleteMemory);
   const togglePinMessage = useAgentHubStore(state => state.togglePinMessage);
-
   const [showMemoryPanel, setShowMemoryPanel] = useState(false);
   const [memoryTab, setMemoryTab] = useState<'pins' | 'memories'>('pins');
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  const lastScrolledConversationId = useRef<string | undefined>(undefined);
+
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+    messagesEndRef.current?.scrollIntoView({ behavior });
   };
 
   const lastMessageId = messages.length > 0 ? messages[messages.length - 1].id : null;
@@ -113,7 +115,16 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const conversationId = conversation?.id;
 
   useEffect(() => {
-    scrollToBottom();
+    const belongsToCurrentConv = messages.length > 0 && messages[0].conversationId === conversationId;
+
+    if (lastScrolledConversationId.current !== conversationId) {
+      scrollToBottom('instant');
+      if (belongsToCurrentConv || messages.length === 0 || !conversationId) {
+        lastScrolledConversationId.current = conversationId;
+      }
+    } else {
+      scrollToBottom('smooth');
+    }
   }, [conversationId, messagesLength, lastMessageId, lastMessageContent]);
 
   const renameConversation = useAgentHubStore(state => state.renameConversation);
@@ -414,7 +425,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         </div>
       )}
 
-      <div className="px-5 py-3.5 border-b border-lark-border dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between flex-shrink-0 z-10 transition-colors">
+      <div className="px-5 py-3.5 border-b border-lark-border dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between flex-shrink-0 z-20 transition-colors">
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           {isEditingTitle ? (
             <div className="flex items-center gap-1.5 flex-grow max-w-sm">
@@ -495,15 +506,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         <div className="flex items-center gap-2 flex-shrink-0">
           {conversation && (
             <>
-              {/* Context Compression Button */}
-              <button
-                onClick={compressContext}
-                className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 hover:bg-slate-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 rounded-lg transition-all flex items-center gap-1.5 shadow-sm bg-white dark:bg-slate-900"
-                title="压缩上下文历史以节省 token 消耗"
-              >
-                <Scissors className="w-3.5 h-3.5" />
-                <span className="text-xs font-medium hidden md:inline">压缩上下文</span>
-              </button>
+              {/* Trae Style Context Usage Ring */}
+              <ContextUsageRing 
+                usage={conversation.contextUsage} 
+                onCompress={compressContext}
+              />
 
               {/* Long-term Memory Sidebar Toggle */}
               <button

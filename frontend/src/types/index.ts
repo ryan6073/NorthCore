@@ -109,9 +109,7 @@ export interface Conversation {
   lastMessage: string;
   updatedAt: string;
   createdAt?: string;
-  contextUsagePercent?: number;
-  contextUsageChars?: number;
-  contextLimitChars?: number;
+  contextUsage?: ContextUsage;
 }
 
 export interface Message {
@@ -185,6 +183,12 @@ export interface UpdateConversationPayload {
 
 export type MemoryCategory = 'preference' | 'project' | 'profile' | 'constraint';
 
+export interface ContextUsage {
+  contextUsagePercent: number;
+  contextUsageChars: number;
+  contextLimitChars: number;
+}
+
 export interface AgentMentionItem {
   id: string;
   name: string;
@@ -208,9 +212,7 @@ export interface ConversationSummary {
 export interface CompressContextResult {
   summary: ConversationSummary;
   compressed: boolean;
-  contextUsagePercent?: number;
-  contextUsageChars?: number;
-  contextLimitChars?: number;
+  contextUsage?: ContextUsage;
 }
 
 export interface MemoryItem {
@@ -250,9 +252,7 @@ export interface SendMessageResponse {
   userMessage: Message;
   agentMessages: Message[];
   artifacts: Artifact[];
-  contextUsagePercent?: number;
-  contextUsageChars?: number;
-  contextLimitChars?: number;
+  contextUsage?: ContextUsage;
 }
 
 export interface BaseApiResponse<T = any> {

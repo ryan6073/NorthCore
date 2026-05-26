@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem, SendMessageRequest } from '@/types';
+import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem, SendMessageRequest, ContextUsage } from '@/types';
 import { getAgentList, updateAgentDetail, createAgent as createAgentApi, deleteAgent as deleteAgentApi } from '@/services/http/agentService';
-import { getConversationList, createConversation as createConversationApi, updateConversation, compressContext, pinMessage, unpinMessage, getPins, getMemories, deleteMemory, deleteConversation } from '@/services/http/conversationService';
+import { getConversationList, createConversation as createConversationApi, updateConversation, compressContext, pinMessage, unpinMessage, getPins, getMemories, deleteMemory, deleteConversation, getContextUsage as getContextUsageApi } from '@/services/http/conversationService';
 import { getMessageList, sendMessageNonStreaming } from '@/services/http/messageService';
 import { getArtifactMetaList, getArtifactDetail, getArtifactVersions, updateArtifactContent } from '@/services/http/artifactService';
 import wsClient from '@/services/ws/wsClient';
@@ -83,6 +83,8 @@ interface AgentHubStore {
   deleteConversation: (id: string) => Promise<void>;
   renameConversation: (id: string, newTitle: string) => Promise<void>;
   loadArtifactContent: (artifactId: string) => Promise<void>;
+  getContextUsage: () => Promise<void>;
+  setContextUsage: (usage: ContextUsage) => void;
   
   connectWS: () => Promise<void>;
   disconnectWS: () => void;
@@ -336,6 +338,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           await get().loadArtifactContent(arts[0].id);
         }
       }
+      await get().getContextUsage();
     } catch (e) {
       console.error('[Store] 加载会话数据失败', e);
     }
@@ -406,6 +409,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         const res = await compressContext(activeConversationId);
         if (res.code === 0) {
           result = res.data;
+          if (result.contextUsage) {
+            get().setContextUsage(result.contextUsage);
+          }
         } else {
           throw new Error('压缩接口返回失败');
         }
@@ -424,6 +430,11 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             updatedAt: getCurrentFullTime(),
           },
           compressed: true,
+          contextUsage: {
+            contextUsagePercent: 5,
+            contextUsageChars: 10000,
+            contextLimitChars: 200000,
+          },
         };
       }
     } else {
@@ -440,7 +451,16 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           updatedAt: getCurrentFullTime(),
         },
         compressed: true,
+        contextUsage: {
+          contextUsagePercent: 5,
+          contextUsageChars: 10000,
+          contextLimitChars: 200000,
+        },
       };
+    }
+
+    if (result.contextUsage) {
+      get().setContextUsage(result.contextUsage);
     }
 
     const systemMsg: Message = {
@@ -610,7 +630,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         };
         const res = await sendMessageNonStreaming(activeConversationId, payload);
         if (res.code === 0) {
-          const { userMessage, agentMessages, artifacts } = res.data;
+          const { userMessage, agentMessages, artifacts, contextUsage } = res.data;
           set(state => {
             // Replace the optimistic message with the actual user message
             const updatedMessages = state.messages.map(m =>
@@ -634,9 +654,17 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               }
             });
 
+            // Update active conversation usage if returned
+            const updatedConversations = state.conversations.map(c =>
+              c.id === activeConversationId && contextUsage
+                ? { ...c, contextUsage }
+                : c
+            );
+
             return {
               messages: finalMessages,
               artifacts: currentArtifacts,
+              conversations: updatedConversations,
               isProcessing: false,
             };
           });
@@ -924,7 +952,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       });
 
       const unsubAllCompleted = wsClient.on('conversation.all_tasks.completed', (event: any) => {
-        const { conversationId, summary } = event.data;
+        const { conversationId, summary, contextUsage } = event.data;
         set(state => {
           if (state.activeConversationId !== conversationId) return {};
 
@@ -943,11 +971,21 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             a.status === 'thinking' ? { ...a, status: 'online' as const } : a
           );
 
-          return {
+          let newState: Partial<AgentHubStore> = {
             messages: [...state.messages, systemMsg],
             agents: updatedAgents,
             isProcessing: false,
           };
+
+          if (contextUsage) {
+            newState.conversations = state.conversations.map(c =>
+              c.id === conversationId
+                ? { ...c, contextUsage }
+                : c
+            );
+          }
+
+          return newState;
         });
       });
 
@@ -1183,5 +1221,32 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         messages: [...state.messages, editLogMsg],
       };
     });
+  },
+
+  getContextUsage: async () => {
+    const { activeConversationId, useMockMode } = get();
+    if (!activeConversationId) return;
+
+    if (!useMockMode) {
+      try {
+        const res = await getContextUsageApi(activeConversationId);
+        if (res.code === 0) {
+          get().setContextUsage(res.data);
+          return;
+        }
+      } catch (e) {
+        console.warn('[Store] getContextUsage API 调用失败', e);
+      }
+    }
+  },
+
+  setContextUsage: (usage) => {
+    set(state => ({
+      conversations: state.conversations.map(c =>
+        c.id === state.activeConversationId
+          ? { ...c, contextUsage: usage }
+          : c
+      ),
+    }));
   },
 }));
