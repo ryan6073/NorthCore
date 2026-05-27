@@ -11,9 +11,20 @@ interface AgentConfigFormProps {
 const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClose }) => {
   const [form, setForm] = useState<Agent>(() => ({
     ...agent,
-    modelConfig: { ...agent.modelConfig },
-    tools: agent.tools.map(t => ({ ...t })),
-    permissions: { ...agent.permissions }
+    modelConfig: agent.modelConfig ? { ...agent.modelConfig } : {
+      provider: 'custom' as any,
+      modelName: 'gpt-4o',
+      temperature: 0.7,
+      maxTokens: 4096
+    },
+    tools: (agent.tools || []).map(t => ({ ...t })),
+    permissions: agent.permissions ? { ...agent.permissions } : {
+      canReadFiles: false,
+      canWriteFiles: false,
+      canRunCommands: false,
+      canGenerateArtifacts: false,
+      canDeploy: false
+    }
   }));
 
   const providers: AgentProvider[] = ['mock', 'claude-code', 'codex', 'opencode', 'local-qwen', 'custom'];

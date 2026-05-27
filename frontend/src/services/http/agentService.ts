@@ -6,6 +6,7 @@ import type {
   PaginatedData,
   AgentCategory,
   AgentProvider,
+  Conversation,
 } from '@/types';
 
 interface GetAgentListParams {
@@ -46,12 +47,26 @@ export async function deleteAgent(
   return await http.delete(`/agents/${agentId}`);
 }
 
+export interface AgentContactResponse {
+  contactId: string;
+  conversationId: string;
+  conversation: Conversation;
+}
+
+export async function getAgentContact(
+  userId: string,
+  agentId: string
+): Promise<BaseApiResponse<AgentContactResponse>> {
+  return await http.get(`/users/${userId}/agents/${agentId}/contact`);
+}
+
 const agentService = {
   getAgentList,
   getAgentDetail,
   updateAgentDetail,
   createAgent,
   deleteAgent,
+  getAgentContact,
 };
 
 export default agentService;

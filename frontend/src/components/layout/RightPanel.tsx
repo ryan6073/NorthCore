@@ -1,10 +1,12 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Artifact, Agent } from '@/types';
+import { Artifact, Agent, Conversation } from '@/types';
 import AgentList from '../agent/AgentList';
+import { AgentMiniConfigPanel } from '../agent/AgentMiniConfigPanel';
 import ArtifactList from '../artifact/ArtifactList';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface RightPanelProps {
+  conversation: Conversation | undefined;
   agents: Agent[];
   artifacts: Artifact[];
   onSelectArtifact: (artifactId: string) => void;
@@ -12,12 +14,13 @@ interface RightPanelProps {
 }
 
 const RightPanel: React.FC<RightPanelProps> = ({
+  conversation,
   agents,
   artifacts,
   onSelectArtifact,
   onOpenFullScreenPreview
 }) => {
-  const [topHeight, setTopHeight] = useState(240);
+  const [topHeight, setTopHeight] = useState(280);
   const isDragging = useRef(false);
   const startY = useRef(0);
   const startHeight = useRef(0);
@@ -83,7 +86,11 @@ const RightPanel: React.FC<RightPanelProps> = ({
   return (
     <div className="bg-lark-sidebar-bg dark:bg-slate-950 h-full flex flex-col border-l border-lark-border dark:border-slate-800 w-full min-w-0 transition-colors">
       <div style={{ height: topHeight, minHeight: 150 }} className="border-b border-lark-border/60 dark:border-slate-800/60 overflow-hidden bg-white dark:bg-slate-900 transition-colors">
-        <AgentList agents={agents} />
+        {conversation?.mode === 'agent' && agents.length > 0 ? (
+          <AgentMiniConfigPanel agent={agents[0]} />
+        ) : (
+          <AgentList agents={agents} />
+        )}
       </div>
 
       <div

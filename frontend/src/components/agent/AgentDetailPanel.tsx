@@ -91,7 +91,7 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
             能力标签
           </h4>
           <div className="flex flex-wrap gap-1.5">
-            {agent.tags.map(tag => (
+            {(agent.tags || []).map(tag => (
               <span key={tag} className="text-[10px] px-2 py-0.5 rounded bg-lark-primary-light dark:bg-violet-950/40 text-lark-primary dark:text-violet-300 font-medium border border-lark-primary/10 dark:border-violet-900/30">
                 {tag}
               </span>
@@ -105,28 +105,33 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
             <span className="w-1 h-3 bg-indigo-500 rounded-full" />
             模型配置
           </h4>
-          <div className="border border-lark-border dark:border-slate-800 rounded-xl overflow-hidden text-xs shadow-sm bg-slate-50/20 dark:bg-slate-950/20">
-            <div className="grid grid-cols-2 border-b border-lark-border/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
-              <span className="text-lark-text-secondary dark:text-slate-400 font-medium">供应商</span>
-              <span className="text-lark-text-primary dark:text-slate-200 font-mono text-right font-semibold">{agent.modelConfig.provider}</span>
-            </div>
-            <div className="grid grid-cols-2 border-b border-lark-border/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
-              <span className="text-lark-text-secondary dark:text-slate-400 font-medium">模型名称</span>
-              <span className="text-lark-text-primary dark:text-slate-200 font-mono text-right truncate font-semibold" title={agent.modelConfig.modelName}>{agent.modelConfig.modelName}</span>
-            </div>
-            <div className="grid grid-cols-2 border-b border-lark-border/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
-              <span className="text-lark-text-secondary dark:text-slate-400 font-medium">Temperature</span>
-              <span className="text-lark-text-primary dark:text-slate-200 text-right font-semibold">{agent.modelConfig.temperature.toFixed(1)}</span>
-            </div>
-            <div className="grid grid-cols-2 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
-              <span className="text-lark-text-secondary dark:text-slate-400 font-medium">最大 Tokens</span>
-              <span className="text-lark-text-primary dark:text-slate-200 text-right font-semibold">{agent.modelConfig.maxTokens}</span>
-            </div>
-          </div>
+          {(() => {
+            const config = agent.modelConfig || { provider: 'custom', modelName: 'gpt-4o', temperature: 0.7, maxTokens: 4096 };
+            return (
+              <div className="border border-lark-border dark:border-slate-800 rounded-xl overflow-hidden text-xs shadow-sm bg-slate-50/20 dark:bg-slate-950/20">
+                <div className="grid grid-cols-2 border-b border-lark-border/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                  <span className="text-lark-text-secondary dark:text-slate-400 font-medium">供应商</span>
+                  <span className="text-lark-text-primary dark:text-slate-200 font-mono text-right font-semibold">{config.provider}</span>
+                </div>
+                <div className="grid grid-cols-2 border-b border-lark-border/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                  <span className="text-lark-text-secondary dark:text-slate-400 font-medium">模型名称</span>
+                  <span className="text-lark-text-primary dark:text-slate-200 font-mono text-right truncate font-semibold" title={config.modelName}>{config.modelName}</span>
+                </div>
+                <div className="grid grid-cols-2 border-b border-lark-border/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                  <span className="text-lark-text-secondary dark:text-slate-400 font-medium">Temperature</span>
+                  <span className="text-lark-text-primary dark:text-slate-200 text-right font-semibold">{(config.temperature ?? 0.7).toFixed(1)}</span>
+                </div>
+                <div className="grid grid-cols-2 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                  <span className="text-lark-text-secondary dark:text-slate-400 font-medium">最大 Tokens</span>
+                  <span className="text-lark-text-primary dark:text-slate-200 text-right font-semibold">{config.maxTokens ?? 4096}</span>
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Tools */}
-        {agent.tools.length > 0 && (
+        {agent.tools && agent.tools.length > 0 && (
           <div>
             <h4 className="text-xs font-semibold text-lark-text-primary dark:text-slate-200 mb-2.5 flex items-center gap-1.5">
               <span className="w-1 h-3 bg-green-500 rounded-full" />

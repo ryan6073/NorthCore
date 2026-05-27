@@ -1,4 +1,4 @@
-export type ConversationMode = 'single' | 'group';
+export type ConversationMode = 'single' | 'group' | 'agent';
 
 export type MessageRole = 'user' | 'agent' | 'orchestrator' | 'system';
 
@@ -8,8 +8,8 @@ export type MessageType =
   | 'artifact'
   | 'task-plan'
   | 'status'
-  | 'image'      // 图片消息
-  | 'document';  // 文档消息 (ppt, pdf 等)
+  | 'image'
+  | 'document';
 
 export interface MessageAttachment {
   id: string;
@@ -96,6 +96,8 @@ export interface Agent {
   modelConfig: AgentModelConfig;
   tools: AgentTool[];
   permissions: AgentPermission;
+  ownerUserId?: string | null;
+  owner_user_id?: string | null;
 }
 
 export type AgentListItem = Agent;
@@ -166,8 +168,8 @@ export interface ArtifactVersion {
 
 export interface ArtifactDetail extends Artifact {
   currentVersion: ArtifactVersion;
-  content: string; // 兼容旧前端，等于 currentVersion.content  
-  size?: number;   // 兼容旧前端，等于 currentVersion.size 
+  content: string;
+  size?: number;
 }
 
 export interface CreateConversationPayload {
@@ -395,3 +397,29 @@ export type AllWSEvent =
   | ArtifactCreatedEvent
   | ConversationAllTasksCompletedEvent
   | AgentStatusChangedEvent;
+
+export interface AgentChat {
+  id: string;
+  agentId: string;
+  lastMessage: string;
+  updatedAt: string;
+  createdAt: string;
+}
+
+export interface AgentChatMessage {
+  id: string;
+  agentChatId: string;
+  senderId: string;
+  senderName: string;
+  role: 'user' | 'agent';
+  type: 'text';
+  content: string;
+  createdAt: string;
+  isPinned?: boolean;
+  attachments?: MessageAttachment[];
+  quotedMessage?: {
+    id: string;
+    senderName: string;
+    content: string;
+  };
+}

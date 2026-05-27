@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem, SendMessageRequest, ContextUsage } from '@/types';
-import { getAgentList, updateAgentDetail, createAgent as createAgentApi, deleteAgent as deleteAgentApi } from '@/services/http/agentService';
+import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem, SendMessageRequest, ContextUsage, AgentChat, AgentChatMessage } from '@/types';
+import { getAgentList, updateAgentDetail, createAgent as createAgentApi, deleteAgent as deleteAgentApi, getAgentContact } from '@/services/http/agentService';
 import { getConversationList, createConversation as createConversationApi, updateConversation, compressContext, pinMessage, unpinMessage, getPins, getMemories, deleteMemory, deleteConversation, getContextUsage as getContextUsageApi } from '@/services/http/conversationService';
 import { getMessageList, sendMessageNonStreaming } from '@/services/http/messageService';
 import { getArtifactMetaList, getArtifactDetail, getArtifactVersions, updateArtifactContent } from '@/services/http/artifactService';
@@ -11,6 +11,7 @@ import { getCurrentFullTime } from '@/utils/time';
 import { generateMockReply } from '@/utils/mockReply';
 import { USE_MOCK } from '@/services';
 import { healthCheck } from '@/services/http/healthService';
+import { registerApi, loginApi, loginAsGuestApi, getMeApi, logoutApi } from '@/services/http/authService';
 
 interface AgentHubStore {
   conversations: Conversation[];
@@ -35,6 +36,21 @@ interface AgentHubStore {
   replyContext: { id: string; senderName: string; content: string } | null;
   quoteArtifactRef: ArtifactReference | null;
 
+  // ============ v4 新增：Agent 一对一专属对话系统 ============
+  showAgentProfile: boolean;
+  viewingAgentId: string | null;
+  showAgentChatView: boolean;
+  agentChats: AgentChat[];
+  currentAgentChatId: string | null;
+  agentChatMessages: Record<string, AgentChatMessage[]>;
+
+  setShowAgentChatView: (show: boolean) => void;
+
+  openAgentProfile: (agentId: string) => void;
+  closeAgentProfile: () => void;
+  getOrCreateAgentChat: (agentId: string) => Promise<Conversation>;
+  sendAgentChatMessage: (agentChatId: string, content: string) => Promise<void>;
+
   // Actions
   initStore: () => Promise<void>;
   setUseMockMode: (mode: boolean) => void;
@@ -51,7 +67,7 @@ interface AgentHubStore {
   setQuoteArtifactRef: (ref: ArtifactReference | null) => void;
 
   // User and Settings state
-  currentUser: { name: string; email: string; avatar: string; isLoggedIn: boolean } | null;
+  currentUser: { id?: string; name: string; email: string; avatar: string; isLoggedIn: boolean } | null;
   settings: {
     theme: 'light' | 'dark';
     apiKey: string;
@@ -62,8 +78,11 @@ interface AgentHubStore {
   };
   isSettingsOpen: boolean;
 
-  login: (name: string, email: string, avatar: string) => void;
+  login: (email: string, password?: string) => Promise<{ success: boolean; message: string }>;
+  register: (name: string, email: string, password: string, avatar: string) => Promise<{ success: boolean; message: string }>;
+  loginAsGuest: (name: string, email: string, avatar: string) => Promise<void>;
   logout: () => void;
+  loadBusinessData: () => Promise<void>;
   updateProfile: (name: string, email: string, avatar: string) => void;
   updateSettings: (settings: Partial<AgentHubStore['settings']>) => void;
   setIsSettingsOpen: (open: boolean) => void;
@@ -113,6 +132,14 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   replyContext: null,
   quoteArtifactRef: null,
 
+  // v4 新增初始状态
+  showAgentProfile: false,
+  viewingAgentId: null,
+  showAgentChatView: false,
+  agentChats: [],
+  currentAgentChatId: null,
+  agentChatMessages: {},
+
   // User and Settings initial state
   currentUser: null,
   settings: {
@@ -125,13 +152,49 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
   isSettingsOpen: false,
 
+  loadBusinessData: async () => {
+    try {
+      const agentRes = await getAgentList();
+      if (agentRes.code === 0) {
+        set({ agents: agentRes.data.list as Agent[] });
+      }
+      const convRes = await getConversationList();
+      if (convRes.code === 0) {
+        const list = convRes.data.list;
+        set({ conversations: list });
+        if (list.length > 0) {
+          set({ activeConversationId: list[0].id });
+          await get().loadConversationData(list[0].id);
+        } else {
+          set({ activeConversationId: null, messages: [], pins: [], memories: [] });
+        }
+      }
+      await get().connectWS();
+    } catch (e) {
+      console.error('Failed to load business data', e);
+    }
+  },
+
   initStore: async () => {
+    // Initialize registered users database if not present
+    try {
+      if (!localStorage.getItem('ag_registered_users')) {
+        const defaultUsers = [
+          {
+            name: '比特骑士',
+            email: 'admin@northcore.ai',
+            password: 'admin123',
+            avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&h=150&q=80'
+          }
+        ];
+        localStorage.setItem('ag_registered_users', JSON.stringify(defaultUsers));
+      }
+    } catch (e) {
+      console.warn('Failed to initialize registered users', e);
+    }
+
     // Load from LocalStorage
     try {
-      const storedUser = localStorage.getItem('ag_user');
-      if (storedUser) {
-        set({ currentUser: JSON.parse(storedUser) });
-      }
       const storedSettings = localStorage.getItem('ag_settings');
       if (storedSettings) {
         const parsedSettings = JSON.parse(storedSettings);
@@ -154,20 +217,38 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         const healthRes = await healthCheck();
         if (healthRes.code === 0) {
           console.log('[Store] 后端服务健康检查通过，启用真实 API 模式');
-          const agentRes = await getAgentList();
-          if (agentRes.code === 0) {
-            set({ agents: agentRes.data.list as Agent[] });
-          }
-          const convRes = await getConversationList();
-          if (convRes.code === 0) {
-            const list = convRes.data.list;
-            set({ conversations: list });
-            if (list.length > 0) {
-              set({ activeConversationId: list[0].id });
-              await get().loadConversationData(list[0].id);
+          
+          // Verify authentication session
+          const token = localStorage.getItem('auth_token');
+          if (token) {
+            try {
+              const meRes = await getMeApi();
+              const userData = meRes.code === 0 && meRes.data ? ((meRes.data as any).user || meRes.data) : null;
+              if (userData && (userData.name || userData.email)) {
+                const user = { ...userData, isLoggedIn: true };
+                set({ currentUser: user as any });
+                localStorage.setItem('ag_user', JSON.stringify(user));
+              } else {
+                localStorage.removeItem('auth_token');
+                localStorage.removeItem('ag_user');
+                set({ currentUser: null });
+              }
+            } catch (e) {
+              localStorage.removeItem('auth_token');
+              localStorage.removeItem('ag_user');
+              set({ currentUser: null });
+            }
+          } else {
+            const storedUser = localStorage.getItem('ag_user');
+            if (storedUser) {
+              set({ currentUser: JSON.parse(storedUser) });
+            } else {
+              set({ currentUser: null });
             }
           }
-          await get().connectWS();
+
+          // Load data (due to grace period backend fallback)
+          await get().loadBusinessData();
         }
       } catch (e) {
         console.warn('[Store] 真实 API 连接失败，自动切换到 Mock 演示模式', e);
@@ -190,6 +271,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       }
     } else {
       console.log('[Store] 配置为 Mock 模式，使用本地模拟数据');
+      
+      // Mock mode user restore
+      const storedUser = localStorage.getItem('ag_user');
+      if (storedUser) {
+        set({ currentUser: JSON.parse(storedUser) });
+      }
+
       set({
         conversations: mockConversations,
         agents: initialAgents,
@@ -307,17 +395,17 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       ]);
 
       let pinsData: PinItem[] = [];
-      if (pinsRes.code === 0) {
+      if (pinsRes.code === 0 && pinsRes.data) {
         pinsData = pinsRes.data;
       }
 
       let memoriesData: MemoryItem[] = [];
-      if (memoriesRes.code === 0) {
+      if (memoriesRes.code === 0 && memoriesRes.data) {
         memoriesData = memoriesRes.data;
       }
 
       let messagesData: Message[] = [];
-      if (msgRes.code === 0) {
+      if (msgRes.code === 0 && msgRes.data && msgRes.data.list) {
         messagesData = msgRes.data.list.map((m: Message) => ({
           ...m,
           isPinned: pinsData.some(p => p.messageId === m.id)
@@ -330,7 +418,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         memories: memoriesData
       });
 
-      if (artifactRes.code === 0) {
+      if (artifactRes.code === 0 && artifactRes.data) {
         const arts: Artifact[] = artifactRes.data;
         set({ artifacts: arts });
         if (arts.length > 0) {
@@ -477,6 +565,20 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     set(state => ({
       messages: [...state.messages, systemMsg],
     }));
+
+    if (!useMockMode) {
+      try {
+        await sendMessageNonStreaming(activeConversationId, {
+          content: systemMsg.content,
+          role: 'system',
+          senderId: 'system',
+          senderName: '系统',
+          type: 'status',
+        } as any);
+      } catch (e) {
+        console.warn('Failed to save compress system message to backend', e);
+      }
+    }
 
     console.log('[Store] 上下文压缩完成，已添加系统通知消息');
   },
@@ -632,10 +734,17 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         if (res.code === 0) {
           const { userMessage, agentMessages, artifacts, contextUsage } = res.data;
           set(state => {
-            // Replace the optimistic message with the actual user message
-            const updatedMessages = state.messages.map(m =>
-              m.id === newUserMessage.id ? userMessage : m
-            );
+            // Replace the optimistic message with the actual user message, preserving local reply/citation fields
+            const updatedMessages = state.messages.map(m => {
+              if (m.id === newUserMessage.id) {
+                return {
+                  ...userMessage,
+                  quotedMessage: userMessage.quotedMessage || m.quotedMessage,
+                  artifactRef: userMessage.artifactRef || m.artifactRef,
+                };
+              }
+              return m;
+            });
 
             // Filter out thinking indicators and append new agent messages
             let finalMessages = [...updatedMessages];
@@ -1025,15 +1134,135 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   setReplyContext: (replyContext) => set({ replyContext }),
   setQuoteArtifactRef: (quoteArtifactRef) => set({ quoteArtifactRef }),
 
-  login: (name, email, avatar) => {
+  login: async (email, password) => {
+    const { useMockMode } = get();
+    if (!useMockMode) {
+      try {
+        const res = await loginApi({ email, password });
+        if (res.code === 0 && res.data) {
+          const user = { ...res.data.user, isLoggedIn: true };
+          localStorage.setItem('auth_token', res.data.token);
+          localStorage.setItem('ag_user', JSON.stringify(user));
+          set({ currentUser: user as any });
+          
+          await get().loadBusinessData();
+          return { success: true, message: '登录成功' };
+        } else {
+          return { success: false, message: res.message || '登录失败' };
+        }
+      } catch (e: any) {
+        console.error(e);
+        return { success: false, message: e.response?.data?.message || '登录接口调用失败' };
+      }
+    }
+
+    try {
+      const usersStr = localStorage.getItem('ag_registered_users') || '[]';
+      const users = JSON.parse(usersStr);
+      const found = users.find((u: any) => u.email.toLowerCase() === email.toLowerCase());
+
+      if (!found) {
+        return { success: false, message: '该邮箱尚未注册' };
+      }
+
+      if (found.password !== password) {
+        return { success: false, message: '密码不正确' };
+      }
+
+      const user = { name: found.name, email: found.email, avatar: found.avatar, isLoggedIn: true };
+      set({ currentUser: user });
+      localStorage.setItem('ag_user', JSON.stringify(user));
+      return { success: true, message: '登录成功' };
+    } catch (e) {
+      console.error(e);
+      return { success: false, message: '登录出现异常' };
+    }
+  },
+
+  register: async (name, email, password, avatar) => {
+    const { useMockMode } = get();
+    if (!useMockMode) {
+      try {
+        const res = await registerApi({ name, email, password, avatar });
+        if (res.code === 0 && res.data) {
+          const user = { ...res.data.user, isLoggedIn: true };
+          localStorage.setItem('auth_token', res.data.token);
+          localStorage.setItem('ag_user', JSON.stringify(user));
+          set({ currentUser: user as any });
+          
+          await get().loadBusinessData();
+          return { success: true, message: '注册成功' };
+        } else {
+          return { success: false, message: res.message || '注册失败' };
+        }
+      } catch (e: any) {
+        console.error(e);
+        return { success: false, message: e.response?.data?.message || '注册接口调用失败' };
+      }
+    }
+
+    try {
+      const usersStr = localStorage.getItem('ag_registered_users') || '[]';
+      const users = JSON.parse(usersStr);
+      const exists = users.some((u: any) => u.email.toLowerCase() === email.toLowerCase());
+
+      if (exists) {
+        return { success: false, message: '该邮箱已被注册' };
+      }
+
+      const newUser = { name, email, password, avatar };
+      users.push(newUser);
+      localStorage.setItem('ag_registered_users', JSON.stringify(users));
+
+      // Auto login after registration
+      const user = { name, email, avatar, isLoggedIn: true };
+      set({ currentUser: user });
+      localStorage.setItem('ag_user', JSON.stringify(user));
+
+      return { success: true, message: '注册成功' };
+    } catch (e) {
+      console.error(e);
+      return { success: false, message: '注册出现异常' };
+    }
+  },
+
+  loginAsGuest: async (name, email, avatar) => {
+    const { useMockMode } = get();
+    if (!useMockMode) {
+      try {
+        const res = await loginAsGuestApi();
+        if (res.code === 0 && res.data) {
+          const user = { ...res.data.user, isLoggedIn: true };
+          localStorage.setItem('auth_token', res.data.token);
+          localStorage.setItem('ag_user', JSON.stringify(user));
+          set({ currentUser: user as any });
+          
+          await get().loadBusinessData();
+          return;
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
     const user = { name, email, avatar, isLoggedIn: true };
     set({ currentUser: user });
     localStorage.setItem('ag_user', JSON.stringify(user));
   },
 
-  logout: () => {
-    set({ currentUser: null, activeConversationId: null, messages: [], pins: [], memories: [] });
+  logout: async () => {
+    const { useMockMode } = get();
+    if (!useMockMode) {
+      try {
+        await logoutApi();
+      } catch (e) {
+        console.error('Logout API failed', e);
+      }
+    }
+    localStorage.removeItem('auth_token');
     localStorage.removeItem('ag_user');
+    get().disconnectWS();
+    set({ currentUser: null, activeConversationId: null, messages: [], pins: [], memories: [] });
   },
 
   updateProfile: (name, email, avatar) => {
@@ -1221,6 +1450,20 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         messages: [...state.messages, editLogMsg],
       };
     });
+
+    if (!useMockMode) {
+      try {
+        await sendMessageNonStreaming(originalArt.conversationId, {
+          content: editLogMsg.content,
+          role: 'system',
+          senderId: 'system',
+          senderName: '系统',
+          type: 'status',
+        } as any);
+      } catch (e) {
+        console.warn('Failed to save edit log system message to backend', e);
+      }
+    }
   },
 
   getContextUsage: async () => {
@@ -1249,4 +1492,137 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       ),
     }));
   },
+
+  // ============ v4 新增：Agent 一对一专属对话系统 Actions ============
+  openAgentProfile: (agentId) => {
+    set({ 
+      showAgentProfile: true, 
+      viewingAgentId: agentId 
+    });
+  },
+
+  closeAgentProfile: () => {
+    set({ 
+      showAgentProfile: false, 
+      viewingAgentId: null 
+    });
+  },
+
+  getOrCreateAgentChat: async (agentId: string) => {
+    const { conversations, agents, useMockMode, currentUser } = get();
+
+    if (!useMockMode && currentUser) {
+      try {
+        const userId = currentUser.id || 'user-admin';
+        const res = await getAgentContact(userId, agentId);
+        if (res.code === 0 && res.data) {
+          const apiConv = res.data.conversation;
+          const mappedConv: Conversation = {
+            ...apiConv,
+            mode: 'agent',
+          };
+
+          set(state => {
+            const hasConv = state.conversations.some(c => c.id === mappedConv.id);
+            return {
+              conversations: hasConv
+                ? state.conversations.map(c => c.id === mappedConv.id ? mappedConv : c)
+                : [...state.conversations, mappedConv]
+            };
+          });
+
+          await get().setActiveConversationId(mappedConv.id);
+          return mappedConv;
+        }
+      } catch (e) {
+        console.error('Failed to get or create backend agent contact session', e);
+      }
+    }
+
+    const existing = conversations.find(c => c.mode === 'agent' && c.agentIds && c.agentIds.length === 1 && c.agentIds[0] === agentId);
+    if (existing) {
+      await get().setActiveConversationId(existing.id);
+      return existing;
+    }
+
+    const targetAgent = agents.find(a => a.id === agentId);
+    const title = targetAgent ? `和 ${targetAgent.name} 对话` : '一对一对话';
+    const newConv: Conversation = {
+      id: `conv-agent-${agentId}`,
+      title: title,
+      mode: 'agent',
+      agentIds: [agentId],
+      lastMessage: '',
+      updatedAt: getCurrentFullTime(),
+      createdAt: getCurrentFullTime(),
+    };
+
+    set(state => ({
+      conversations: [...state.conversations, newConv],
+    }));
+
+    await get().setActiveConversationId(newConv.id);
+    return newConv;
+  },
+
+  sendAgentChatMessage: async (agentChatId, content) => {
+    const { agents } = get();
+    const targetAgentChat = get().agentChats.find(c => c.id === agentChatId);
+    if (!targetAgentChat) return;
+
+    const targetAgent = agents.find(a => a.id === targetAgentChat.agentId);
+    if (!targetAgent) return;
+
+    const userMsg: AgentChatMessage = {
+      id: createId('chat-msg'),
+      agentChatId,
+      senderId: 'user',
+      senderName: '用户',
+      role: 'user',
+      type: 'text',
+      content,
+      createdAt: getCurrentFullTime(),
+    };
+
+    set(state => ({
+      agentChatMessages: {
+        ...state.agentChatMessages,
+        [agentChatId]: [...(state.agentChatMessages[agentChatId] || []), userMsg],
+      },
+      agentChats: state.agentChats.map(c =>
+        c.id === agentChatId
+          ? { ...c, lastMessage: content, updatedAt: getCurrentFullTime() }
+          : c
+      ),
+    }));
+
+    // Mock 模式演示回复
+    await new Promise(r => setTimeout(r, 1000));
+
+    const replyContent = `收到了你的消息："${content}"\n\n我是 ${targetAgent.name}，这是我们一对一专属对话。`;
+    const agentMsg: AgentChatMessage = {
+      id: createId('chat-msg'),
+      agentChatId,
+      senderId: targetAgent.id,
+      senderName: targetAgent.name,
+      role: 'agent',
+      type: 'text',
+      content: replyContent,
+      createdAt: getCurrentFullTime(),
+    };
+
+    set(state => ({
+      agentChatMessages: {
+        ...state.agentChatMessages,
+        [agentChatId]: [...(state.agentChatMessages[agentChatId] || []), agentMsg],
+      },
+      agentChats: state.agentChats.map(c =>
+        c.id === agentChatId
+          ? { ...c, lastMessage: replyContent, updatedAt: getCurrentFullTime() }
+          : c
+      ),
+    }));
+  },
+
+  setShowAgentChatView: (show) => set({ showAgentChatView: show }),
 }));

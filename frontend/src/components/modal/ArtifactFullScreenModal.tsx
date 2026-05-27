@@ -159,8 +159,9 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
 
   const handleSaveEdit = async () => {
     if (!artifact) return;
-    await saveEditedArtifact(artifact.id, editedContent);
     setIsEditing(false);
+    setActiveTab('preview');
+    await saveEditedArtifact(artifact.id, editedContent);
   };
 
   // Group all versions of this artifact (sorted by version number ascending)
@@ -421,7 +422,10 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
                 保存新版本
               </button>
               <button
-                onClick={() => setIsEditing(false)}
+                onClick={() => {
+                  setIsEditing(false);
+                  setActiveTab('preview');
+                }}
                 className="px-3.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-350 transition-all shadow-sm bg-white dark:bg-slate-900 flex items-center gap-1 active:scale-95"
                 title="取消"
               >

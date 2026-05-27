@@ -1,5 +1,6 @@
 import React from 'react';
 import { Agent } from '@/types';
+import { useAgentHubStore } from '@/store/useAgentHubStore';
 import { Circle, CircleDot, CircleDotDashed } from 'lucide-react';
 
 interface AgentContactCardProps {
@@ -19,6 +20,8 @@ const AgentContactCard: React.FC<AgentContactCardProps> = ({
   showSelect = false,
   disabled = false
 }) => {
+  const openAgentProfile = useAgentHubStore(state => state.openAgentProfile);
+
   const renderStatusIcon = () => {
     if (agent.status === 'online') {
       return <CircleDot className="w-3 h-3 text-green-500 fill-green-500" />;
@@ -50,7 +53,13 @@ const AgentContactCard: React.FC<AgentContactCardProps> = ({
       }`}
     >
       <div className="relative flex-shrink-0">
-        <div className="w-10 h-10 rounded-lg overflow-hidden border border-lark-border/40 dark:border-slate-800 shadow-sm bg-slate-50 dark:bg-slate-900">
+        <div 
+          onClick={(e) => {
+            e.stopPropagation();
+            openAgentProfile(agent.id);
+          }}
+          className="w-10 h-10 rounded-lg overflow-hidden border border-lark-border/40 dark:border-slate-800 shadow-sm bg-slate-100 dark:bg-slate-900 hover:scale-105 transition-transform cursor-pointer"
+        >
           <img
             src={agent.avatar}
             alt={agent.name}
@@ -86,7 +95,6 @@ const AgentContactCard: React.FC<AgentContactCardProps> = ({
         </div>
       )}
     </div>
-
   );
 };
 

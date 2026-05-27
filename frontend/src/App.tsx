@@ -5,6 +5,7 @@ import RightPanel from './components/layout/RightPanel';
 import AppLayout from './components/layout/AppLayout';
 import NewConversationModal from './components/modal/NewConversationModal';
 import ArtifactFullScreenModal from './components/modal/ArtifactFullScreenModal';
+import AgentProfileCard from './components/agent/AgentProfileCard';
 import { useAgentHubStore } from './store/useAgentHubStore';
 import { CreateConversationPayload, Agent } from './types';
 import { LoginView } from './components/auth/LoginView';
@@ -24,8 +25,13 @@ function App() {
   const useMockMode = useAgentHubStore(state => state.useMockMode);
   const currentUser = useAgentHubStore(state => state.currentUser);
 
-  const initStore = useAgentHubStore(state => state.initStore);
+  const showAgentProfile = useAgentHubStore(state => state.showAgentProfile);
+  const viewingAgentId = useAgentHubStore(state => state.viewingAgentId);
+  const closeAgentProfile = useAgentHubStore(state => state.closeAgentProfile);
+  const getOrCreateAgentChat = useAgentHubStore(state => state.getOrCreateAgentChat);
   const setActiveConversationId = useAgentHubStore(state => state.setActiveConversationId);
+
+  const initStore = useAgentHubStore(state => state.initStore);
   const setSelectedArtifactId = useAgentHubStore(state => state.setSelectedArtifactId);
   const setIsNewConversationOpen = useAgentHubStore(state => state.setIsNewConversationOpen);
   const setIsFullScreenOpen = useAgentHubStore(state => state.setIsFullScreenOpen);
@@ -104,9 +110,16 @@ function App() {
     }
   }, [selectedArtifact, useMockMode, setIsFullScreenOpen]);
 
+  const handleOpenAgentChat = useCallback(async (agentId: string) => {
+    await getOrCreateAgentChat(agentId);
+    closeAgentProfile();
+  }, [getOrCreateAgentChat, closeAgentProfile]);
+
   if (!currentUser || !currentUser.isLoggedIn) {
     return <LoginView />;
   }
+
+
 
   return (
     <>
@@ -139,6 +152,7 @@ function App() {
         }
         rightPanel={
           <RightPanel
+            conversation={activeConversation}
             agents={activeAgents}
             artifacts={artifacts}
             onSelectArtifact={setSelectedArtifactId}
@@ -158,6 +172,17 @@ function App() {
         onClose={() => setIsFullScreenOpen(false)}
       />
       <SettingsModal />
+      {showAgentProfile && viewingAgentId && (() => {
+        const agent = agents.find(a => a.id === viewingAgentId);
+        if (!agent) return null;
+        return (
+          <AgentProfileCard
+            agent={agent}
+            onClose={closeAgentProfile}
+            onGoChat={() => handleOpenAgentChat(viewingAgentId)}
+          />
+        );
+      })()}
     </>
   );
 }

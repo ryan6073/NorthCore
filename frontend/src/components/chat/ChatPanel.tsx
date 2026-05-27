@@ -131,7 +131,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState('');
 
-  const activeAgents = conversation
+  const activeAgents = conversation && conversation.agentIds
     ? agents.filter(a => conversation.agentIds.includes(a.id))
     : [];
 
@@ -479,9 +479,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
             <span className={`text-[10px] tracking-wide px-1.5 py-0.5 rounded font-medium flex-shrink-0 ${
               conversation.mode === 'single'
                 ? 'bg-[#e1f9eb] dark:bg-[#103a20] text-[#00b04a] dark:text-[#38e680]'
-                : 'bg-[#f2e9fc] dark:bg-[#2b104a] text-[#7f3ec8] dark:text-[#be80ff]'
+                : conversation.mode === 'agent'
+                  ? 'bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border border-amber-200/50 dark:border-amber-900/30'
+                  : 'bg-[#f2e9fc] dark:bg-[#2b104a] text-[#7f3ec8] dark:text-[#be80ff]'
             }`}>
-              {conversation.mode === 'single' ? '单聊' : '群聊'}
+              {conversation.mode === 'single' ? '单聊' : conversation.mode === 'agent' ? 'Agent' : '群聊'}
             </span>
           )}
 

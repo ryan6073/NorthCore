@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Message, Agent as AgentType } from '@/types';
-import { User, Bot, Sparkles, CornerUpLeft, Pin, Copy, Navigation, FileCode } from 'lucide-react';
+import { User, Bot, Sparkles, CornerUpLeft, Pin, Copy, Check, Navigation, FileCode } from 'lucide-react';
 import CodeBlock from './CodeBlock';
 import TaskPlanCard from './TaskPlanCard';
 import ArtifactMessage from './ArtifactMessage';
@@ -10,9 +10,11 @@ import { useAgentHubStore } from '@/store/useAgentHubStore';
 interface MessageBubbleProps {
   message: Message;
   agents: AgentType[];
+  onCustomReply?: (msg: Message) => void;
+  onCustomPin?: (msgId: string) => void;
 }
 
-const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
+const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustomReply, onCustomPin }) => {
   const [copied, setCopied] = useState(false);
   const [mouseY, setMouseY] = useState<number | null>(null);
   const [isHoveringBar, setIsHoveringBar] = useState(false);
@@ -22,17 +24,18 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
     ? agents.find(a => a.name === message.senderName) 
     : null;
 
-  const setReplyContext = useAgentHubStore(state => state.setReplyContext);
-  const togglePinMessage = useAgentHubStore(state => state.togglePinMessage);
+  const globalSetReplyContext = useAgentHubStore(state => state.setReplyContext);
+  const globalTogglePinMessage = useAgentHubStore(state => state.togglePinMessage);
   const setSelectedArtifactId = useAgentHubStore(state => state.setSelectedArtifactId);
   const setSelectedArtifactVersion = useAgentHubStore(state => state.setSelectedArtifactVersion);
+  const openAgentProfile = useAgentHubStore(state => state.openAgentProfile);
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (isHoveringBar) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const relativeY = e.clientY - rect.top;
-    const barHeight = 34; // approximate height of the action bar
-    const padding = 6;    // padding from top/bottom edges
+    const barHeight = 34;
+    const padding = 6;
     const minTop = padding;
     const maxTop = Math.max(padding, rect.height - barHeight - padding);
     const computedTop = Math.min(maxTop, Math.max(minTop, relativeY - barHeight / 2));
@@ -50,15 +53,23 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
   };
 
   const handleReply = () => {
-    setReplyContext({
-      id: message.id,
-      senderName: message.senderName,
-      content: message.content,
-    });
+    if (onCustomReply) {
+      onCustomReply(message);
+    } else {
+      globalSetReplyContext({
+        id: message.id,
+        senderName: message.senderName,
+        content: message.content,
+      });
+    }
   };
 
   const handlePin = () => {
-    togglePinMessage(message.id);
+    if (onCustomPin) {
+      onCustomPin(message.id);
+    } else {
+      globalTogglePinMessage(message.id);
+    }
   };
 
   const handleCopy = async () => {
@@ -69,6 +80,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
 
   const handleRefClick = () => {
     if (!message.artifactRef) return;
+    (window as any).__ag_from_message_bubble_click = true;
     setSelectedArtifactId(message.artifactRef.artifactId);
     setSelectedArtifactVersion(message.artifactRef.version);
     
@@ -112,9 +124,17 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
         } animate-fade-in transition-all duration-300`}
       >
         {/* Avatar */}
-        <div className={`w-9 h-9 flex-shrink-0 overflow-hidden flex items-center justify-center shadow-sm transition-colors ${
-          isUser ? 'rounded-full bg-lark-primary' : 'rounded-lg bg-white dark:bg-slate-950 border border-lark-border dark:border-slate-800'
-        }`}>
+        <div 
+          className={`w-9 h-9 flex-shrink-0 overflow-hidden flex items-center justify-center shadow-sm transition-colors ${
+            isUser ? 'rounded-full bg-lark-primary' : 'rounded-lg bg-white dark:bg-slate-950 border border-lark-border dark:border-slate-800'
+          } ${agentInfo ? 'cursor-pointer hover:scale-105 transition-transform' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (agentInfo) {
+              openAgentProfile(agentInfo.id);
+            }
+          }}
+        >
           {isUser ? (
             <User className="w-4 h-4 text-white" />
           ) : agentInfo ? (
@@ -245,7 +265,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents }) => {
                   title="复制消息内容"
                 >
                   {copied ? (
-                    <span className="text-[9px] text-green-600 dark:text-green-400 font-semibold px-0.5">已复制</span>
+                    <Check className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
                   ) : (
                     <Copy className="w-3.5 h-3.5" />
                   )}

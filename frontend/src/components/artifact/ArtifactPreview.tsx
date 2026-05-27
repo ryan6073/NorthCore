@@ -81,7 +81,10 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     if (selectedArtifactId) {
       setLocalArtifactId(selectedArtifactId);
       if (selectedArtifactVersion !== null) {
-        setActiveTab('source'); // Auto-switch to source code view to show highlighted lines
+        if ((window as any).__ag_from_message_bubble_click) {
+          (window as any).__ag_from_message_bubble_click = false;
+          setActiveTab('source'); // Auto-switch to source code view to show highlighted lines
+        }
       }
     }
   }, [selectedArtifactId, selectedArtifactVersion]);
@@ -123,8 +126,9 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
   const handleSaveEdit = async () => {
     if (!currentArtifact) return;
-    await saveEditedArtifact(currentArtifact.id, editedContent);
     setIsEditing(false);
+    setActiveTab('preview');
+    await saveEditedArtifact(currentArtifact.id, editedContent);
   };
 
   const handleQuoteSelection = () => {
@@ -466,7 +470,10 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
               保存新版本
             </button>
             <button
-              onClick={() => setIsEditing(false)}
+              onClick={() => {
+                setIsEditing(false);
+                setActiveTab('preview');
+              }}
               className="px-2.5 py-1 text-[10px] rounded-lg border border-lark-border dark:border-slate-700 hover:bg-lark-bg-hover dark:hover:bg-slate-800 text-lark-text-secondary dark:text-slate-350 transition-all shadow-sm bg-white dark:bg-slate-900 flex items-center gap-1 active:scale-95"
               title="取消"
             >

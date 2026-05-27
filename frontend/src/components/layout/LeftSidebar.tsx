@@ -86,11 +86,12 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
   };
 
   const renderConversationAvatar = (conv: Conversation) => {
-    if (conv.mode === 'single') {
+    const agentIds = conv.agentIds || [];
+    if (conv.mode === 'single' || conv.mode === 'agent') {
       return (
         <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-slate-100 dark:bg-slate-900 border border-lark-border/50 dark:border-slate-800/60 shadow-sm">
           <img 
-            src={getAgentAvatar(conv.agentIds[0])} 
+            src={getAgentAvatar(agentIds[0] || '')} 
             alt={conv.title} 
             className="w-full h-full object-cover"
           />
@@ -99,9 +100,9 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
     }
     return (
       <div className="w-10 h-10 rounded-lg bg-indigo-50 dark:bg-indigo-950/20 border border-lark-border/50 dark:border-slate-800/60 flex-shrink-0 flex items-center justify-center overflow-hidden relative shadow-sm">
-        {conv.agentIds.length <= 2 ? (
+        {agentIds.length <= 2 ? (
           <div className="w-full h-full flex">
-            {conv.agentIds.slice(0, 2).map((agentId, idx) => (
+            {agentIds.slice(0, 2).map((agentId, idx) => (
               <div key={idx} className="flex-1 h-full overflow-hidden">
                 <img 
                   src={getAgentAvatar(agentId)} 
@@ -111,21 +112,21 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
               </div>
             ))}
           </div>
-        ) : conv.agentIds.length === 3 ? (
+        ) : agentIds.length === 3 ? (
           <div className="w-full h-full grid grid-cols-2 gap-0.5 p-0.5">
             <div className="col-span-1 overflow-hidden rounded-sm">
-              <img src={getAgentAvatar(conv.agentIds[0])} alt="" className="w-full h-full object-cover animate-pulse" />
+              <img src={getAgentAvatar(agentIds[0])} alt="" className="w-full h-full object-cover animate-pulse" />
             </div>
             <div className="col-span-1 overflow-hidden rounded-sm">
-              <img src={getAgentAvatar(conv.agentIds[1])} alt="" className="w-full h-full object-cover" />
+              <img src={getAgentAvatar(agentIds[1])} alt="" className="w-full h-full object-cover" />
             </div>
             <div className="col-span-2 overflow-hidden rounded-sm">
-              <img src={getAgentAvatar(conv.agentIds[2])} alt="" className="w-full h-full object-cover" />
+              <img src={getAgentAvatar(agentIds[2])} alt="" className="w-full h-full object-cover" />
             </div>
           </div>
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-indigo-500 text-white">
-            <span className="text-xs font-bold font-sans">+{conv.agentIds.length}</span>
+            <span className="text-xs font-bold font-sans">+{agentIds.length}</span>
           </div>
         )}
       </div>
@@ -233,17 +234,19 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                   </div>
 
                   {/* Hover Delete Button */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeleteConvId(conv.id);
-                      setDeleteConvTitle(conv.title);
-                    }}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity absolute right-2.5 top-1/2 -translate-y-1/2 bg-white/95 dark:bg-slate-900/95 hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-500 text-slate-400 dark:text-slate-500 p-1.5 rounded-lg shadow-sm border border-lark-border/50 dark:border-slate-800/80 z-20 active:scale-95 flex items-center justify-center"
-                    title="删除会话"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  {conv.mode !== 'agent' && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleteConvId(conv.id);
+                        setDeleteConvTitle(conv.title);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity absolute right-2.5 top-1/2 -translate-y-1/2 bg-white/95 dark:bg-slate-900/95 hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-500 text-slate-400 dark:text-slate-500 p-1.5 rounded-lg shadow-sm border border-lark-border/50 dark:border-slate-800/80 z-20 active:scale-95 flex items-center justify-center"
+                      title="删除会话"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               );
             })
