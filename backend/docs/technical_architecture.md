@@ -133,7 +133,7 @@ MVP 不宣称真实接入 Claude Code / Codex 平台。当前 Claude Code / Code
 
 ```bash
 cd backend
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 9007 --reload
 ```
 
 前端:
@@ -147,6 +147,6 @@ npm run dev
 
 ```text
 VITE_USE_MOCK=false
-VITE_API_BASE_URL=http://localhost:8000/api/v1
-VITE_WS_URL=ws://localhost:8000/ws
+VITE_API_BASE_URL=http://localhost:9007/api/v1
+VITE_WS_URL=ws://localhost:9007/ws
 ```
