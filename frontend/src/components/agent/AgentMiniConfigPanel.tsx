@@ -9,15 +9,9 @@ interface AgentMiniConfigPanelProps {
 
 export const AgentMiniConfigPanel: React.FC<AgentMiniConfigPanelProps> = ({ agent }) => {
   const saveAgent = useAgentHubStore(state => state.saveAgent);
-  const currentUser = useAgentHubStore(state => state.currentUser);
-  const useMockMode = useAgentHubStore(state => state.useMockMode);
+  const setConfiguringAgentId = useAgentHubStore(state => state.setConfiguringAgentId);
 
-  const isEditable = useMockMode || (
-    currentUser && (
-      agent.ownerUserId === currentUser.id ||
-      agent.owner_user_id === currentUser.id
-    )
-  );
+  const isEditable = false; // Right panel is read-only. Clicking the settings button opens the agent's profile card to edit.
   
   const [systemPrompt, setSystemPrompt] = useState(agent.systemPrompt);
   const [isPromptSaved, setIsPromptSaved] = useState(true);
@@ -108,8 +102,46 @@ export const AgentMiniConfigPanel: React.FC<AgentMiniConfigPanelProps> = ({ agen
                 ? 'bg-slate-50 dark:bg-slate-950/80 border-slate-200 dark:border-slate-800 text-slate-850 dark:text-slate-100 focus:border-violet-500 focus:ring-1 focus:ring-violet-500/20'
                 : 'bg-slate-100/50 dark:bg-slate-950/40 border-slate-100 dark:border-slate-850 text-slate-500 dark:text-slate-400 cursor-not-allowed'
             }`}
-            placeholder={isEditable ? "设定智能体的系统提示词，以改变其行为和回复偏好..." : "系统预置智能体的提示词不可更改。"}
+            placeholder={isEditable ? "设定智能体的系统提示词，以改变其行为 and 回复偏好..." : "系统预置智能体的提示词不可更改。"}
           />
+        </div>
+
+        {/* Model Config section */}
+        <div className="space-y-2">
+          <div className="flex justify-between items-center">
+            <label className="text-xs font-bold text-slate-600 dark:text-slate-400">模型配置</label>
+            <button
+              type="button"
+              onClick={() => setConfiguringAgentId(agent.id)}
+              className="text-[10px] text-violet-600 dark:text-violet-400 hover:text-violet-500 dark:hover:text-violet-300 font-medium flex items-center gap-0.5 hover:underline transition-colors"
+            >
+              <Settings2 className="w-3 h-3" />
+              <span>修改配置</span>
+            </button>
+          </div>
+          {(() => {
+            const config = agent.modelConfig || { provider: 'custom', modelName: 'gpt-4o', temperature: 0.7, maxTokens: 4096 };
+            return (
+              <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden text-xs shadow-sm bg-slate-50/20 dark:bg-slate-950/20">
+                <div className="grid grid-cols-2 border-b border-slate-200/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">供应商</span>
+                  <span className="text-slate-700 dark:text-slate-200 font-mono text-right font-semibold">{config.provider}</span>
+                </div>
+                <div className="grid grid-cols-2 border-b border-slate-200/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">模型名称</span>
+                  <span className="text-slate-700 dark:text-slate-200 font-mono text-right truncate font-semibold" title={config.modelName}>{config.modelName}</span>
+                </div>
+                <div className="grid grid-cols-2 border-b border-slate-200/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">Temperature</span>
+                  <span className="text-slate-700 dark:text-slate-200 text-right font-semibold">{(config.temperature ?? 0.7).toFixed(1)}</span>
+                </div>
+                <div className="grid grid-cols-2 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">最大 Tokens</span>
+                  <span className="text-slate-700 dark:text-slate-200 text-right font-semibold">{config.maxTokens ?? 4096}</span>
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Tools Section */}

@@ -186,3 +186,55 @@ interface ArtifactDetail extends ArtifactMeta {
 | v1.3.0 | 2026-05-25 | 临时添加 mention 和 compress 接口用于快速开发 |
 | v2.0.0 | 2026-05-25 | 完全对齐后端正式接口文档，新增 mention 搜索、/context/compress、长期记忆、Pin 消息 等 8 个完整新接口 |
 | v2.1.0 | 2026-05-25 | 补充产物（Artifact）相关接口（获取列表、获取详情、更新内容）以及全屏编辑支持 |
+| v2.2.0 | 2026-05-28 | [新增及补充说明] 补充智能体配置管理 API 以及会话（Chat/Agent Chat）的置顶、归档 API 接口支持 |
+
+---
+
+## 6. [新增] 智能体配置与会话管理补充接口 (v2.2.0 补充)
+
+### 6.1 获取智能体列表
+`GET /agents`
+- 获取系统所有智能体（联系人）列表
+- Query 参数: page, pageSize, category, provider, keyword, enabled
+- Response Data: `PaginatedData<AgentListItem>`
+
+### 6.2 新建智能体
+`POST /agents`
+- 创建新的智能体配置
+- Request Body: `Omit<Agent, 'id' | 'lastUsedAt'>`
+- Response Data: `Agent`
+
+### 6.3 获取单个智能体详情
+`GET /agents/{agentId}`
+- 获取单个智能体的完整配置参数
+- Response Data: `Agent`
+
+### 6.4 更新智能体配置
+`PUT /agents/{agentId}`
+- 修改智能体配置（如名称、描述、System Prompt、模型参数及工具集等）
+- Request Body: `Partial<Agent>`
+- Response Data: `Agent`
+
+### 6.5 删除智能体
+`DELETE /agents/{agentId}`
+- 注销/删除指定的智能体
+- Response Data: `BaseApiResponse<boolean>`
+
+---
+
+### 6.6 会话置顶/取消置顶
+`PUT /conversations/{conversationId}/pin`
+- 对普通 Chat 或 Agent Chat 进行置顶/取消置顶操作
+- Request Body: `{ isPinned: boolean }`
+- Response Data: `Conversation`
+
+### 6.7 会话归档/激活
+`PUT /conversations/{conversationId}/archive`
+- 对普通 Chat 或 Agent Chat 进行归档/激活操作
+- Request Body: `{ isArchived: boolean }`
+- Response Data: `Conversation`
+
+### 6.8 获取智能体专属会话 (联系人会话) [v2.2.0 补充]
+`GET /users/{userId}/agents/{agentId}/contact`
+- 获取或者初始化指定用户与特定 Agent 的一对一专属联系人会话
+- Response Data: `AgentContactResponse` (包含 contactId, conversationId, 以及 Conversation 详细对象)

@@ -36,6 +36,7 @@ const AgentProfileCard: React.FC<AgentProfileCardProps> = ({ agent, onClose, onG
   const deleteAgent = useAgentHubStore(state => state.deleteAgent);
   const currentUser = useAgentHubStore(state => state.currentUser);
   const useMockMode = useAgentHubStore(state => state.useMockMode);
+  const setConfiguringAgentId = useAgentHubStore(state => state.setConfiguringAgentId);
 
   const isEditable = useMockMode || (
     currentUser && (
@@ -110,7 +111,10 @@ const AgentProfileCard: React.FC<AgentProfileCardProps> = ({ agent, onClose, onG
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                     <button
-                      onClick={() => setIsEditing(true)}
+                      onClick={() => {
+                        setConfiguringAgentId(agent.id);
+                        onClose();
+                      }}
                       className="p-1.5 rounded-lg hover:bg-lark-bg-hover dark:hover:bg-slate-800 text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 transition-all border border-transparent"
                       title="编辑配置"
                     >

@@ -14,7 +14,6 @@ interface LeftSidebarProps {
   onOpenNewConversation: () => void;
   agents: Agent[];
   selectedAgentId: string | null;
-  onSelectAgent: (agentId: string) => void;
   onSaveAgent: (updated: Agent) => void;
   onDeleteAgent: (agentId: string) => void;
   onDeleteConversation: (id: string) => void;
@@ -61,7 +60,6 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
   onOpenNewConversation,
   agents,
   selectedAgentId,
-  onSelectAgent,
   onSaveAgent,
   onDeleteAgent,
   onDeleteConversation,
@@ -97,6 +95,8 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
   const setIsSettingsOpen = useAgentHubStore(state => state.setIsSettingsOpen);
   const togglePinConversation = useAgentHubStore(state => state.togglePinConversation);
   const toggleArchiveConversation = useAgentHubStore(state => state.toggleArchiveConversation);
+  const getOrCreateAgentChat = useAgentHubStore(state => state.getOrCreateAgentChat);
+  const setConfiguringAgentId = useAgentHubStore(state => state.setConfiguringAgentId);
 
   const filteredConversations = conversations.filter(conv =>
     conv.title.toLowerCase().includes(keyword.toLowerCase())
@@ -179,18 +179,26 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
 
   const renderConversationItem = (conv: Conversation) => {
     const isActive = activeConversationId === conv.id;
+    const isAgentMode = conv.mode === 'agent';
+    
     return (
       <div
         key={conv.id}
         onClick={() => onSelectConversation(conv.id)}
         className={`p-2.5 rounded-lg cursor-pointer transition-all duration-150 relative group ${
           isActive
-            ? 'bg-lark-primary-light dark:bg-gradient-to-r dark:from-violet-950/40 dark:to-indigo-950/20 text-lark-primary dark:text-white'
+            ? isAgentMode
+              ? 'bg-emerald-50/70 dark:bg-gradient-to-r dark:from-emerald-950/35 dark:to-teal-950/15 text-emerald-600 dark:text-emerald-400 font-medium'
+              : 'bg-lark-primary-light dark:bg-gradient-to-r dark:from-violet-950/40 dark:to-indigo-950/20 text-lark-primary dark:text-white'
             : 'hover:bg-slate-200/50 dark:hover:bg-slate-800/50'
         } ${conv.isArchived ? 'opacity-70 hover:opacity-90' : ''}`}
       >
         {isActive && (
-          <div className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full bg-lark-primary dark:bg-gradient-to-b dark:from-violet-500 dark:to-indigo-550" />
+          <div className={`absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full ${
+            isAgentMode
+              ? 'bg-emerald-500'
+              : 'bg-lark-primary dark:bg-gradient-to-b dark:from-violet-500 dark:to-indigo-550'
+          }`} />
         )}
         <div className="flex items-center gap-3">
           {renderConversationAvatar(conv)}
@@ -201,8 +209,12 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                   <Pin className="w-3 h-3 text-lark-primary dark:text-violet-400 rotate-45 transform flex-shrink-0" />
                 )}
                 <h3 className={`text-sm font-medium truncate transition-colors ${
-                  isActive ? 'text-lark-primary dark:text-white font-semibold' : 'text-lark-text-primary dark:text-slate-200 group-hover:text-slate-900 dark:group-hover:text-white'
-                }`}>{conv.title}</h3>
+                  isActive 
+                    ? isAgentMode
+                      ? 'text-emerald-700 dark:text-emerald-300 font-semibold'
+                      : 'text-lark-primary dark:text-white font-semibold'
+                    : 'text-lark-text-primary dark:text-slate-200 group-hover:text-slate-900 dark:group-hover:text-white'
+                }`}>{isAgentMode ? (agents.find(a => conv.agentIds?.includes(a.id))?.name || conv.title) : conv.title}</h3>
                 {conv.isArchived && (
                   <span className="px-1.5 py-0.5 text-[9px] font-semibold bg-amber-100/80 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-900/30 rounded scale-90 transform origin-left select-none flex-shrink-0">已归档</span>
                 )}
@@ -212,7 +224,11 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
               </span>
             </div>
             <p className={`text-xs truncate transition-colors ${
-              isActive ? 'text-lark-primary/80 dark:text-violet-200/90' : 'text-lark-text-secondary dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-300'
+              isActive 
+                ? isAgentMode
+                  ? 'text-emerald-600/80 dark:text-emerald-400/90'
+                  : 'text-lark-primary/80 dark:text-violet-200/90'
+                : 'text-lark-text-secondary dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-300'
             }`}>{conv.lastMessage || '暂无消息'}</p>
           </div>
         </div>
@@ -267,21 +283,23 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                   className="flex items-center gap-2 px-3 py-1.5 text-slate-700 dark:text-slate-350 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-colors"
                 >
                   <Pin className="w-3 h-3 text-slate-400 rotate-45 transform" />
-                  <span>{conv.isPinned ? '取消置顶' : '置顶会话'}</span>
+                  <span>{conv.isPinned ? '取消置顶' : '置顶'}</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleArchiveConversation(conv.id);
-                    setActiveMenuId(null);
-                    setMenuAnchorRect(null);
-                  }}
-                  className="flex items-center gap-2 px-3 py-1.5 text-slate-700 dark:text-slate-350 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-colors"
-                >
-                  <Archive className="w-3 h-3 text-slate-400" />
-                  <span>{conv.isArchived ? '激活会话' : '归档会话'}</span>
-                </button>
+                {conv.mode !== 'agent' && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleArchiveConversation(conv.id);
+                      setActiveMenuId(null);
+                      setMenuAnchorRect(null);
+                    }}
+                    className="flex items-center gap-2 px-3 py-1.5 text-slate-700 dark:text-slate-350 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-colors"
+                  >
+                    <Archive className="w-3 h-3 text-slate-400" />
+                    <span>{conv.isArchived ? '激活' : '归档'}</span>
+                  </button>
+                )}
                 <div className="h-px bg-slate-100 dark:bg-slate-800 my-0.5" />
                 <button
                   type="button"
@@ -295,7 +313,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                   className="flex items-center gap-2 px-3 py-1.5 text-red-650 dark:text-red-450 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
                 >
                   <Trash2 className="w-3 h-3 text-red-400" />
-                  <span>删除会话</span>
+                  <span>删除</span>
                 </button>
               </div>
             </>,
@@ -337,7 +355,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
               }`}
             >
               <MessageSquare className="w-3.5 h-3.5" />
-              会话
+              Chat
             </button>
             <button
               onClick={() => setViewMode('agents')}
@@ -359,7 +377,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                 type="text"
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
-                placeholder="搜索会话..."
+                placeholder="搜索 Chat..."
                 className="w-full pl-9 pr-4 py-1.5 bg-[#eff0f1] dark:bg-slate-900 rounded-lg text-xs text-lark-text-primary dark:text-slate-100 placeholder:text-lark-text-tertiary dark:placeholder:text-slate-600 border border-transparent outline-none focus:bg-white dark:focus:bg-slate-950 focus:border-lark-primary dark:focus:border-violet-650 focus:ring-1 focus:ring-lark-primary/20 dark:focus:ring-violet-650/20 transition-all"
               />
             </div>
@@ -368,18 +386,34 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
       )}
 
       {viewMode === 'conversations' && (
-        <div className="flex-1 overflow-y-auto px-2 pb-4 space-y-4 min-h-0">
-          {/* 1. 会话 (Standard Sessions) */}
+        <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-3 min-h-0">
+          {/* Archived toggle */}
+          <div className="pb-2 px-1 flex justify-between items-center text-[10px] font-semibold uppercase tracking-wider text-lark-text-tertiary/70 dark:text-slate-500 border-b border-lark-border/20 dark:border-slate-850/30 select-none">
+            <span>归档设置</span>
+            <button
+              onClick={() => setShowArchived(!showArchived)}
+              className={`px-2 py-0.5 rounded text-[9px] transition-all flex items-center gap-1 select-none ${
+                showArchived
+                  ? 'bg-lark-primary/10 text-lark-primary dark:bg-violet-950/30 dark:text-violet-400 border border-lark-primary/20 dark:border-violet-500/20'
+                  : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 border border-transparent'
+              }`}
+            >
+              <Archive className="w-2.5 h-2.5" />
+              {showArchived ? '隐藏已归档' : '显示已归档'}
+            </button>
+          </div>
+
+          {/* 1. Chat (Standard Sessions) */}
           <div className="space-y-1">
             <button
               onClick={() => setIsSessionsExpanded(!isSessionsExpanded)}
-              className="w-full flex items-center justify-between px-2 py-1.5 text-xs font-semibold text-lark-text-secondary dark:text-slate-400 hover:bg-slate-200/40 dark:hover:bg-slate-800/40 rounded-md transition-colors group select-none"
+              className="w-full flex items-center justify-between px-1 py-1 text-[11px] font-bold text-lark-text-secondary dark:text-slate-400 hover:bg-slate-200/40 dark:hover:bg-slate-800/40 rounded-md transition-colors group select-none"
             >
               <div className="flex items-center gap-1.5">
-                {isSessionsExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                <span>会话</span>
-                <span className="text-[10px] text-lark-text-tertiary dark:text-slate-500 font-normal ml-0.5">
-                  ({sessionConversations.length})
+                {isSessionsExpanded ? <ChevronDown className="w-3 h-3 text-slate-400" /> : <ChevronRight className="w-3 h-3 text-slate-400" />}
+                <span>Chat</span>
+                <span className="px-1 py-0.2 text-[9px] bg-slate-100 dark:bg-slate-900 text-lark-text-tertiary dark:text-slate-550 border border-lark-border/30 dark:border-slate-800/50 rounded ml-1 font-normal font-sans">
+                  {sessionConversations.length}
                 </span>
               </div>
             </button>
@@ -399,13 +433,13 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
           <div className="space-y-1">
             <button
               onClick={() => setIsAgentChatsExpanded(!isAgentChatsExpanded)}
-              className="w-full flex items-center justify-between px-2 py-1.5 text-xs font-semibold text-lark-text-secondary dark:text-slate-400 hover:bg-slate-200/40 dark:hover:bg-slate-800/40 rounded-md transition-colors group select-none"
+              className="w-full flex items-center justify-between px-1 py-1 text-[11px] font-bold text-lark-text-secondary dark:text-slate-400 hover:bg-slate-200/40 dark:hover:bg-slate-800/40 rounded-md transition-colors group select-none"
             >
               <div className="flex items-center gap-1.5">
-                {isAgentChatsExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                {isAgentChatsExpanded ? <ChevronDown className="w-3 h-3 text-slate-400" /> : <ChevronRight className="w-3 h-3 text-slate-400" />}
                 <span>Agent chat</span>
-                <span className="text-[10px] text-lark-text-tertiary dark:text-slate-500 font-normal ml-0.5">
-                  ({agentConversations.length})
+                <span className="px-1 py-0.2 text-[9px] bg-slate-100 dark:bg-slate-900 text-lark-text-tertiary dark:text-slate-550 border border-lark-border/30 dark:border-slate-800/50 rounded ml-1 font-normal font-sans">
+                  {agentConversations.length}
                 </span>
               </div>
             </button>
@@ -420,22 +454,6 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
               </div>
             )}
           </div>
-
-          {/* 3. Archived toggle */}
-          <div className="pt-3 px-2 flex justify-between items-center text-[11px] text-lark-text-tertiary dark:text-slate-500 border-t border-lark-border/20 dark:border-slate-850/40">
-            <span>归档设置</span>
-            <button
-              onClick={() => setShowArchived(!showArchived)}
-              className={`px-2 py-0.5 rounded text-[10px] transition-all flex items-center gap-1 select-none ${
-                showArchived
-                  ? 'bg-lark-primary/10 text-lark-primary dark:bg-violet-950/30 dark:text-violet-400 border border-lark-primary/20 dark:border-violet-500/20'
-                  : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 border border-transparent'
-              }`}
-            >
-              <Archive className="w-3 h-3" />
-              {showArchived ? '隐藏已归档' : '显示已归档'}
-            </button>
-          </div>
         </div>
       )}
 
@@ -443,13 +461,12 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
         <AgentDirectory
           agents={agents}
           selectedAgentId={selectedAgentId}
-          onSelectAgent={(agentId) => {
-            onSelectAgent(agentId);
-            setViewMode('agent-detail');
+          onSelectAgent={async (agentId) => {
+            await getOrCreateAgentChat(agentId);
+            setViewMode('conversations');
           }}
           onAddAgent={() => {
-            onSelectAgent('new');
-            setViewMode('agent-detail');
+            setConfiguringAgentId('new');
           }}
         />
       )}
@@ -527,8 +544,12 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
 
       <ConfirmModal
         open={deleteConvId !== null}
-        title="确认删除会话吗？"
-        content={`删除会话 "${deleteConvTitle}" 将会清空所有聊天记录与历史消息。该操作不可撤销，请谨慎操作。`}
+        title={conversations.find(c => c.id === deleteConvId)?.mode === 'agent' ? "确认删除 Chat 吗？" : "确认删除会话吗？"}
+        content={
+          conversations.find(c => c.id === deleteConvId)?.mode === 'agent'
+            ? "确定从列表中移除该 Chat 吗？"
+            : `删除会话 "${deleteConvTitle}" 将会清空所有聊天记录与历史消息。该操作不可撤销，请谨慎操作。`
+        }
         confirmText="删除"
         cancelText="取消"
         type="danger"

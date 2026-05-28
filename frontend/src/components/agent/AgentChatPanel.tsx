@@ -96,6 +96,12 @@ const AgentChatPanel: React.FC<AgentChatPanelProps> = ({ agent, conversation, me
 
   const lastScrolledConvId = useRef<string | undefined>(undefined);
 
+  // Reset input and attachments when conversation changes
+  useEffect(() => {
+    setInputValue('');
+    setPendingAttachments([]);
+  }, [conversation.id]);
+
   useEffect(() => {
     const belongsToCurrentConv = messages.length > 0 && messages[0].conversationId === conversation.id;
 

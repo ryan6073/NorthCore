@@ -6,10 +6,42 @@ import AppLayout from './components/layout/AppLayout';
 import NewConversationModal from './components/modal/NewConversationModal';
 import ArtifactFullScreenModal from './components/modal/ArtifactFullScreenModal';
 import AgentProfileCard from './components/agent/AgentProfileCard';
+import AgentDetailPanel from './components/agent/AgentDetailPanel';
 import { useAgentHubStore } from './store/useAgentHubStore';
 import { CreateConversationPayload, Agent } from './types';
 import { LoginView } from './components/auth/LoginView';
 import { SettingsModal } from './components/modal/SettingsModal';
+
+const getNewAgentTemplate = (): Agent => ({
+  id: 'new',
+  name: '新建智能体',
+  avatar: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=cute%20robot%20avatar%20cartoon%20avatar&image_size=square',
+  description: '这是一个自定义配置的开发/功能型 AI 智能体。',
+  tags: ['新建'],
+  status: 'offline',
+  category: 'coding',
+  provider: 'custom',
+  enabled: true,
+  lastUsedAt: '',
+  systemPrompt: '你是一个专业的协作助手，协助用户处理各种任务。',
+  modelConfig: {
+    provider: 'custom',
+    modelName: 'gpt-4o',
+    temperature: 0.7,
+    maxTokens: 4096
+  },
+  tools: [
+    { id: 'file_read', name: '读文件', description: '读取文件内容', enabled: false },
+    { id: 'file_write', name: '写文件', description: '写入或修改文件', enabled: false }
+  ],
+  permissions: {
+    canReadFiles: false,
+    canWriteFiles: false,
+    canRunCommands: false,
+    canGenerateArtifacts: false,
+    canDeploy: false
+  }
+});
 
 function App() {
   const conversations = useAgentHubStore(state => state.conversations);
@@ -21,6 +53,7 @@ function App() {
   const isNewConversationOpen = useAgentHubStore(state => state.isNewConversationOpen);
   const isFullScreenOpen = useAgentHubStore(state => state.isFullScreenOpen);
   const selectedAgentId = useAgentHubStore(state => state.selectedAgentId);
+  const configuringAgentId = useAgentHubStore(state => state.configuringAgentId);
   const leftSidebarViewMode = useAgentHubStore(state => state.leftSidebarViewMode);
   const useMockMode = useAgentHubStore(state => state.useMockMode);
   const currentUser = useAgentHubStore(state => state.currentUser);
@@ -36,6 +69,7 @@ function App() {
   const setIsNewConversationOpen = useAgentHubStore(state => state.setIsNewConversationOpen);
   const setIsFullScreenOpen = useAgentHubStore(state => state.setIsFullScreenOpen);
   const setSelectedAgentId = useAgentHubStore(state => state.setSelectedAgentId);
+  const setConfiguringAgentId = useAgentHubStore(state => state.setConfiguringAgentId);
   const setLeftSidebarViewMode = useAgentHubStore(state => state.setLeftSidebarViewMode);
   const createConversation = useAgentHubStore(state => state.createConversation);
   const sendMessage = useAgentHubStore(state => state.sendMessage);
@@ -77,9 +111,6 @@ function App() {
     setIsNewConversationOpen(false);
   }, [createConversation, setIsNewConversationOpen]);
 
-  const handleSelectAgent = useCallback((agentId: string) => {
-    setSelectedAgentId(agentId);
-  }, [setSelectedAgentId]);
 
   const handleSaveAgent = useCallback(async (updatedAgent: Agent) => {
     if (updatedAgent.id === 'new') {
@@ -132,7 +163,6 @@ function App() {
             onOpenNewConversation={() => setIsNewConversationOpen(true)}
             agents={agents}
             selectedAgentId={selectedAgentId}
-            onSelectAgent={handleSelectAgent}
             onSaveAgent={handleSaveAgent}
             onDeleteAgent={handleDeleteAgent}
             onDeleteConversation={deleteConversation}
@@ -142,13 +172,35 @@ function App() {
           />
         }
         chatPanel={
-          <ChatPanel
-            conversation={activeConversation}
-            agents={activeAgents}
-            messages={messages}
-            artifacts={artifacts}
-            onSendMessage={handleSendMessage}
-          />
+          configuringAgentId ? (() => {
+            const configAgent = configuringAgentId === 'new' 
+              ? getNewAgentTemplate() 
+              : agents.find(a => a.id === configuringAgentId);
+            if (!configAgent) return null;
+            return (
+              <AgentDetailPanel
+                agent={configAgent}
+                isNew={configuringAgentId === 'new'}
+                onSave={async (updated) => {
+                  await handleSaveAgent(updated);
+                  setConfiguringAgentId(null);
+                }}
+                onDelete={async (id) => {
+                  await handleDeleteAgent(id);
+                  setConfiguringAgentId(null);
+                }}
+                onBack={() => setConfiguringAgentId(null)}
+              />
+            );
+          })() : (
+            <ChatPanel
+              conversation={activeConversation}
+              agents={activeAgents}
+              messages={messages}
+              artifacts={artifacts}
+              onSendMessage={handleSendMessage}
+            />
+          )
         }
         rightPanel={
           <RightPanel

@@ -1020,6 +1020,49 @@ GET /api/v1/conversations?page=1&pageSize=20
 
 ---
 
+#### PUT /conversations/{conversationId}/memories/{memoryId}
+
+**接口名称**: 修改长期记忆
+
+**接口用途**: 修改指定长期记忆的内容、分类或状态。
+
+**使用场景**:
+1. 长期记忆列表中点击某条记忆的编辑/保存按钮，修正记忆内容。
+
+**路径参数**: conversationId, memoryId
+
+**请求体示例**:
+```json
+{
+  "content": "用户倾向于使用 TypeScript 进行 React 前端组件设计，且要求高可重用性。",
+  "category": "preference",
+  "active": true
+}
+```
+
+**响应体示例**:
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "mem-1",
+    "conversationId": "conv-xxx",
+    "category": "preference",
+    "content": "用户倾向于使用 TypeScript 进行 React 前端组件设计，且要求高可重用性。",
+    "confidence": 1.0,
+    "sourceMessageId": "msg-12",
+    "active": true,
+    "createdAt": "2026-05-22 14:28",
+    "updatedAt": "2026-05-28 19:55"
+  }
+}
+```
+
+**优先级**: P1
+
+---
+
 #### GET /conversations/{conversationId}/pins
 
 **接口名称**: 获取已置顶消息列表
@@ -2100,7 +2143,58 @@ ws://localhost:8000/ws
 2. **多用户自建智能体的大模型 Key (API-Key) 安全托管与代充值代理 API**：
    - **现状**：自建 Agent 允许用户自定义 modelConfig (如模型名称、供应商)。
    - **前端诉求**：后端需要设计安全的 API-Key 加密托管机制，或者提供统一的代调用中转/代理鉴权层，避免前端在 `modelConfig` 中直接将敏感的 `apiKey` 明文传递给后端。
-3. **用户个人资料修改接口 (PUT /auth/profile)**：
+3. **用户个人资料修改接口 (PUT /auth/profile) [v4.1.0 新增需求]**：
    - **现状**：前端“设置”面板中支持用户修改昵称、更换头像。
-   - **前端诉求**：目前该修改只存在于前端本地，需要后端提供支持更改当前用户头像和昵称的 API，并在 `GET /auth/me` 中同步更新。
-
+   - **前端诉求**：后端提供修改当前用户头像和昵称的 API，修改成功后持久化至数据库。
+     - **请求方法**：`PUT`
+     - **请求路径**：`/auth/profile`
+     - **请求体**：
+       ```json
+       {
+         "name": "string",
+         "email": "string",
+         "avatar": "string"
+       }
+       ```
+     - **响应体**：`BaseApiResponse<UserInfo>`（包含修改后的用户最新资料数据）
+4. **会话置顶/取消置顶接口 (PUT /conversations/{conversationId}/pin) [v4.1.0 新增需求]**：
+   - **现状**：前端已实现置顶/取消置顶交互，但目前仅在 localStorage 中保存状态。
+   - **前端诉求**：后端需要提供置顶/取消置顶接口以支持多端同步与状态持久化。
+     - **请求方法**：`PUT`
+     - **请求路径**：`/conversations/{conversationId}/pin`
+     - **请求体**：`{ "isPinned": boolean }`
+     - **响应体**：返回更新后的会话对象 `Conversation`
+5. **会话归档/激活接口 (PUT /conversations/{conversationId}/archive) [v4.1.0 新增需求]**：
+   - **现状**：前端已实现会话归档与重新激活（移出归档）的交互。
+   - **前端诉求**：后端提供归档状态持久化接口。
+     - **请求方法**：`PUT`
+     - **请求路径**：`/conversations/{conversationId}/archive`
+     - **请求体**：`{ "isArchived": boolean }`
+     - **响应体**：返回更新后的会话对象 `Conversation`
+6. **获取智能体专属一对一会话接口 (GET /users/{userId}/agents/{agentId}/contact) [v4.1.0 新增需求]**：
+   - **现状**：点击智能体进行专属一对一聊天时，前端在 API 模式下需要拉取该用户与该智能体的专属聊天会话。前端不负责创建该会话，直接由后端按需匹配/返回。
+   - **前端诉求**：后端提供获取个人专属联系人会话接口。
+     - **请求方法**：`GET`
+     - **请求路径**：`/users/{userId}/agents/{agentId}/contact`
+     - **响应体**：`BaseApiResponse<AgentContactResponse>`，其中 `data` 结构为：
+       ```typescript
+       interface AgentContactResponse {
+         contactId: string;
+         conversationId: string;
+         conversation: Conversation;
+       }
+       ```
+7. **修改长期记忆接口 (PUT /conversations/{conversationId}/memories/{memoryId}) [v4.1.0 新增需求]**：
+   - **现状**：前端“提取的记忆”面板中支持用户对提取的记忆进行修改和类别变更。
+   - **前端诉求**：后端提供更新指定长期记忆的 API，支持修改内容（content）、分类（category）或状态（active）。
+     - **请求方法**：`PUT`
+     - **请求路径**：`/conversations/{conversationId}/memories/{memoryId}`
+     - **请求体**：
+       ```json
+       {
+         "content": "string",
+         "category": "preference",
+         "active": true
+       }
+       ```
+     - **响应体**：`BaseApiResponse<MemoryItem>`（包含更新后的完整记忆条目）

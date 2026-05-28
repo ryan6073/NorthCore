@@ -33,12 +33,17 @@ export async function logoutApi(): Promise<BaseApiResponse<any>> {
   return await http.post('/auth/logout');
 }
 
+export async function updateProfileApi(payload: Partial<UserInfo>): Promise<BaseApiResponse<UserInfo>> {
+  return await http.put('/auth/profile', payload);
+}
+
 const authService = {
   registerApi,
   loginApi,
   loginAsGuestApi,
   getMeApi,
   logoutApi,
+  updateProfileApi,
 };
 
 export default authService;

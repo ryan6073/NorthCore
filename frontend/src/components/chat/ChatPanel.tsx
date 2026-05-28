@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Conversation, Message, Agent, Artifact, MessageAttachment, AgentMentionItem } from '@/types';
 import MessageBubble from './MessageBubble';
 import ContextUsageRing from '@/components/common/ContextUsageRing';
-import { Send, Paperclip, Smile, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight } from 'lucide-react';
+import { Send, Paperclip, Smile, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight, Settings, Pencil, Check } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface ChatPanelProps {
@@ -99,11 +99,19 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const pins = useAgentHubStore(state => state.pins);
   const memories = useAgentHubStore(state => state.memories);
   const deleteMemory = useAgentHubStore(state => state.deleteMemory);
+  const updateMemory = useAgentHubStore(state => state.updateMemory);
   const togglePinMessage = useAgentHubStore(state => state.togglePinMessage);
+  const setConfiguringAgentId = useAgentHubStore(state => state.setConfiguringAgentId);
+  const allAgents = useAgentHubStore(state => state.agents);
   const [showMemoryPanel, setShowMemoryPanel] = useState(false);
   const [memoryTab, setMemoryTab] = useState<'pins' | 'memories'>('pins');
 
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
+  const [editingMemoryContent, setEditingMemoryContent] = useState<string>('');
+  const [editingMemoryCategory, setEditingMemoryCategory] = useState<any>('preference');
+
   const lastScrolledConversationId = useRef<string | undefined>(undefined);
+  const overlayRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     messagesEndRef.current?.scrollIntoView({ behavior });
@@ -113,6 +121,33 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const lastMessageContent = messages.length > 0 ? messages[messages.length - 1].content : null;
   const messagesLength = messages.length;
   const conversationId = conversation?.id;
+
+  // Reset input and attachments when conversation changes
+  useEffect(() => {
+    setInputValue('');
+    setPendingAttachments([]);
+    setShowMentionPopup(false);
+  }, [conversationId]);
+
+  const renderHighlightedInput = () => {
+    if (!inputValue) return null;
+    const regex = /(@[^\s@\uff1a\uff0c\u3002:,.!?]+)/g;
+    const parts = inputValue.split(regex);
+    return parts.map((part, index) => {
+      if (part.startsWith('@')) {
+        const nameWithoutAt = part.substring(1);
+        const agentExists = allAgents.some(a => a.name.toLowerCase() === nameWithoutAt.toLowerCase());
+        if (agentExists) {
+          return (
+            <span key={index} className="text-blue-600 dark:text-blue-400 font-semibold">
+              {part}
+            </span>
+          );
+        }
+      }
+      return part;
+    });
+  };
 
   useEffect(() => {
     const belongsToCurrentConv = messages.length > 0 && messages[0].conversationId === conversationId;
@@ -200,7 +235,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     const textBeforeCursor = value.substring(0, cursor);
     const lastAtIdx = textBeforeCursor.lastIndexOf('@');
 
-    if (lastAtIdx !== -1 && !textBeforeCursor.substring(lastAtIdx, cursor).includes(' ')) {
+    if (conversation?.mode === 'group' && lastAtIdx !== -1 && !textBeforeCursor.substring(lastAtIdx, cursor).includes(' ')) {
       const search = textBeforeCursor.substring(lastAtIdx + 1, cursor);
       setMentionSearch(search);
       setShowMentionPopup(true);
@@ -448,18 +483,22 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
           ) : (
             <div className="flex items-center gap-2 min-w-0 max-w-full">
               <h2 
-                className="text-sm font-semibold text-lark-text-primary dark:text-slate-100 truncate cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 px-1 py-0.5 rounded transition-colors"
+                className={`text-sm font-semibold text-lark-text-primary dark:text-slate-100 truncate ${
+                  conversation?.mode !== 'agent' ? 'cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 px-1 py-0.5 rounded transition-colors' : ''
+                }`}
                 onClick={() => {
-                  if (conversation) {
+                  if (conversation && conversation.mode !== 'agent') {
                     setEditedTitle(conversation.title);
                     setIsEditingTitle(true);
                   }
                 }}
-                title="点击重命名会话"
+                title={conversation?.mode !== 'agent' ? "点击重命名会话" : undefined}
               >
-                {conversation?.title || '选择一个会话'}
+                {conversation?.mode === 'agent' 
+                  ? (agents.find(a => conversation.agentIds?.includes(a.id))?.name || conversation.title) 
+                  : (conversation?.title || '选择一个会话')}
               </h2>
-              {conversation && (
+              {conversation && conversation.mode !== 'agent' && (
                 <button
                   onClick={() => {
                     setEditedTitle(conversation.title);
@@ -532,6 +571,23 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                   </span>
                 )}
               </button>
+
+              {/* Exclusive Chat Settings button */}
+              {conversation.mode === 'agent' && (
+                <button
+                  onClick={() => {
+                    const agentId = conversation.agentIds?.[0];
+                    if (agentId) {
+                      setConfiguringAgentId(agentId);
+                    }
+                  }}
+                  className="p-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-slate-50 dark:hover:bg-slate-800/45 rounded-lg transition-all flex items-center gap-1.5 shadow-sm active:scale-95"
+                  title="智能体配置设置"
+                >
+                  <Settings className="w-3.5 h-3.5 text-violet-500 animate-spin-hover" />
+                  <span className="text-xs font-medium hidden md:inline">设置</span>
+                </button>
+              )}
             </>
           )}
         </div>
@@ -541,15 +597,33 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         {/* Messages List Area */}
         <div className="flex-grow overflow-y-auto px-6 py-5 min-h-0 space-y-4 transition-all duration-300">
           {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center p-8 max-w-sm mx-auto">
-              <div className="w-12 h-12 rounded-2xl bg-lark-primary-light dark:bg-violet-950/45 flex items-center justify-center mb-4 text-lark-primary dark:text-violet-400">
-                <Smile className="w-6 h-6" />
+            conversation?.mode === 'agent' ? (
+              <div className="h-full flex flex-col items-center justify-center text-center p-8 max-w-sm mx-auto select-none">
+                {agents[0] ? (
+                  <img src={agents[0].avatar} alt="" className="w-16 h-16 rounded-full object-cover shadow-lg mb-4 hover:scale-105 transition-transform" />
+                ) : (
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-50 dark:bg-emerald-950/45 flex items-center justify-center mb-4 text-emerald-500">
+                    <Smile className="w-6 h-6" />
+                  </div>
+                )}
+                <h3 className="text-sm font-semibold text-lark-text-primary dark:text-slate-100 mb-1">
+                  开始与 {agents[0]?.name || 'Agent'} 对话
+                </h3>
+                <p className="text-xs text-lark-text-secondary dark:text-slate-400 leading-relaxed">
+                  这是你与 {agents[0]?.name || 'Agent'} 的一对一专属对话空间。你可以在此向它发送特定的指令与问题，它会直接为你解答。
+                </p>
               </div>
-              <h3 className="text-sm font-semibold text-lark-text-primary dark:text-slate-100 mb-1">开始与 Agent 协作</h3>
-              <p className="text-xs text-lark-text-secondary dark:text-slate-400 leading-relaxed">
-                在此发送你的开发需求或指令，Orchestrator 将会自动分析，分发任务给对应 Agent 并输出代码或文档产物。
-              </p>
-            </div>
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center text-center p-8 max-w-sm mx-auto select-none">
+                <div className="w-12 h-12 rounded-2xl bg-lark-primary-light dark:bg-violet-950/45 flex items-center justify-center mb-4 text-lark-primary dark:text-violet-400">
+                  <Smile className="w-6 h-6" />
+                </div>
+                <h3 className="text-sm font-semibold text-lark-text-primary dark:text-slate-100 mb-1">开始与 Agent 协作</h3>
+                <p className="text-xs text-lark-text-secondary dark:text-slate-400 leading-relaxed">
+                  在此发送你的开发需求或指令，Orchestrator 将会自动分析，分发任务给对应 Agent 并输出代码或文档产物。
+                </p>
+              </div>
+            )
           ) : (
             renderMessageList()
           )}
@@ -688,6 +762,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                       profile: { label: '基本属性', color: 'bg-purple-50 dark:bg-purple-950/25 text-purple-700 dark:text-purple-300 border-purple-100 dark:border-purple-900/30' }
                     };
                     const badge = categoryLabels[mem.category] || { label: '其他记忆', color: 'bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-100 dark:border-slate-800' };
+                    const isEditing = editingMemoryId === mem.id;
 
                     return (
                       <div 
@@ -695,20 +770,82 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                         className="p-3 bg-white dark:bg-slate-900 border border-lark-border dark:border-slate-800 rounded-xl shadow-sm hover:border-amber-300 dark:hover:border-amber-600/40 transition-all group/mem-item flex flex-col gap-2 relative"
                       >
                         <div className="flex items-center justify-between">
-                          <span className={`text-[9px] font-semibold px-1.5 py-0.5 border rounded-md ${badge.color}`}>
-                            {badge.label}
-                          </span>
-                          <button
-                            onClick={() => deleteMemory(mem.id)}
-                            className="p-1 hover:bg-red-50 dark:hover:bg-red-955/20 hover:text-red-500 dark:hover:text-red-400 rounded text-slate-400 dark:text-slate-500 transition-colors opacity-0 group-hover/mem-item:opacity-100 transition-opacity"
-                            title="删除记忆"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
+                          {isEditing ? (
+                            <select
+                              value={editingMemoryCategory}
+                              onChange={(e) => setEditingMemoryCategory(e.target.value as any)}
+                              className="text-[9px] font-semibold px-1 py-0.5 border rounded-md bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-350 border-lark-border dark:border-slate-800 focus:outline-none focus:border-amber-500"
+                            >
+                              <option value="preference">用户偏好</option>
+                              <option value="project">项目信息</option>
+                              <option value="constraint">开发约束</option>
+                              <option value="profile">基本属性</option>
+                            </select>
+                          ) : (
+                            <span className={`text-[9px] font-semibold px-1.5 py-0.5 border rounded-md ${badge.color}`}>
+                              {badge.label}
+                            </span>
+                          )}
+                          <div className="flex items-center gap-1">
+                            {isEditing ? (
+                              <>
+                                <button
+                                  onClick={async () => {
+                                    if (editingMemoryContent.trim()) {
+                                      await updateMemory(mem.id, editingMemoryContent.trim(), editingMemoryCategory);
+                                      setEditingMemoryId(null);
+                                    }
+                                  }}
+                                  className="p-1 hover:bg-green-50 dark:hover:bg-green-950/20 text-green-600 dark:text-green-400 rounded transition-colors"
+                                  title="保存修改"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => setEditingMemoryId(null)}
+                                  className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 rounded transition-colors"
+                                  title="取消"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => {
+                                    setEditingMemoryId(mem.id);
+                                    setEditingMemoryContent(mem.content);
+                                    setEditingMemoryCategory(mem.category);
+                                  }}
+                                  className="p-1 hover:bg-amber-50 dark:hover:bg-amber-950/20 hover:text-amber-500 rounded text-slate-400 dark:text-slate-500 transition-colors opacity-0 group-hover/mem-item:opacity-100 transition-opacity"
+                                  title="修改记忆"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </button>
+                                <button
+                                  onClick={() => deleteMemory(mem.id)}
+                                  className="p-1 hover:bg-red-50 dark:hover:bg-red-955/20 hover:text-red-500 dark:hover:text-red-400 rounded text-slate-400 dark:text-slate-500 transition-colors opacity-0 group-hover/mem-item:opacity-100 transition-opacity"
+                                  title="删除记忆"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </div>
-                        <div className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-sans">
-                          {mem.content}
-                        </div>
+                        {isEditing ? (
+                          <textarea
+                            value={editingMemoryContent}
+                            onChange={(e) => setEditingMemoryContent(e.target.value)}
+                            rows={3}
+                            className="text-xs text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950 border border-lark-border dark:border-slate-800 rounded-lg p-1.5 focus:outline-none focus:border-amber-500 w-full resize-none leading-relaxed font-sans"
+                            placeholder="请输入记忆内容..."
+                          />
+                        ) : (
+                          <div className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed font-sans">
+                            {mem.content}
+                          </div>
+                        )}
                         <div className="flex items-center justify-between text-[9px] text-slate-400 dark:text-slate-500 select-none">
                           <span>置信度: {(mem.confidence * 100).toFixed(0)}%</span>
                           <span>{mem.createdAt.split(' ')[0]}</span>
@@ -829,14 +966,34 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
             </div>
 
             <div className="flex-1 p-2 bg-transparent flex flex-row items-end gap-2 min-h-0 overflow-hidden">
-              <textarea
-                ref={textareaRef}
-                value={inputValue}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                placeholder="输入消息，输入 @ 唤起 Agent 选择器..."
-                className="w-full px-2 py-1.5 text-sm outline-none resize-none text-lark-text-primary dark:text-slate-100 placeholder:text-lark-text-tertiary dark:placeholder:text-slate-650 bg-transparent flex-1 h-full min-h-[36px]"
-              />
+              <div className="relative flex-1 h-full min-h-[36px] overflow-hidden">
+                {/* Highlight text mirror layer */}
+                <div
+                  ref={overlayRef}
+                  className="absolute inset-0 px-2 py-1.5 text-sm font-sans leading-normal whitespace-pre-wrap break-words text-slate-800 dark:text-slate-100 pointer-events-none select-none overflow-y-auto overflow-x-hidden border border-transparent bg-transparent"
+                  style={{ wordBreak: 'break-word' }}
+                >
+                  {renderHighlightedInput()}
+                </div>
+                {/* Native Textarea layer */}
+                <textarea
+                  ref={textareaRef}
+                  value={inputValue}
+                  onChange={handleInputChange}
+                  onKeyDown={handleKeyDown}
+                  onScroll={(e) => {
+                    if (overlayRef.current) {
+                      overlayRef.current.scrollTop = e.currentTarget.scrollTop;
+                      overlayRef.current.scrollLeft = e.currentTarget.scrollLeft;
+                    }
+                  }}
+                  placeholder="输入消息，输入 @ 唤起 Agent 选择器..."
+                  className={`absolute inset-0 w-full h-full px-2 py-1.5 text-sm font-sans leading-normal outline-none resize-none bg-transparent focus:ring-0 border border-transparent caret-slate-850 dark:caret-white ${
+                    inputValue ? 'text-transparent' : 'text-lark-text-primary dark:text-slate-150 placeholder:text-lark-text-tertiary dark:placeholder:text-slate-650'
+                  }`}
+                  style={{ wordBreak: 'break-word' }}
+                />
+              </div>
               <button
                 onClick={handleSend}
                 disabled={!canSend}

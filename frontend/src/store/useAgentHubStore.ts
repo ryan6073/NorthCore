@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem, SendMessageRequest, ContextUsage, AgentChat, AgentChatMessage } from '@/types';
+import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem, MemoryCategory, SendMessageRequest, ContextUsage, AgentChat, AgentChatMessage } from '@/types';
 import { getAgentList, updateAgentDetail, createAgent as createAgentApi, deleteAgent as deleteAgentApi, getAgentContact } from '@/services/http/agentService';
-import { getConversationList, createConversation as createConversationApi, updateConversation, compressContext, pinMessage, unpinMessage, getPins, getMemories, deleteMemory, deleteConversation, getContextUsage as getContextUsageApi } from '@/services/http/conversationService';
+import { getConversationList, createConversation as createConversationApi, updateConversation, compressContext, pinMessage, unpinMessage, getPins, getMemories, deleteMemory, updateMemory, deleteConversation, getContextUsage as getContextUsageApi, pinConversation, archiveConversation } from '@/services/http/conversationService';
 import { getMessageList, sendMessageNonStreaming } from '@/services/http/messageService';
 import { getArtifactMetaList, getArtifactDetail, getArtifactVersions, updateArtifactContent } from '@/services/http/artifactService';
 import wsClient from '@/services/ws/wsClient';
@@ -11,7 +11,7 @@ import { getCurrentFullTime } from '@/utils/time';
 import { generateMockReply } from '@/utils/mockReply';
 import { USE_MOCK } from '@/services';
 import { healthCheck } from '@/services/http/healthService';
-import { registerApi, loginApi, loginAsGuestApi, getMeApi, logoutApi } from '@/services/http/authService';
+import { registerApi, loginApi, loginAsGuestApi, getMeApi, logoutApi, updateProfileApi } from '@/services/http/authService';
 
 interface AgentHubStore {
   conversations: Conversation[];
@@ -28,6 +28,7 @@ interface AgentHubStore {
   isProcessing: boolean;
   isFullScreenOpen: boolean;
   selectedAgentId: string | null;
+  configuringAgentId: string | null;
   leftSidebarViewMode: 'conversations' | 'agents' | 'agent-detail';
   useMockMode: boolean;
   wsStatus: 'connecting' | 'connected' | 'disconnected';
@@ -60,6 +61,7 @@ interface AgentHubStore {
   setIsNewConversationOpen: (open: boolean) => void;
   setIsFullScreenOpen: (open: boolean) => void;
   setSelectedAgentId: (id: string | null) => void;
+  setConfiguringAgentId: (id: string | null) => void;
   setLeftSidebarViewMode: (mode: 'conversations' | 'agents' | 'agent-detail') => void;
   
   // Phase 3 Actions
@@ -83,7 +85,7 @@ interface AgentHubStore {
   loginAsGuest: (name: string, email: string, avatar: string) => Promise<void>;
   logout: () => void;
   loadBusinessData: () => Promise<void>;
-  updateProfile: (name: string, email: string, avatar: string) => void;
+  updateProfile: (name: string, email: string, avatar: string) => Promise<void>;
   updateSettings: (settings: Partial<AgentHubStore['settings']>) => void;
   setIsSettingsOpen: (open: boolean) => void;
   
@@ -93,6 +95,7 @@ interface AgentHubStore {
   compressContext: () => Promise<void>;
   togglePinMessage: (messageId: string) => Promise<void>;
   deleteMemory: (memoryId: string) => Promise<void>;
+  updateMemory: (memoryId: string, content: string, category?: MemoryCategory) => Promise<void>;
   saveEditedArtifact: (artifactId: string, newContent: string) => Promise<void>;
   
   sendMessage: (content: string, attachments?: MessageAttachment[], targetAgentId?: string) => Promise<void>;
@@ -141,6 +144,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   isProcessing: false,
   isFullScreenOpen: false,
   selectedAgentId: null,
+  configuringAgentId: null,
   leftSidebarViewMode: 'conversations',
   useMockMode: USE_MOCK,
   wsStatus: 'disconnected',
@@ -342,6 +346,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   setIsNewConversationOpen: (open) => set({ isNewConversationOpen: open }),
   setIsFullScreenOpen: (open) => set({ isFullScreenOpen: open }),
   setSelectedAgentId: (id) => set({ selectedAgentId: id }),
+  setConfiguringAgentId: (id) => set({ configuringAgentId: id }),
   setLeftSidebarViewMode: (mode) => set({ leftSidebarViewMode: mode }),
 
   loadConversationData: async (convId) => {
@@ -931,6 +936,22 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
 
   togglePinConversation: async (id) => {
+    const { useMockMode, conversations } = get();
+    const conv = conversations.find(c => c.id === id);
+    if (!conv) return;
+    const targetPinnedState = !conv.isPinned;
+
+    if (!useMockMode) {
+      try {
+        const res = await pinConversation(id, targetPinnedState);
+        if (res.code !== 0) {
+          console.error('[Store] 置顶/取消置顶 API 失败', res.message);
+        }
+      } catch (e) {
+        console.error('[Store] 置顶/取消置顶 API 失败', e);
+      }
+    }
+
     try {
       const pinned = JSON.parse(localStorage.getItem('ag_pinned_conversations') || '[]');
       let nextPinned: string[];
@@ -951,6 +972,22 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
 
   toggleArchiveConversation: async (id) => {
+    const { useMockMode, conversations } = get();
+    const conv = conversations.find(c => c.id === id);
+    if (!conv) return;
+    const targetArchivedState = !conv.isArchived;
+
+    if (!useMockMode) {
+      try {
+        const res = await archiveConversation(id, targetArchivedState);
+        if (res.code !== 0) {
+          console.error('[Store] 归档/激活 API 失败', res.message);
+        }
+      } catch (e) {
+        console.error('[Store] 归档/激活 API 失败', e);
+      }
+    }
+
     try {
       const archived = JSON.parse(localStorage.getItem('ag_archived_conversations') || '[]');
       let nextArchived: string[];
@@ -1322,7 +1359,18 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     set({ currentUser: null, activeConversationId: null, messages: [], pins: [], memories: [] });
   },
 
-  updateProfile: (name, email, avatar) => {
+  updateProfile: async (name, email, avatar) => {
+    const { useMockMode } = get();
+    if (!useMockMode) {
+      try {
+        const res = await updateProfileApi({ name, email, avatar });
+        if (res.code !== 0) {
+          console.error('[Store] 修改个人资料 API 失败', res.message);
+        }
+      } catch (e) {
+        console.error('[Store] 修改个人资料 API 失败', e);
+      }
+    }
     const user = { name, email, avatar, isLoggedIn: true };
     set({ currentUser: user });
     localStorage.setItem('ag_user', JSON.stringify(user));
@@ -1415,6 +1463,28 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       }
     } catch (e) {
       console.error('[Store] 删除记忆失败', e);
+    }
+  },
+
+  updateMemory: async (memoryId, content, category) => {
+    const { useMockMode, activeConversationId } = get();
+    if (useMockMode) {
+      set(state => ({
+        memories: state.memories.map(m => m.id === memoryId ? { ...m, content, category: category || m.category, updatedAt: getCurrentFullTime() } : m)
+      }));
+      return;
+    }
+
+    if (!activeConversationId) return;
+    try {
+      const res = await updateMemory(activeConversationId, memoryId, { content, category });
+      if (res.code === 0 && res.data) {
+        set(state => ({
+          memories: state.memories.map(m => m.id === memoryId ? res.data : m)
+        }));
+      }
+    } catch (e) {
+      console.error('[Store] 修改记忆失败', e);
     }
   },
   saveEditedArtifact: async (artifactId, newContent) => {
@@ -1604,7 +1674,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     }
 
     const targetAgent = agents.find(a => a.id === agentId);
-    const title = targetAgent ? `和 ${targetAgent.name} 对话` : '一对一对话';
+    const title = targetAgent ? targetAgent.name : '一对一对话';
     const newConv: Conversation = {
       id: `conv-agent-${agentId}`,
       title: title,

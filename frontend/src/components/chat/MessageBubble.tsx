@@ -29,6 +29,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
   const setSelectedArtifactId = useAgentHubStore(state => state.setSelectedArtifactId);
   const setSelectedArtifactVersion = useAgentHubStore(state => state.setSelectedArtifactVersion);
   const openAgentProfile = useAgentHubStore(state => state.openAgentProfile);
+  const allAgents = useAgentHubStore(state => state.agents);
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (isHoveringBar) return;
@@ -99,6 +100,32 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     }, 150);
   };
 
+  const formatMessageText = (text: string) => {
+    if (!text) return '';
+    // Match @ followed by non-whitespace characters (including Chinese, letters, numbers, etc.)
+    const regex = /(@[^\s@\uff1a\uff0c\u3002:,.!?]+)/g;
+    const parts = text.split(regex);
+    
+    return parts.map((part, index) => {
+      if (part.startsWith('@')) {
+        const nameWithoutAt = part.substring(1);
+        const matchedAgent = allAgents.find(a => a.name.toLowerCase() === nameWithoutAt.toLowerCase());
+        if (matchedAgent) {
+          return (
+            <span 
+              key={index} 
+              onClick={() => openAgentProfile(matchedAgent.id)}
+              className="text-blue-600 dark:text-blue-400 font-semibold hover:underline cursor-pointer"
+            >
+              {part}
+            </span>
+          );
+        }
+      }
+      return part;
+    });
+  };
+
   const renderContent = () => {
     if (message.type === 'code') {
       return <CodeBlock code={message.content} language={message.language} />;
@@ -109,7 +136,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     if (message.type === 'artifact') {
       return <ArtifactMessage message={message} />;
     }
-    return <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>;
+    return <p className="text-sm leading-relaxed whitespace-pre-wrap">{formatMessageText(message.content)}</p>;
   };
 
   const bubbleLayout = () => {

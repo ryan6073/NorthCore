@@ -8,6 +8,7 @@ import type {
   ConversationMode,
   CompressContextResult,
   MemoryItem,
+  MemoryCategory,
   PinItem,
   ContextUsage,
 } from '@/types';
@@ -63,6 +64,14 @@ export async function deleteMemory(
   return await http.delete(`/conversations/${conversationId}/memories/${memoryId}`);
 }
 
+export async function updateMemory(
+  conversationId: string,
+  memoryId: string,
+  payload: { content: string; category?: MemoryCategory; active?: boolean }
+): Promise<BaseApiResponse<MemoryItem>> {
+  return await http.put(`/conversations/${conversationId}/memories/${memoryId}`, payload);
+}
+
 export async function getPins(
   conversationId: string
 ): Promise<BaseApiResponse<PinItem[]>> {
@@ -95,6 +104,20 @@ export async function getContextUsage(
   return await http.get(`/conversations/${conversationId}/context/usage`);
 }
 
+export async function pinConversation(
+  conversationId: string,
+  isPinned: boolean
+): Promise<BaseApiResponse<Conversation>> {
+  return await http.put(`/conversations/${conversationId}/pin`, { isPinned });
+}
+
+export async function archiveConversation(
+  conversationId: string,
+  isArchived: boolean
+): Promise<BaseApiResponse<Conversation>> {
+  return await http.put(`/conversations/${conversationId}/archive`, { isArchived });
+}
+
 const conversationService = {
   getConversationList,
   createConversation,
@@ -103,11 +126,14 @@ const conversationService = {
   compressContext,
   getMemories,
   deleteMemory,
+  updateMemory,
   getPins,
   pinMessage,
   unpinMessage,
   deleteConversation,
   getContextUsage,
+  pinConversation,
+  archiveConversation,
 };
 
 export default conversationService;
