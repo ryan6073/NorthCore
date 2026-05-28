@@ -9,10 +9,12 @@ interface ContextUsageRingProps {
 
 const ContextUsageRing: React.FC<ContextUsageRingProps> = ({ usage, onCompress }) => {
   const [isHovering, setIsHovering] = useState(false);
+  const [isClicked, setIsClicked] = useState(false);
   const [popupStyle, setPopupStyle] = useState<React.CSSProperties>({});
   const [arrowStyle, setArrowStyle] = useState<React.CSSProperties>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const portalRootRef = useRef<HTMLElement | null>(null);
+  const hoverTimeoutRef = useRef<any>(null);
 
   const percent = usage?.contextUsagePercent ?? 0;
   const limitChars = usage?.contextLimitChars ?? 200000;
@@ -61,10 +63,64 @@ const ContextUsageRing: React.FC<ContextUsageRingProps> = ({ usage, onCompress }
     });
   }, []);
 
+  const handleMouseEnter = () => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    setIsHovering(true);
+  };
+
+  const handleMouseLeave = () => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+    }
+    hoverTimeoutRef.current = setTimeout(() => {
+      setIsHovering(false);
+    }, 150);
+  };
+
+  const handleTriggerClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsClicked(prev => !prev);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isClicked) return;
+    
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && containerRef.current.contains(e.target as Node)) {
+        return;
+      }
+      
+      const target = e.target as HTMLElement;
+      if (target.closest('.context-popup-content')) {
+        return;
+      }
+      
+      setIsClicked(false);
+    };
+
+    window.addEventListener('click', handleClickOutside);
+    return () => {
+      window.removeEventListener('click', handleClickOutside);
+    };
+  }, [isClicked]);
+
+  const showPopup = isHovering || isClicked;
+
   useEffect(() => {
     portalRootRef.current = document.body;
 
-    if (isHovering) {
+    if (showPopup) {
       updatePopupPosition();
       window.addEventListener('scroll', updatePopupPosition, true);
       window.addEventListener('resize', updatePopupPosition);
@@ -74,14 +130,14 @@ const ContextUsageRing: React.FC<ContextUsageRingProps> = ({ usage, onCompress }
       window.removeEventListener('scroll', updatePopupPosition, true);
       window.removeEventListener('resize', updatePopupPosition);
     };
-  }, [isHovering, updatePopupPosition]);
+  }, [showPopup, updatePopupPosition]);
 
-  const popupContent = isHovering ? (
+  const popupContent = showPopup ? (
     <div
       style={popupStyle}
-      className="select-none animate-scale-in pointer-events-auto"
-      onMouseEnter={() => setIsHovering(true)}
-      onMouseLeave={() => setIsHovering(false)}
+      className="select-none animate-scale-in pointer-events-auto context-popup-content"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
       <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg shadow-xl p-2.5 relative">
         <div className="flex items-center justify-between mb-1 gap-2">
@@ -95,10 +151,10 @@ const ContextUsageRing: React.FC<ContextUsageRingProps> = ({ usage, onCompress }
           <span className="text-[10px] text-slate-450 dark:text-slate-555 font-normal">已使用</span>
         </div>
         <button
-          onClick={(e) => { e.stopPropagation(); onCompress?.(); }}
+          onClick={(e) => { e.stopPropagation(); onCompress?.(); setIsClicked(false); }}
           className="w-full mt-2 bg-slate-50 hover:bg-slate-100 active:scale-[0.98] dark:bg-slate-900 dark:hover:bg-slate-850 text-slate-700 dark:text-slate-200 rounded-md py-1 text-xs font-semibold transition-all flex items-center justify-center gap-1 border border-slate-200 dark:border-slate-800 shadow-sm"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-2.5 h-2.5 text-slate-500 dark:text-slate-450">
+          <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-2.5 h-2.5 text-slate-500 dark:text-slate-455">
             <circle cx="6" cy="6" r="3" />
             <circle cx="6" cy="18" r="3" />
             <line x1="9.8" y1="8.2" x2="21" y2="12" />
@@ -119,8 +175,9 @@ const ContextUsageRing: React.FC<ContextUsageRingProps> = ({ usage, onCompress }
       <div
         ref={containerRef}
         className="relative flex items-center h-[30px]"
-        onMouseEnter={() => setIsHovering(true)}
-        onMouseLeave={() => setIsHovering(false)}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        onClick={handleTriggerClick}
       >
         <div 
           className="flex items-center gap-1.5 px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-850 rounded-lg transition-all cursor-pointer h-[30px] shadow-sm select-none"
@@ -150,7 +207,7 @@ const ContextUsageRing: React.FC<ContextUsageRingProps> = ({ usage, onCompress }
               />
             </svg>
           </div>
-          <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500 hidden md:inline select-none">上下文</span>
+          <span className="text-[10px] font-medium text-slate-400 dark:text-slate-550 hidden md:inline select-none">上下文</span>
           <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 font-mono select-none">{Math.round(percent)}%</span>
         </div>
       </div>

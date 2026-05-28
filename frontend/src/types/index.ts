@@ -112,6 +112,8 @@ export interface Conversation {
   updatedAt: string;
   createdAt?: string;
   contextUsage?: ContextUsage;
+  isPinned?: boolean;
+  isArchived?: boolean;
 }
 
 export interface Message {

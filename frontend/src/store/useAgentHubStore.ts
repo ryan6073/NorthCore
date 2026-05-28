@@ -101,6 +101,8 @@ interface AgentHubStore {
   deleteAgent: (agentId: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   renameConversation: (id: string, newTitle: string) => Promise<void>;
+  togglePinConversation: (id: string) => Promise<void>;
+  toggleArchiveConversation: (id: string) => Promise<void>;
   loadArtifactContent: (artifactId: string) => Promise<void>;
   getContextUsage: () => Promise<void>;
   setContextUsage: (usage: ContextUsage) => void;
@@ -108,6 +110,21 @@ interface AgentHubStore {
   connectWS: () => Promise<void>;
   disconnectWS: () => void;
 }
+
+const mergeLocalFlags = (list: Conversation[]): Conversation[] => {
+  try {
+    const pinned = JSON.parse(localStorage.getItem('ag_pinned_conversations') || '[]');
+    const archived = JSON.parse(localStorage.getItem('ag_archived_conversations') || '[]');
+    return list.map(c => ({
+      ...c,
+      isPinned: pinned.includes(c.id),
+      isArchived: archived.includes(c.id)
+    }));
+  } catch (e) {
+    console.error('Error loading pinned/archived lists from localStorage', e);
+    return list;
+  }
+};
 
 export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   conversations: [],
@@ -161,7 +178,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       const convRes = await getConversationList();
       if (convRes.code === 0) {
         const list = convRes.data.list;
-        set({ conversations: list });
+        set({ conversations: mergeLocalFlags(list) });
         if (list.length > 0) {
           set({ activeConversationId: list[0].id });
           await get().loadConversationData(list[0].id);
@@ -254,7 +271,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         console.warn('[Store] 真实 API 连接失败，自动切换到 Mock 演示模式', e);
         set({ useMockMode: true });
         set({
-          conversations: mockConversations,
+          conversations: mergeLocalFlags(mockConversations),
           agents: initialAgents,
           messages: mockMessages,
           artifacts: mockArtifacts,
@@ -279,7 +296,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       }
 
       set({
-        conversations: mockConversations,
+        conversations: mergeLocalFlags(mockConversations),
         agents: initialAgents,
         messages: mockMessages,
         artifacts: mockArtifacts,
@@ -438,7 +455,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       try {
         const res = await createConversationApi(payload);
         if (res.code === 0) {
-          set(state => ({ conversations: [...state.conversations, res.data] }));
+          set(state => ({ conversations: mergeLocalFlags([...state.conversations, res.data]) }));
           await get().setActiveConversationId(res.data.id);
         }
       } catch (e) {
@@ -454,7 +471,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         updatedAt: getCurrentFullTime(),
       };
       set(state => ({
-        conversations: [...state.conversations, newConv],
+        conversations: mergeLocalFlags([...state.conversations, newConv]),
       }));
       await get().setActiveConversationId(newConv.id);
     }
@@ -910,6 +927,46 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           c.id === id ? { ...c, title: newTitle } : c
         )
       }));
+    }
+  },
+
+  togglePinConversation: async (id) => {
+    try {
+      const pinned = JSON.parse(localStorage.getItem('ag_pinned_conversations') || '[]');
+      let nextPinned: string[];
+      if (pinned.includes(id)) {
+        nextPinned = pinned.filter((x: string) => x !== id);
+      } else {
+        nextPinned = [...pinned, id];
+      }
+      localStorage.setItem('ag_pinned_conversations', JSON.stringify(nextPinned));
+      set(state => ({
+        conversations: state.conversations.map(c => 
+          c.id === id ? { ...c, isPinned: nextPinned.includes(id) } : c
+        )
+      }));
+    } catch (e) {
+      console.error('Failed to toggle pin conversation', e);
+    }
+  },
+
+  toggleArchiveConversation: async (id) => {
+    try {
+      const archived = JSON.parse(localStorage.getItem('ag_archived_conversations') || '[]');
+      let nextArchived: string[];
+      if (archived.includes(id)) {
+        nextArchived = archived.filter((x: string) => x !== id);
+      } else {
+        nextArchived = [...archived, id];
+      }
+      localStorage.setItem('ag_archived_conversations', JSON.stringify(nextArchived));
+      set(state => ({
+        conversations: state.conversations.map(c => 
+          c.id === id ? { ...c, isArchived: nextArchived.includes(id) } : c
+        )
+      }));
+    } catch (e) {
+      console.error('Failed to toggle archive conversation', e);
     }
   },
 
@@ -1524,10 +1581,11 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
           set(state => {
             const hasConv = state.conversations.some(c => c.id === mappedConv.id);
+            const nextConvs = hasConv
+              ? state.conversations.map(c => c.id === mappedConv.id ? mappedConv : c)
+              : [...state.conversations, mappedConv];
             return {
-              conversations: hasConv
-                ? state.conversations.map(c => c.id === mappedConv.id ? mappedConv : c)
-                : [...state.conversations, mappedConv]
+              conversations: mergeLocalFlags(nextConvs)
             };
           });
 
@@ -1558,7 +1616,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     };
 
     set(state => ({
-      conversations: [...state.conversations, newConv],
+      conversations: mergeLocalFlags([...state.conversations, newConv]),
     }));
 
     await get().setActiveConversationId(newConv.id);
