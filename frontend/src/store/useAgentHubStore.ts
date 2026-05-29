@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem, MemoryCategory, SendMessageRequest, ContextUsage, AgentChat, AgentChatMessage } from '@/types';
 import { getAgentList, updateAgentDetail, createAgent as createAgentApi, deleteAgent as deleteAgentApi, getAgentContact } from '@/services/http/agentService';
-import { getConversationList, createConversation as createConversationApi, updateConversation, compressContext, pinMessage, unpinMessage, getPins, getMemories, deleteMemory, updateMemory, deleteConversation, getContextUsage as getContextUsageApi, pinConversation, archiveConversation, getConversationAgentConfig, updateConversationAgentConfig } from '@/services/http/conversationService';
+import { getConversationList, createConversation as createConversationApi, updateConversation, compressContext, pinMessage, unpinMessage, getPins, getMemories, deleteMemory, updateMemory, deleteConversation, getContextUsage as getContextUsageApi, pinConversation, archiveConversation, getConversationAgentConfig, updateConversationAgentConfig, addAgentToConversation, removeAgentFromConversation } from '@/services/http/conversationService';
 import { getMessageList, sendMessageNonStreaming } from '@/services/http/messageService';
 import { getArtifactMetaList, getArtifactDetail, getArtifactVersions, updateArtifactContent } from '@/services/http/artifactService';
 import wsClient from '@/services/ws/wsClient';
@@ -114,6 +114,8 @@ interface AgentHubStore {
   
   connectWS: () => Promise<void>;
   disconnectWS: () => void;
+  addAgentToConversation: (conversationId: string, agentId: string) => Promise<void>;
+  removeAgentFromConversation: (conversationId: string, agentId: string) => Promise<void>;
 }
 
 const mergeLocalFlags = (list: Conversation[]): Conversation[] => {
@@ -1011,6 +1013,63 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         )
       }));
     }
+  },
+
+  addAgentToConversation: async (conversationId, agentId) => {
+    const { useMockMode } = get();
+    if (!useMockMode) {
+      try {
+        const res = await addAgentToConversation(conversationId, agentId);
+        if (res.code === 0 && res.data) {
+          set(state => ({
+            conversations: state.conversations.map(c =>
+              c.id === conversationId ? { ...c, agentIds: res.data.agentIds } : c
+            )
+          }));
+          return;
+        }
+      } catch (e) {
+        console.error('[Store] 添加 Agent 到会话失败', e);
+      }
+    }
+    set(state => ({
+      conversations: state.conversations.map(c => {
+        if (c.id === conversationId) {
+          const currentAgentIds = c.agentIds || [];
+          if (!currentAgentIds.includes(agentId)) {
+            return { ...c, agentIds: [...currentAgentIds, agentId] };
+          }
+        }
+        return c;
+      })
+    }));
+  },
+
+  removeAgentFromConversation: async (conversationId, agentId) => {
+    const { useMockMode } = get();
+    if (!useMockMode) {
+      try {
+        const res = await removeAgentFromConversation(conversationId, agentId);
+        if (res.code === 0 && res.data) {
+          set(state => ({
+            conversations: state.conversations.map(c =>
+              c.id === conversationId ? { ...c, agentIds: res.data.agentIds } : c
+            )
+          }));
+          return;
+        }
+      } catch (e) {
+        console.error('[Store] 从会话移除 Agent 失败', e);
+      }
+    }
+    set(state => ({
+      conversations: state.conversations.map(c => {
+        if (c.id === conversationId) {
+          return { ...c, agentIds: (c.agentIds || []).filter(id => id !== agentId) };
+        }
+        return c;
+      })
+    }));
   },
 
   togglePinConversation: async (id) => {

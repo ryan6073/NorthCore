@@ -176,6 +176,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const [mentionCandidates, setMentionCandidates] = useState<AgentMentionItem[]>([]);
   const lastSearchKeyword = useRef('$$__INITIAL__$$');
 
+  const [showManageAgents, setShowManageAgents] = useState(false);
+  const addAgentToConversation = useAgentHubStore(state => state.addAgentToConversation);
+  const removeAgentFromConversation = useAgentHubStore(state => state.removeAgentFromConversation);
+
   useEffect(() => {
     if (conversation) {
       setEditedTitle(conversation.title);
@@ -529,16 +533,79 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
 
           {/* Stacked Participating Agent Avatars */}
           {conversation && activeAgents.length > 0 && (
-            <div className="flex items-center -space-x-1.5 overflow-hidden ml-3 hidden sm:flex select-none">
-              {activeAgents.map(agent => (
-                <img
-                  key={agent.id}
-                  className="inline-block h-5 w-5 rounded-full border-2 border-white dark:border-slate-900 object-cover"
-                  src={agent.avatar}
-                  alt={agent.name}
-                  title={`${agent.name} (${agent.description || agent.status})`}
-                />
-              ))}
+            <div className="flex items-center gap-1.5 ml-3 relative">
+              <div className="flex items-center -space-x-1.5 overflow-hidden select-none">
+                {activeAgents.map(agent => (
+                  <img
+                    key={agent.id}
+                    className="inline-block h-5 w-5 rounded-full border-2 border-white dark:border-slate-900 object-cover"
+                    src={agent.avatar}
+                    alt={agent.name}
+                    title={`${agent.name} (${agent.description || agent.status})`}
+                  />
+                ))}
+              </div>
+              {conversation.mode === 'group' && (
+                <div className="relative flex items-center">
+                  <button
+                    onClick={() => setShowManageAgents(!showManageAgents)}
+                    className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 border border-slate-200 dark:border-slate-700 shadow-sm transition-all active:scale-90"
+                    title="添加/删除成员智能体"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                    </svg>
+                  </button>
+
+                  {showManageAgents && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowManageAgents(false)} />
+                      <div className="absolute top-7 left-0 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl w-64 max-h-72 overflow-y-auto p-3 animate-scale-in">
+                        <div className="text-xs font-bold text-slate-800 dark:text-slate-200 pb-2 mb-2 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                          <span>管理成员智能体</span>
+                          <span className="text-[10px] text-slate-400 dark:text-slate-550 font-normal">多聊内成员</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {agents.filter(a => a.enabled !== false).map(agent => {
+                            const isMember = conversation.agentIds?.includes(agent.id);
+                            return (
+                              <div key={agent.id} className="flex items-center justify-between gap-2 p-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <img src={agent.avatar} alt="" className="w-5.5 h-5.5 rounded-md object-cover bg-slate-100 dark:bg-slate-900" />
+                                  <div className="min-w-0">
+                                    <div className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">{agent.name}</div>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (isMember) {
+                                      if (agent.id === 'agent-orchestrator' && activeAgents.length <= 1) {
+                                        alert('多聊中必须保留至少一个智能体');
+                                        return;
+                                      }
+                                      removeAgentFromConversation(conversation.id, agent.id);
+                                    } else {
+                                      addAgentToConversation(conversation.id, agent.id);
+                                    }
+                                  }}
+                                  className={`text-[10px] px-2 py-1 rounded-md font-semibold transition-all shadow-sm active:scale-95 ${
+                                    isMember
+                                      ? 'bg-red-50 hover:bg-red-100 text-red-600 dark:bg-red-955/20 dark:hover:bg-red-955/40 dark:text-red-400'
+                                      : 'bg-violet-600 hover:bg-violet-550 text-white dark:bg-violet-750 dark:hover:bg-violet-700'
+                                  }`}
+                                >
+                                  {isMember ? '移除' : '添加'}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

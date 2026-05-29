@@ -134,6 +134,20 @@ export async function updateConversationAgentConfig(
   return await http.put(`/conversations/${conversationId}/agents/${agentId}/config`, payload);
 }
 
+export async function addAgentToConversation(
+  conversationId: string,
+  agentId: string
+): Promise<BaseApiResponse<Conversation>> {
+  return await http.post(`/conversations/${conversationId}/agents`, { agentId });
+}
+
+export async function removeAgentFromConversation(
+  conversationId: string,
+  agentId: string
+): Promise<BaseApiResponse<Conversation>> {
+  return await http.delete(`/conversations/${conversationId}/agents/${agentId}`);
+}
+
 const conversationService = {
   getConversationList,
   createConversation,
@@ -152,6 +166,9 @@ const conversationService = {
   archiveConversation,
   getConversationAgentConfig,
   updateConversationAgentConfig,
+  addAgentToConversation,
+  removeAgentFromConversation,
 };
 
 export default conversationService;
+
