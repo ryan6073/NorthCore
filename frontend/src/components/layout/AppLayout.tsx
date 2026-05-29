@@ -118,13 +118,13 @@ const AppLayout: React.FC<AppLayoutProps> = ({
   return (
     <div className="h-full w-full flex bg-white dark:bg-[#06070d] overflow-hidden text-lark-text-primary dark:text-slate-100 transition-colors relative">
       {/* Slim leftmost navigation bar */}
-      <div className="hidden md:block h-full">
+      <div className="hidden lg:block h-full">
         <LeftNavBar />
       </div>
       {/* Mobile left sidebar overlay backdrop */}
       {isLeftOpen && (
         <div 
-          className="md:hidden fixed inset-0 bg-black/40 backdrop-blur-sm z-40 transition-opacity animate-fade-in" 
+          className="lg:hidden fixed inset-0 bg-black/40 backdrop-blur-sm z-40 transition-opacity animate-fade-in" 
           onClick={() => setIsLeftOpen(false)}
         />
       )}
@@ -132,18 +132,20 @@ const AppLayout: React.FC<AppLayoutProps> = ({
       {/* 左侧区域 */}
       <aside
         style={{
-          width: leftWidth,
-          minWidth: LEFT_MIN,
-          maxWidth: LEFT_MAX,
-          flex: `0 0 ${leftWidth}px`
-        }}
+          '--aside-width': `${leftWidth}px`
+        } as React.CSSProperties}
         className={`
-          h-full min-w-0 overflow-hidden border-r border-lark-border dark:border-[#161828] bg-lark-sidebar-bg dark:bg-[#090a12] transition-transform duration-300 md:transition-none
-          fixed md:relative top-0 bottom-0 left-0 z-50 md:z-auto
-          ${isLeftOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+          h-full min-w-0 overflow-hidden border-r border-lark-border dark:border-[#161828] bg-lark-sidebar-bg dark:bg-[#090a12] transition-transform duration-300 lg:transition-none
+          fixed lg:relative top-0 bottom-0 left-0 z-50 lg:z-auto
+          w-[320px] lg:w-[var(--aside-width)] lg:flex-[0_0_var(--aside-width)] lg:min-w-[200px] lg:max-w-[450px]
+          ${isLeftOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+          flex
         `}
       >
-        <div className="h-full w-full min-w-0 overflow-hidden">
+        <div className="lg:hidden h-full flex-shrink-0">
+          <LeftNavBar />
+        </div>
+        <div className="h-full w-full min-w-0 overflow-hidden flex-1">
           {leftSidebar}
         </div>
       </aside>
@@ -152,7 +154,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
       <div
         onMouseDown={handleLeftMouseDown}
         className="
-          hidden md:block h-full w-[2px] flex-none cursor-col-resize
+          hidden lg:block h-full w-[2px] flex-none cursor-col-resize
           bg-lark-border dark:bg-[#1b1e32] hover:bg-lark-primary active:bg-lark-primary
           transition-colors select-none z-20 relative
           before:content-[''] before:absolute before:-left-1 before:right-1 before:top-0 before:bottom-0 before:w-3 before:bg-transparent
@@ -167,7 +169,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
         "
       >
         {/* Mobile Top Header Bar */}
-        <div className="md:hidden flex items-center justify-between px-4 py-2.5 border-b border-lark-border dark:border-[#161828] bg-lark-sidebar-bg dark:bg-[#090a12] flex-shrink-0 select-none">
+        <div className="lg:hidden flex items-center justify-between px-4 py-2.5 border-b border-lark-border dark:border-[#161828] bg-lark-sidebar-bg dark:bg-[#090a12] flex-shrink-0 select-none">
           <button 
             onClick={() => setIsLeftOpen(true)}
             className="p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800/50 text-slate-500 dark:text-slate-400"
@@ -191,7 +193,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
       {/* Mobile right sidebar overlay backdrop */}
       {isRightOpen && (
         <div 
-          className="md:hidden fixed inset-0 bg-black/40 backdrop-blur-sm z-40 transition-opacity animate-fade-in" 
+          className="lg:hidden fixed inset-0 bg-black/40 backdrop-blur-sm z-40 transition-opacity animate-fade-in" 
           onClick={() => setIsRightOpen(false)}
         />
       )}
@@ -200,7 +202,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
       <div
         onMouseDown={handleRightMouseDown}
         className="
-          hidden md:block h-full w-[2px] flex-none cursor-col-resize
+          hidden lg:block h-full w-[2px] flex-none cursor-col-resize
           bg-lark-border dark:bg-[#1b1e32] hover:bg-lark-primary active:bg-lark-primary
           transition-colors select-none z-20 relative
           before:content-[''] before:absolute before:-left-1 before:right-1 before:top-0 before:bottom-0 before:w-3 before:bg-transparent
@@ -210,15 +212,13 @@ const AppLayout: React.FC<AppLayoutProps> = ({
       {/* 右侧区域 */}
       <aside
         style={{
-          width: rightWidth,
-          minWidth: RIGHT_MIN,
-          maxWidth: RIGHT_MAX,
-          flex: `0 0 ${rightWidth}px`
-        }}
+          '--right-aside-width': `${rightWidth}px`
+        } as React.CSSProperties}
         className={`
-          h-full min-w-0 overflow-hidden border-l border-lark-border dark:border-[#161828] bg-lark-sidebar-bg dark:bg-[#090a12] transition-transform duration-300 md:transition-none
-          fixed md:relative top-0 bottom-0 right-0 z-50 md:z-auto
-          ${isRightOpen ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}
+          h-full min-w-0 overflow-hidden border-l border-lark-border dark:border-[#161828] bg-lark-sidebar-bg dark:bg-[#090a12] transition-transform duration-300 lg:transition-none
+          fixed lg:relative top-0 bottom-0 right-0 z-50 lg:z-auto
+          w-[320px] max-w-[90vw] lg:max-w-none lg:w-[var(--right-aside-width)] lg:flex-[0_0_var(--right-aside-width)] lg:min-w-[250px] lg:max-w-[500px]
+          ${isRightOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}
         `}
       >
         <div className="h-full w-full min-w-0 overflow-hidden">

@@ -80,20 +80,20 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
   return (
     <div className="h-full w-full bg-slate-50/50 dark:bg-slate-950 flex flex-col overflow-hidden font-sans">
       {/* Premium header bar */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200/60 dark:border-slate-800 bg-white dark:bg-slate-900 flex-shrink-0 transition-colors shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-violet-500/10 dark:bg-violet-500/20 text-violet-600 dark:text-violet-400 flex items-center justify-center">
+      <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-200/60 dark:border-slate-800 bg-white dark:bg-slate-900 flex-shrink-0 transition-colors shadow-sm gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-violet-500/10 dark:bg-violet-500/20 text-violet-600 dark:text-violet-400 flex items-center justify-center flex-shrink-0">
             <Bot className="w-5 h-5" />
           </div>
-          <div>
-            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+          <div className="min-w-0">
+            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex flex-wrap items-center gap-1.5">
               <span>{isSessionLevel ? '配置会话专属智能体' : '配置智能体'}</span>
               <span className="text-xs px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded font-mono font-medium">{form.name}</span>
               {isSessionLevel && (
                 <span className="text-[9px] px-1.5 py-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 rounded font-medium">会话专属</span>
               )}
             </h3>
-            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
+            <p className="text-[10px] text-slate-400 dark:text-slate-550 mt-0.5">
               {isSessionLevel ? '当前修改仅在此会话生效。您可以同步此配置到全局。' : '设定行为模式、运行模型、权限授权和可操作工具集。'}
             </p>
           </div>
@@ -106,9 +106,9 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
         </button>
       </div>
 
-      <div className="flex-1 flex overflow-hidden min-h-0">
+      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
         {/* Left Side Tab Navigation */}
-        <div className="w-48 border-r border-slate-200/60 dark:border-slate-850 bg-white dark:bg-slate-900 p-3.5 space-y-1 flex-shrink-0 select-none hidden md:block">
+        <div className="w-48 border-r border-slate-200/60 dark:border-slate-850 bg-white dark:bg-slate-900 p-3.5 space-y-1 flex-shrink-0 select-none hidden lg:block">
           {tabs.map(tab => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -131,7 +131,7 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
         </div>
 
         {/* Mobile quick tabs */}
-        <div className="md:hidden flex overflow-x-auto border-b border-slate-200/60 dark:border-slate-800 bg-white dark:bg-slate-900 p-2 gap-1.5 flex-shrink-0">
+        <div className="lg:hidden flex overflow-x-auto border-b border-slate-200/60 dark:border-slate-800 bg-white dark:bg-slate-900 p-2 gap-1.5 flex-shrink-0">
           {tabs.map(tab => {
             const isActive = activeTab === tab.id;
             return (
@@ -152,18 +152,19 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
         </div>
 
         {/* Right Side Scrollable Form Content */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/50 dark:bg-slate-950/20">
+        <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+          <form id="agent-config-form" onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6 bg-slate-50/50 dark:bg-slate-950/20">
           
           {/* TAB 1: BASIC INFORMATION */}
           {activeTab === 'basic' && (
             <div className="space-y-5 animate-fade-in">
-              <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200/60 dark:border-slate-850 shadow-sm space-y-4">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-slate-200/60 dark:border-slate-850 shadow-sm space-y-4">
                 <div className="flex items-center gap-2 mb-1">
                   <Bot className="w-4 h-4 text-violet-500" />
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-400">智能体基本属性</span>
                 </div>
                 
-                <div className="flex gap-5 items-start">
+                <div className="flex flex-col-reverse sm:flex-row gap-5 items-stretch sm:items-start">
                   <div className="flex-1 space-y-4">
                     <div>
                       <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">智能体名称</label>
@@ -190,14 +191,17 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
                   </div>
 
                   {/* Realtime Avatar Preview */}
-                  <div className="flex flex-col items-center gap-2 flex-shrink-0">
-                    <span className="text-[10px] font-bold text-slate-400 select-none uppercase">头像预览</span>
-                    <div className="w-20 h-20 rounded-2xl overflow-hidden border border-slate-200/80 dark:border-slate-800 shadow-sm bg-slate-100 dark:bg-slate-950">
+                  <div className="flex flex-row sm:flex-col items-center justify-between sm:justify-start gap-4 p-3 bg-slate-50 dark:bg-slate-950/40 border border-slate-100 dark:border-slate-850 rounded-2xl sm:bg-transparent sm:dark:bg-transparent sm:border-0 sm:p-0 flex-shrink-0">
+                    <div className="flex flex-col sm:items-center gap-1">
+                      <span className="text-[10px] font-bold text-slate-400 select-none uppercase">头像预览</span>
+                      <span className="text-[9px] text-slate-450 dark:text-slate-500 sm:hidden">根据下方 URL 实时渲染</span>
+                    </div>
+                    <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden border border-slate-200/80 dark:border-slate-800 shadow-sm bg-slate-100 dark:bg-slate-950 flex-shrink-0">
                       {form.avatar ? (
                         <img src={form.avatar} alt="Avatar Preview" className="w-full h-full object-cover" />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center text-slate-300">
-                          <Image className="w-6 h-6" />
+                          <Image className="w-5 h-5" />
                         </div>
                       )}
                     </div>
@@ -285,7 +289,7 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
           {/* TAB 2: SYSTEM PROMPT */}
           {activeTab === 'prompt' && (
             <div className="space-y-5 animate-fade-in">
-              <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200/60 dark:border-slate-850 shadow-sm space-y-4">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-slate-200/60 dark:border-slate-850 shadow-sm space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <FileText className="w-4 h-4 text-violet-500" />
@@ -314,13 +318,13 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
           {/* TAB 3: MODEL CONFIG */}
           {activeTab === 'model' && (
             <div className="space-y-5 animate-fade-in">
-              <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200/60 dark:border-slate-850 shadow-sm space-y-5">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-slate-200/60 dark:border-slate-850 shadow-sm space-y-5">
                 <div className="flex items-center gap-2 mb-1">
                   <Settings className="w-4 h-4 text-violet-500" />
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-400">大模型底座参数</span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">服务供应商 (Provider)</label>
                     <select
@@ -400,7 +404,7 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
           {/* TAB 4: TOOLS CONFIG */}
           {activeTab === 'tools' && (
             <div className="space-y-5 animate-fade-in">
-              <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200/60 dark:border-slate-850 shadow-sm space-y-4">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-slate-200/60 dark:border-slate-850 shadow-sm space-y-4">
                 <div className="flex items-center gap-2 mb-1">
                   <Wrench className="w-4 h-4 text-violet-500" />
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-400">可用功能工具集 (Tools)</span>
@@ -409,7 +413,7 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
                 {!form.tools || form.tools.length === 0 ? (
                   <p className="text-xs text-slate-400 italic py-6 text-center">暂无可配置的工具</p>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
                     {form.tools.map(tool => (
                       <div 
                         key={tool.id}
@@ -448,7 +452,7 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
           {/* TAB 5: PERMISSIONS CONFIG */}
           {activeTab === 'permissions' && (
             <div className="space-y-5 animate-fade-in">
-              <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200/60 dark:border-slate-850 shadow-sm space-y-4">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-slate-200/60 dark:border-slate-850 shadow-sm space-y-4">
                 <div className="flex items-center gap-2 mb-1">
                   <Shield className="w-4 h-4 text-violet-500" />
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-400">运行与操作系统权限授权</span>
@@ -498,14 +502,16 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
             </div>
           )}
 
+          </form>
+
           {/* Persistent Floating Save action footer */}
-          <div className="pt-2 border-t border-slate-200/60 dark:border-slate-800 flex items-center justify-end gap-3 flex-shrink-0 bg-transparent">
+          <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-t border-slate-200/60 dark:border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center sm:justify-end gap-2.5 flex-shrink-0 bg-white dark:bg-slate-900 shadow-md">
             {isSessionLevel && onSyncToGlobal && (
               <button
                 type="button"
                 onClick={handleSyncToGlobal}
                 disabled={syncing}
-                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-550 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-md shadow-emerald-600/10 active:scale-95 disabled:opacity-50"
+                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-550 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/10 active:scale-95 disabled:opacity-50 w-full sm:w-auto animate-fade-in"
               >
                 {synced ? <Check className="w-3.5 h-3.5" /> : <Globe className="w-3.5 h-3.5" />}
                 <span>{synced ? '已同步到全局' : '同步为全局配置'}</span>
@@ -514,20 +520,20 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl transition-all shadow-sm active:scale-95"
+              className="px-4 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl transition-all shadow-sm active:scale-95 w-full sm:w-auto text-center flex items-center justify-center"
             >
               取消
             </button>
             <button
               type="submit"
-              className="px-6 py-2.5 bg-violet-600 hover:bg-violet-550 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-md shadow-violet-600/10 active:scale-95"
+              form="agent-config-form"
+              className="px-6 py-2.5 bg-violet-600 hover:bg-violet-550 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md shadow-violet-600/10 active:scale-95 w-full sm:w-auto"
             >
               <Save className="w-3.5 h-3.5" />
               <span>保存修改</span>
             </button>
           </div>
-
-        </form>
+        </div>
       </div>
     </div>
   );

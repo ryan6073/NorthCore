@@ -168,4 +168,10 @@ html.dark body {
   animation: shake 0.2s ease-in-out 2;
 }
 
-
+/* Touch device friendly hover replacements */
+@media (hover: none) {
+  .touch-actions-visible {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+}

@@ -18,6 +18,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
   const [copied, setCopied] = useState(false);
   const [mouseY, setMouseY] = useState<number | null>(null);
   const [isHoveringBar, setIsHoveringBar] = useState(false);
+  const [showTouchActions, setShowTouchActions] = useState(false);
   const isUser = message.role === 'user';
   const isOrchestrator = message.role === 'orchestrator';
   const agentInfo = !isUser && message.senderName 
@@ -53,7 +54,9 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     return parts[1] || parts[0];
   };
 
-  const handleReply = () => {
+  const handleReply = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setShowTouchActions(false);
     if (onCustomReply) {
       onCustomReply(message);
     } else {
@@ -65,7 +68,9 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     }
   };
 
-  const handlePin = () => {
+  const handlePin = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setShowTouchActions(false);
     if (onCustomPin) {
       onCustomPin(message.id);
     } else {
@@ -73,11 +78,37 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     }
   };
 
-  const handleCopy = async () => {
+  const handleCopy = async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     await navigator.clipboard.writeText(message.content);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => {
+      setCopied(false);
+      setShowTouchActions(false);
+    }, 2000);
   };
+
+  const handleBubbleClick = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('a') || target.closest('span[onClick]') || target.closest('pre')) {
+      return;
+    }
+    setShowTouchActions(prev => !prev);
+  };
+
+  React.useEffect(() => {
+    if (!showTouchActions) return;
+    const handleDocumentClick = (e: MouseEvent) => {
+      const bubbleEl = document.getElementById(`msg-${message.id}`);
+      if (bubbleEl && !bubbleEl.contains(e.target as Node)) {
+        setShowTouchActions(false);
+      }
+    };
+    document.addEventListener('click', handleDocumentClick, true);
+    return () => {
+      document.removeEventListener('click', handleDocumentClick, true);
+    };
+  }, [showTouchActions, message.id]);
 
   const handleRefClick = () => {
     if (!message.artifactRef) return;
@@ -237,7 +268,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
             <div 
               onMouseMove={handleMouseMove}
               onMouseLeave={handleMouseLeave}
-              className={`relative group/bubble-content max-w-full ${
+              onClick={handleBubbleClick}
+              className={`relative group/bubble-content max-w-full cursor-pointer lg:cursor-default ${
                 isBlockType 
                   ? 'w-full self-stretch' 
                   : isUser 
@@ -250,7 +282,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    handlePin();
+                    handlePin(e);
                   }}
                   className={`absolute -top-2 ${isUser ? '-left-2' : '-right-2'} bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-650 border border-amber-500 text-white rounded-full p-1 shadow-[0_0_8px_rgba(245,158,11,0.45)] z-20 flex items-center justify-center transition-all hover:scale-110 active:scale-95 animate-bounce-subtle`}
                   title="点击取消 Pin"
@@ -266,7 +298,9 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
                 className={`absolute opacity-0 group-hover/bubble-content:opacity-100 transition-opacity duration-150 flex items-center gap-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 shadow-md rounded-lg p-1 z-30 transition-colors
                   ${isUser 
                     ? 'right-full mr-3 after:absolute after:-right-4 after:top-0 after:bottom-0 after:w-4 after:content-[\'\']' 
-                    : 'left-full ml-3 before:absolute before:-left-4 before:top-0 before:bottom-0 before:w-4 before:content-[\'\']'}`}
+                    : 'left-full ml-3 before:absolute before:-left-4 before:top-0 before:bottom-0 before:w-4 before:content-[\'\']'}
+                  max-lg:!-top-9 max-lg:left-1/2 max-lg:-translate-x-1/2 max-lg:right-auto max-lg:mr-0 max-lg:ml-0 max-lg:before:hidden max-lg:after:hidden
+                  ${showTouchActions ? 'opacity-100 pointer-events-auto' : ''}`}
               >
                 <button
                   onClick={handleReply}

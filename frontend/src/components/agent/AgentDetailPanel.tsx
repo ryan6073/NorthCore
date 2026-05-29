@@ -71,25 +71,25 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
     <div className="h-full w-full bg-slate-50/50 dark:bg-slate-950 flex flex-col overflow-hidden text-slate-800 dark:text-slate-100 font-sans transition-colors">
       
       {/* Header bar with controls */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200/60 dark:border-slate-850 bg-white dark:bg-slate-900 flex-shrink-0 transition-colors shadow-sm z-10">
-        <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-200/60 dark:border-slate-850 bg-white dark:bg-slate-900 flex-shrink-0 transition-colors shadow-sm z-10 gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <button 
             onClick={onBack} 
-            className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 border border-slate-200/40 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm transition-all active:scale-95"
+            className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 border border-slate-200/40 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm transition-all active:scale-95 flex-shrink-0"
             title="返回上一级"
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
-          <div>
-            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">
+          <div className="min-w-0">
+            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
               {isSessionLevel ? '智能体会话专属配置' : '智能体详情面板'}
             </h3>
-            <p className="text-[10px] text-slate-400 dark:text-slate-550 mt-0.5">
+            <p className="text-[10px] text-slate-400 dark:text-slate-550 mt-0.5 truncate">
               {isSessionLevel ? '修改此配置仅在当前聊天会话中生效，不会影响全局默认配置。' : '查看基本信息、模型配置、工具集以及授权的安全权限。'}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
           {!isNew && onDelete && (
             <button
               onClick={() => setShowDeleteConfirm(true)}
@@ -101,7 +101,7 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
           )}
           <button 
             onClick={() => setIsEditing(true)} 
-            className="px-4 py-2 bg-violet-600 hover:bg-violet-550 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-md shadow-violet-600/10 active:scale-95"
+            className="px-3.5 py-2 bg-violet-600 hover:bg-violet-550 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-md shadow-violet-600/10 active:scale-95"
             title="重新配置参数"
           >
             <Edit2 className="w-3.5 h-3.5" />
@@ -111,10 +111,10 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
       </div>
 
       {/* Main Details View Body */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
         
         {/* Profile Card Banner */}
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-250/50 dark:border-slate-850 p-6 shadow-sm relative overflow-hidden flex flex-col sm:flex-row gap-5 items-start sm:items-center">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-250/50 dark:border-slate-850 p-4 sm:p-6 shadow-sm relative overflow-hidden flex flex-col lg:flex-row gap-5 items-start lg:items-center">
           {/* Subtle design gradient dot background */}
           <div className="absolute top-0 right-0 w-36 h-36 bg-gradient-to-br from-violet-500/5 to-indigo-500/5 rounded-full blur-2xl pointer-events-none" />
           
@@ -141,7 +141,7 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           
           {/* Column 1: Model Config Card */}
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-850 p-5 shadow-sm space-y-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-850 p-4 sm:p-5 shadow-sm space-y-4">
             <h4 className="text-xs font-bold text-slate-650 dark:text-slate-300 flex items-center gap-1.5 border-b border-slate-100 dark:border-slate-800/80 pb-2">
               <Cpu className="w-4 h-4 text-violet-500" />
               <span>底层模型底座配置</span>
@@ -188,7 +188,7 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
           </div>
 
           {/* Column 2: Security & Permissions Card */}
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-850 p-5 shadow-sm space-y-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-850 p-4 sm:p-5 shadow-sm space-y-4">
             <h4 className="text-xs font-bold text-slate-650 dark:text-slate-300 flex items-center gap-1.5 border-b border-slate-100 dark:border-slate-800/80 pb-2">
               <ShieldAlert className="w-4 h-4 text-violet-500" />
               <span>系统运行安全控制权限</span>
@@ -227,7 +227,7 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
         </div>
 
         {/* Tools Config Card */}
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-850 p-5 shadow-sm space-y-4">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-850 p-4 sm:p-5 shadow-sm space-y-4">
           <h4 className="text-xs font-bold text-slate-650 dark:text-slate-300 flex items-center gap-1.5 border-b border-slate-100 dark:border-slate-800/80 pb-2">
             <Wrench className="w-4 h-4 text-violet-500" />
             <span>智能体绑定工具箱集</span>
@@ -236,7 +236,7 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
           {!agent.tools || agent.tools.length === 0 ? (
             <p className="text-xs text-slate-400 italic py-4 text-center">当前智能体未绑定任何工具箱</p>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
               {agent.tools.map(tool => (
                 <div key={tool.id} className="flex items-start gap-3 p-3.5 rounded-xl border border-slate-150 dark:border-slate-850 bg-slate-50/20 dark:bg-slate-950/20 hover:border-slate-200 dark:hover:border-slate-750 transition-all">
                   <div className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 text-xs font-bold ${

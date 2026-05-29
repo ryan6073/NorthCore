@@ -120,7 +120,7 @@ export const FileTreePanel: React.FC = () => {
             </div>
 
             {/* Hover Actions */}
-            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-2 flex-shrink-0 relative">
+            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 touch-actions-visible transition-opacity ml-2 flex-shrink-0 relative">
               {!isDirectory && (
                 <button
                   onClick={(e) => {

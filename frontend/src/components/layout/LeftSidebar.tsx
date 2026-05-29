@@ -249,7 +249,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                 setActiveMenuId(conv.id);
               }
             }}
-            className={`opacity-0 group-hover:opacity-100 ${activeMenuId === conv.id ? 'opacity-100' : ''} transition-opacity bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-500 p-1.5 rounded-lg shadow-sm border border-lark-border/50 dark:border-slate-800/80 active:scale-95 flex items-center justify-center`}
+            className={`opacity-0 group-hover:opacity-100 touch-actions-visible ${activeMenuId === conv.id ? 'opacity-100' : ''} transition-opacity bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 dark:text-slate-550 p-1.5 rounded-lg shadow-sm border border-lark-border/50 dark:border-slate-800/80 active:scale-95 flex items-center justify-center`}
             title="更多操作"
           >
             <MoreVertical className="w-3.5 h-3.5" />
