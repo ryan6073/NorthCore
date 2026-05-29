@@ -3,6 +3,7 @@ import LeftSidebar from './components/layout/LeftSidebar';
 import ChatPanel from './components/chat/ChatPanel';
 import RightPanel from './components/layout/RightPanel';
 import AppLayout from './components/layout/AppLayout';
+import { TitleBar } from './components/layout/TitleBar';
 import NewConversationModal from './components/modal/NewConversationModal';
 import ArtifactFullScreenModal from './components/modal/ArtifactFullScreenModal';
 import AgentProfileCard from './components/agent/AgentProfileCard';
@@ -158,6 +159,16 @@ function App() {
     closeAgentProfile();
   }, [getOrCreateAgentChat, closeAgentProfile]);
 
+  const isDesktop = useAgentHubStore(state => state.isDesktop);
+  const setIsSettingsOpen = useAgentHubStore(state => state.setIsSettingsOpen);
+
+  useEffect(() => {
+    if (leftSidebarViewMode === 'settings') {
+      setIsSettingsOpen(true);
+      useAgentHubStore.setState({ leftSidebarViewMode: 'conversations' });
+    }
+  }, [leftSidebarViewMode, setIsSettingsOpen]);
+
   if (!currentUser || !currentUser.isLoggedIn) {
     return <LoginView />;
   }
@@ -165,79 +176,82 @@ function App() {
   const isSessionLevel = activeConversation && activeConversation.mode !== 'agent';
 
   return (
-    <>
-      <AppLayout
-        leftSidebar={
-          <LeftSidebar
-            conversations={conversations}
-            activeConversationId={activeConversationId}
-            onSelectConversation={handleSelectConversation}
-            onOpenNewConversation={() => setIsNewConversationOpen(true)}
-            agents={agents}
-            selectedAgentId={selectedAgentId}
-            onSaveAgent={handleSaveAgent}
-            onDeleteAgent={handleDeleteAgent}
-            onDeleteConversation={deleteConversation}
-            onBackFromAgentDetail={handleBackFromAgentDetail}
-            viewMode={leftSidebarViewMode}
-            setViewMode={setLeftSidebarViewMode}
-          />
-        }
-        chatPanel={
-          configuringAgentId ? (() => {
-            let configAgent = configuringAgentId === 'new' 
-              ? getNewAgentTemplate() 
-              : agents.find(a => a.id === configuringAgentId);
-            if (!configAgent) return null;
-            if (activeConversationId && isSessionLevel && conversationAgentConfigs[activeConversationId]?.[configAgent.id]) {
-              configAgent = {
-                ...configAgent,
-                ...conversationAgentConfigs[activeConversationId][configAgent.id]
-              };
-            }
-            return (
-              <AgentDetailPanel
-                agent={configAgent}
-                isNew={configuringAgentId === 'new'}
-                isSessionLevel={isSessionLevel}
-                onSave={async (updated) => {
-                  if (isSessionLevel && activeConversationId) {
-                    saveConversationAgentConfig(activeConversationId, updated.id, updated);
-                  } else {
+    <div className="h-screen w-screen flex flex-col overflow-hidden bg-white dark:bg-[#06070d]">
+      {isDesktop && <TitleBar />}
+      <div className="flex-1 min-h-0 flex relative">
+        <AppLayout
+          leftSidebar={
+            <LeftSidebar
+              conversations={conversations}
+              activeConversationId={activeConversationId}
+              onSelectConversation={handleSelectConversation}
+              onOpenNewConversation={() => setIsNewConversationOpen(true)}
+              agents={agents}
+              selectedAgentId={selectedAgentId}
+              onSaveAgent={handleSaveAgent}
+              onDeleteAgent={handleDeleteAgent}
+              onDeleteConversation={deleteConversation}
+              onBackFromAgentDetail={handleBackFromAgentDetail}
+              viewMode={leftSidebarViewMode}
+              setViewMode={setLeftSidebarViewMode}
+            />
+          }
+          chatPanel={
+            configuringAgentId ? (() => {
+              let configAgent = configuringAgentId === 'new' 
+                ? getNewAgentTemplate() 
+                : agents.find(a => a.id === configuringAgentId);
+              if (!configAgent) return null;
+              if (activeConversationId && isSessionLevel && conversationAgentConfigs[activeConversationId]?.[configAgent.id]) {
+                configAgent = {
+                  ...configAgent,
+                  ...conversationAgentConfigs[activeConversationId][configAgent.id]
+                };
+              }
+              return (
+                <AgentDetailPanel
+                  agent={configAgent}
+                  isNew={configuringAgentId === 'new'}
+                  isSessionLevel={isSessionLevel}
+                  onSave={async (updated) => {
+                    if (isSessionLevel && activeConversationId) {
+                      saveConversationAgentConfig(activeConversationId, updated.id, updated);
+                    } else {
+                      await handleSaveAgent(updated);
+                    }
+                    setConfiguringAgentId(null);
+                  }}
+                  onSyncToGlobal={async (updated: Agent) => {
                     await handleSaveAgent(updated);
-                  }
-                  setConfiguringAgentId(null);
-                }}
-                onSyncToGlobal={async (updated: Agent) => {
-                  await handleSaveAgent(updated);
-                }}
-                onDelete={async (id) => {
-                  await handleDeleteAgent(id);
-                  setConfiguringAgentId(null);
-                }}
-                onBack={() => setConfiguringAgentId(null)}
+                  }}
+                  onDelete={async (id) => {
+                    await handleDeleteAgent(id);
+                    setConfiguringAgentId(null);
+                  }}
+                  onBack={() => setConfiguringAgentId(null)}
+                />
+              );
+            })() : (
+              <ChatPanel
+                conversation={activeConversation}
+                agents={activeAgents}
+                messages={messages}
+                artifacts={artifacts}
+                onSendMessage={handleSendMessage}
               />
-            );
-          })() : (
-            <ChatPanel
+            )
+          }
+          rightPanel={
+            <RightPanel
               conversation={activeConversation}
               agents={activeAgents}
-              messages={messages}
               artifacts={artifacts}
-              onSendMessage={handleSendMessage}
+              onSelectArtifact={setSelectedArtifactId}
+              onOpenFullScreenPreview={handleOpenFullScreenPreview}
             />
-          )
-        }
-        rightPanel={
-          <RightPanel
-            conversation={activeConversation}
-            agents={activeAgents}
-            artifacts={artifacts}
-            onSelectArtifact={setSelectedArtifactId}
-            onOpenFullScreenPreview={handleOpenFullScreenPreview}
-          />
-        }
-      />
+          }
+        />
+      </div>
       <NewConversationModal
         open={isNewConversationOpen}
         onClose={() => setIsNewConversationOpen(false)}
@@ -261,7 +275,7 @@ function App() {
           />
         );
       })()}
-    </>
+    </div>
   );
 }
 

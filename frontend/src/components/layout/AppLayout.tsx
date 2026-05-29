@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Menu, Info } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
+import { LeftNavBar } from './LeftNavBar';
 
 interface AppLayoutProps {
   leftSidebar: React.ReactNode;
@@ -115,7 +116,11 @@ const AppLayout: React.FC<AppLayoutProps> = ({
   }, [handleMouseMove, handleMouseUp]);
 
   return (
-    <div className="h-screen w-screen flex bg-white dark:bg-[#06070d] overflow-hidden text-lark-text-primary dark:text-slate-100 transition-colors relative">
+    <div className="h-full w-full flex bg-white dark:bg-[#06070d] overflow-hidden text-lark-text-primary dark:text-slate-100 transition-colors relative">
+      {/* Slim leftmost navigation bar */}
+      <div className="hidden md:block h-full">
+        <LeftNavBar />
+      </div>
       {/* Mobile left sidebar overlay backdrop */}
       {isLeftOpen && (
         <div 

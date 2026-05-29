@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Conversation, Message, Agent, Artifact, MessageAttachment, AgentMentionItem } from '@/types';
 import MessageBubble from './MessageBubble';
 import ContextUsageRing from '@/components/common/ContextUsageRing';
-import { Send, Paperclip, Smile, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight, Settings, Pencil, Check, Terminal, Cpu } from 'lucide-react';
+import { Send, Paperclip, Smile, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight, Settings, Pencil, Check, Terminal, Cpu, FileText, Folder, Save } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface ChatPanelProps {
@@ -104,7 +104,14 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const setConfiguringAgentId = useAgentHubStore(state => state.setConfiguringAgentId);
   const allAgents = useAgentHubStore(state => state.agents);
   const createSandboxRun = useAgentHubStore(state => state.createSandboxRun);
+  
+  // Desktop workspace context files
+  const workspaceContextFiles = useAgentHubStore(state => state.workspaceContextFiles);
+  const removeFileFromContext = useAgentHubStore(state => state.removeFileFromContext);
+  const currentWorkspace = useAgentHubStore(state => state.currentWorkspace);
+  const isDesktop = useAgentHubStore(state => state.isDesktop);
   const [isSandboxMode, setIsSandboxMode] = useState(false);
+  const [isApplyToLocal, setIsApplyToLocal] = useState(false);
   const [showMemoryPanel, setShowMemoryPanel] = useState(false);
   const [memoryTab, setMemoryTab] = useState<'pins' | 'memories'>('pins');
 
@@ -133,12 +140,23 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
 
   const renderHighlightedInput = () => {
     if (!inputValue) return null;
-    const regex = /(@[^\s@\uff1a\uff0c\u3002:,.!?]+)/g;
+    
+    // Sort agent names by length descending to match longer names first (e.g. "Claude Code" before "Claude")
+    const agentNames = allAgents.map(a => a.name).sort((a, b) => b.length - a.length);
+    
+    if (agentNames.length === 0) {
+      return inputValue;
+    }
+    
+    const escapedNames = agentNames.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+    // Match @ followed by one of the agent names
+    const regex = new RegExp(`(@(?:${escapedNames}))`, 'gi');
+    
     const parts = inputValue.split(regex);
     return parts.map((part, index) => {
       if (part.startsWith('@')) {
-        const nameWithoutAt = part.substring(1);
-        const agentExists = allAgents.some(a => a.name.toLowerCase() === nameWithoutAt.toLowerCase());
+        const nameWithoutAt = part.substring(1).toLowerCase();
+        const agentExists = allAgents.some(a => a.name.toLowerCase() === nameWithoutAt);
         if (agentExists) {
           return (
             <span key={index} className="text-blue-600 dark:text-blue-400 font-semibold">
@@ -225,6 +243,29 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     setTimeout(() => {
       textarea.focus();
       const newCursor = lastAtIdx + agentName.length + 2;
+      textarea.setSelectionRange(newCursor, newCursor);
+    }, 0);
+  };
+
+  const handleAtButtonClick = () => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.focus();
+    
+    const cursor = textarea.selectionStart;
+    const text = inputValue;
+    
+    const before = text.substring(0, cursor);
+    const after = text.substring(cursor);
+    const newValue = `${before}@${after}`;
+    
+    setInputValue(newValue);
+    setMentionSearch('');
+    setShowMentionPopup(true);
+    
+    setTimeout(() => {
+      textarea.focus();
+      const newCursor = cursor + 1;
       textarea.setSelectionRange(newCursor, newCursor);
     }, 0);
   };
@@ -388,8 +429,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const hasHeader = !!replyContext || !!quoteArtifactRef || pendingAttachments.length > 0;
-  const canSend = inputValue.trim() || pendingAttachments.length > 0;
+  const hasHeader = !!replyContext || !!quoteArtifactRef || pendingAttachments.length > 0 || (workspaceContextFiles && workspaceContextFiles.length > 0);
+  const canSend = inputValue.trim() || pendingAttachments.length > 0 || (workspaceContextFiles && workspaceContextFiles.length > 0);
 
   const renderMessageList = () => {
     let lastDateLabel = '';
@@ -944,6 +985,24 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
               </div>
             )}
 
+            {workspaceContextFiles && workspaceContextFiles.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 px-3.5 py-1.5 bg-slate-50/55 dark:bg-slate-950/20 border-b border-lark-border/40 dark:border-slate-800/40 flex-shrink-0 select-none max-h-16 overflow-y-auto">
+                {workspaceContextFiles.map((file) => (
+                  <div key={file} className="flex items-center gap-1.5 px-2 py-0.5 bg-white dark:bg-slate-900 border border-emerald-500/30 dark:border-emerald-500/20 rounded-lg text-xs shadow-sm max-w-[200px]">
+                    <FileText className="w-3 h-3 text-emerald-500" />
+                    <span className="truncate flex-1 text-slate-600 dark:text-slate-300 font-medium text-[10px]">{file.split('/').pop()}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeFileFromContext(file)}
+                      className="text-slate-400 hover:text-red-500 p-0.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 animate-pulse"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <input 
               type="file" 
               ref={fileInputRef} 
@@ -972,6 +1031,17 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                   <Smile className="w-3.5 h-3.5" />
                 </button>
               </div>
+
+              {conversation?.mode === 'group' && (
+                <button
+                  type="button"
+                  onClick={handleAtButtonClick}
+                  className="p-1 rounded-lg text-lark-text-secondary dark:text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 hover:bg-lark-bg-hover dark:hover:bg-slate-800 transition-colors text-[13px] font-semibold w-5.5 h-5.5 flex items-center justify-center font-sans select-none"
+                  title="提及 Agent (@)"
+                >
+                  @
+                </button>
+              )}
               
               <div className="w-[1px] h-3 bg-lark-border/60 dark:bg-slate-800 mx-1" />
               <span className="text-[10px] text-lark-text-tertiary dark:text-slate-500">Shift + Enter 换行</span>
@@ -990,6 +1060,32 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                 <Terminal className="w-3.5 h-3.5 mr-0.5" />
                 沙箱运行
               </button>
+
+              {isDesktop && currentWorkspace && (
+                <>
+                  <div className="w-[1px] h-3 bg-lark-border/60 dark:bg-slate-800 mx-1" />
+                  <button
+                    type="button"
+                    onClick={() => setIsApplyToLocal(!isApplyToLocal)}
+                    className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-bold transition-all border ${
+                      isApplyToLocal
+                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/35 ring-1 ring-emerald-500/20'
+                        : 'text-slate-400 dark:text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/5 border-transparent'
+                    }`}
+                    title="自动将生成的代码产物写入到本地工作区文件"
+                  >
+                    <Save className="w-3.5 h-3.5 mr-0.5" />
+                    应用到本地
+                  </button>
+                </>
+              )}
+
+              {currentWorkspace && (
+                <div className="flex items-center gap-1 text-[10px] text-slate-400 dark:text-slate-550 font-mono ml-auto select-none" title={currentWorkspace.path}>
+                  <Folder className="w-3 h-3 text-slate-350 dark:text-slate-700" />
+                  <span>{currentWorkspace.name}</span>
+                </div>
+              )}
             </div>
 
             <div className="flex-1 p-2 bg-transparent flex flex-row items-end gap-2 min-h-0 overflow-hidden">

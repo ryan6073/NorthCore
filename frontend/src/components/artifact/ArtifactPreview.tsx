@@ -1,10 +1,12 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Artifact, ArtifactVersion } from '@/types';
-import { Copy, FileCode, FileText, Globe, Maximize2, GitCompare, RefreshCw, Edit3, Save, X } from 'lucide-react';
+import { Copy, FileCode, FileText, Globe, Maximize2, GitCompare, RefreshCw, Edit3, Save, X, FolderOpen, ArrowDownToLine, History, Folder } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 import CodeDiffViewer from './CodeDiffViewer';
 import CodeEditorContainer from './CodeEditorContainer';
+import { platform } from '@/utils/platform';
+import ConflictResolveModal from '../modal/ConflictResolveModal';
 
 interface ArtifactPreviewProps {
   artifact: Artifact | null;
@@ -16,6 +18,66 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   const [copied, setCopied] = useState(false);
   const [splitView, setSplitView] = useState(true);
   const [localArtifactId, setLocalArtifactId] = useState<string | null>(null);
+
+  // Desktop integration states
+  const [showHistory, setShowHistory] = useState(false);
+  const [conflictModalOpen, setConflictModalOpen] = useState(false);
+  const [conflictFileName, setConflictFileName] = useState('');
+  const [conflictFilePath, setConflictFilePath] = useState('');
+
+  const currentWorkspace = useAgentHubStore(state => state.currentWorkspace);
+  const applyArtifactToLocal = useAgentHubStore(state => state.applyArtifactToLocal);
+  const isDesktop = useAgentHubStore(state => state.isDesktop);
+
+  const handleRevealInFolder = async () => {
+    if (!currentArtifact) return;
+    const defaultPath = currentArtifact.title;
+    let absolutePath = defaultPath;
+    if (currentWorkspace && !defaultPath.startsWith('/') && !defaultPath.includes(':')) {
+      absolutePath = `${currentWorkspace.path}/${defaultPath}`;
+    }
+    const res = await platform.file.revealInFolder(absolutePath);
+    if (!res.success) {
+      alert(`无法定位文件: ${(res as any).error || '未知错误'}`);
+    }
+  };
+
+  const handleSaveAsDirect = async () => {
+    if (!currentArtifact || !currentVersion) return;
+    const newFileName = prompt("另存为到本地工作区路径 (相对路径或绝对路径):", currentArtifact.title);
+    if (newFileName && newFileName.trim()) {
+      await handleApplyToLocal(true, newFileName.trim());
+    }
+  };
+
+  const handleApplyToLocal = async (autoOverwrite = false, customPath?: string) => {
+    if (!currentArtifact || !currentVersion) return;
+    
+    const defaultPath = currentArtifact.title;
+    const targetPath = customPath || defaultPath;
+    
+    const res = await applyArtifactToLocal(
+      currentArtifact.id,
+      currentVersion.id,
+      targetPath,
+      autoOverwrite
+    );
+    
+    if (res.conflict) {
+      let absolutePath = targetPath;
+      if (currentWorkspace && !targetPath.startsWith('/') && !targetPath.includes(':')) {
+        absolutePath = `${currentWorkspace.path}/${targetPath}`;
+      }
+      setConflictFileName(currentArtifact.title);
+      setConflictFilePath(absolutePath);
+      setConflictModalOpen(true);
+    } else if (res.success) {
+      // Success is indicated by desktop notifications/system chat messages in store
+    } else {
+      alert(`应用失败: ${res.error || '未知错误'}`);
+    }
+  };
+
 
   // Phase 4 editing states
   const [isEditing, setIsEditing] = useState(false);
@@ -518,6 +580,21 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
                 </button>
               </div>
             )}
+            {/* Version History Toggle Button */}
+            {!isEditing && (
+              <button
+                onClick={() => setShowHistory(!showHistory)}
+                className={`p-1.5 rounded-lg border transition-all shadow-sm flex items-center gap-1 active:scale-95 ${
+                  showHistory 
+                    ? 'bg-lark-primary-light/20 text-lark-primary dark:bg-violet-950/20 dark:text-violet-400 border-lark-primary/30 dark:border-violet-500/30'
+                    : 'border-lark-border dark:border-slate-800 text-lark-text-secondary dark:text-slate-350 hover:bg-lark-bg-hover dark:hover:bg-slate-800 bg-white dark:bg-slate-900'
+                }`}
+                title="查看版本历史时间线"
+              >
+                <History className="w-3.5 h-3.5" />
+                <span className="text-[10px] font-semibold pr-0.5">历史</span>
+              </button>
+            )}
             {isEditable && (
               <button
                 onClick={() => {
@@ -554,13 +631,98 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
           </div>
         )}
       </div>
+
+      {/* Workspace Action Bar */}
+      {isDesktop && currentWorkspace && currentArtifact && (
+        <div className="flex items-center justify-between px-4 py-2 border-b border-lark-border/60 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/20 text-xs flex-shrink-0 flex-wrap gap-2 select-none">
+          <div className="flex items-center gap-1.5 min-w-0 text-slate-500 dark:text-slate-400">
+            <Folder className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+            <span className="font-semibold select-none flex-shrink-0">本地工作区:</span>
+            <span className="font-mono truncate max-w-[150px] md:max-w-[240px]" title={`${currentWorkspace.path}/${currentArtifact.title}`}>
+              {currentArtifact.title}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 flex-shrink-0 ml-auto">
+            <button
+              onClick={handleRevealInFolder}
+              className="px-2 py-1 text-[10px] rounded-lg border border-lark-border dark:border-slate-700 hover:bg-lark-bg-hover dark:hover:bg-slate-800 text-lark-text-secondary dark:text-slate-350 transition-all shadow-sm bg-white dark:bg-slate-900 flex items-center gap-1 active:scale-95"
+              title="在系统文件管理器中显示文件"
+            >
+              <FolderOpen className="w-3 h-3 text-slate-450" />
+              定位
+            </button>
+            <button
+              onClick={handleSaveAsDirect}
+              className="px-2 py-1 text-[10px] rounded-lg border border-lark-border dark:border-slate-700 hover:bg-lark-bg-hover dark:hover:bg-slate-800 text-lark-text-secondary dark:text-slate-350 transition-all shadow-sm bg-white dark:bg-slate-900 flex items-center gap-1 active:scale-95"
+              title="另存为其他文件名"
+            >
+              <Save className="w-3 h-3 text-slate-450" />
+              另存为
+            </button>
+            <button
+              onClick={() => handleApplyToLocal(false)}
+              className="px-2.5 py-1 text-[10px] rounded-lg bg-lark-primary hover:bg-lark-primary-hover text-white font-semibold flex items-center gap-1 transition-all active:scale-95 shadow-sm"
+              title="将生成的代码写入本地工作区文件"
+            >
+              <ArrowDownToLine className="w-3 h-3" />
+              应用到本地
+            </button>
+          </div>
+        </div>
+      )}
+
       <div 
         ref={containerRef}
         onMouseUp={handleMouseUp}
         onKeyUp={handleKeyUp}
-        className="flex-1 overflow-hidden min-h-0 bg-[#fafbfb] dark:bg-slate-950 relative"
+        className="flex-1 overflow-hidden min-h-0 bg-[#fafbfb] dark:bg-slate-950 relative flex"
       >
-        {renderContent()}
+        <div className="flex-1 overflow-hidden min-h-0 relative flex flex-col">
+          {renderContent()}
+        </div>
+
+        {/* Version History timeline sidebar */}
+        {showHistory && (
+          <div className="w-64 border-l border-lark-border dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col h-full flex-shrink-0 animate-slide-in relative z-10">
+            <div className="flex items-center justify-between px-3 py-2.5 border-b border-lark-border dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/20">
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-200">版本历史时间线</span>
+              <button 
+                onClick={() => setShowHistory(false)} 
+                className="text-slate-400 hover:text-slate-655 dark:hover:text-slate-200 p-0.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="flex-grow overflow-y-auto p-4 flex flex-col gap-4">
+              {versions.slice().reverse().map((v) => (
+                <div 
+                  key={v.id} 
+                  className={`p-3 rounded-xl border transition-all cursor-pointer relative ${
+                    v.version === currentVersion?.version
+                      ? 'border-lark-primary/50 dark:border-violet-500/50 bg-lark-primary-light/10 dark:bg-violet-950/10 shadow-sm'
+                      : 'border-slate-100 dark:border-slate-850 hover:border-slate-205 dark:hover:border-slate-750'
+                  }`}
+                  onClick={() => useAgentHubStore.getState().setSelectedArtifactVersion(v.version)}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200">v{v.version}</span>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-150 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-medium">
+                      {v.createdByType === 'user' ? '用户编辑' : v.createdBy}
+                    </span>
+                  </div>
+                  {v.changeSummary && (
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed mb-1.5">
+                      {v.changeSummary}
+                    </p>
+                  )}
+                  <span className="text-[9px] text-slate-400 dark:text-slate-500 block font-mono">
+                    {v.createdAt}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Floating Selection Popover */}
         {!isEditing && selectionBox && (
@@ -582,6 +744,20 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
           </button>
         )}
       </div>
+
+      {/* Conflict Resolution Modal */}
+      <ConflictResolveModal
+        open={conflictModalOpen}
+        onClose={() => setConflictModalOpen(false)}
+        fileName={conflictFileName}
+        filePath={conflictFilePath}
+        onOverwrite={() => handleApplyToLocal(true, conflictFilePath)}
+        onSaveAs={(newPath) => handleApplyToLocal(true, newPath)}
+        onViewDiff={() => {
+          setActiveTab('diff');
+          setConflictModalOpen(false);
+        }}
+      />
     </div>
   );
 };

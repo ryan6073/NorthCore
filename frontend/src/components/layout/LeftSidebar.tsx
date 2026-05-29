@@ -7,6 +7,10 @@ import AgentDetailPanel from '../agent/AgentDetailPanel';
 import ConfirmModal from '../modal/ConfirmModal';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
+import { FileTreePanel } from './FileTreePanel';
+import { WorkspacePanel } from './WorkspacePanel';
+import { NotificationPanel } from './NotificationPanel';
+
 interface LeftSidebarProps {
   conversations: Conversation[];
   activeConversationId: string | null;
@@ -18,8 +22,8 @@ interface LeftSidebarProps {
   onDeleteAgent: (agentId: string) => void;
   onDeleteConversation: (id: string) => void;
   onBackFromAgentDetail: () => void;
-  viewMode: 'conversations' | 'agents' | 'agent-detail';
-  setViewMode: (mode: 'conversations' | 'agents' | 'agent-detail') => void;
+  viewMode: 'conversations' | 'agents' | 'agent-detail' | 'files' | 'workspace' | 'notifications' | 'settings';
+  setViewMode: (mode: 'conversations' | 'agents' | 'agent-detail' | 'files' | 'workspace' | 'notifications' | 'settings') => void;
 }
 
 const getNewAgentTemplate = (): Agent => ({
@@ -330,7 +334,10 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
 
   return (
     <div className="w-full h-full bg-lark-sidebar-bg dark:bg-[#090a12] flex flex-col border-r border-lark-border dark:border-[#161828] overflow-hidden transition-colors">
-      {viewMode !== 'agent-detail' && (
+      {viewMode === 'files' && <FileTreePanel />}
+      {viewMode === 'workspace' && <WorkspacePanel />}
+      {viewMode === 'notifications' && <NotificationPanel />}
+      {viewMode !== 'agent-detail' && viewMode !== 'files' && viewMode !== 'workspace' && viewMode !== 'notifications' && viewMode !== 'settings' && (
         <div className="p-4 pb-2 bg-transparent flex-shrink-0">
           <div className="flex items-center justify-between mb-3">
             <h1 className="text-lg font-bold font-sans text-lark-text-primary dark:text-slate-100 tracking-tight" style={{ fontFamily: 'Outfit, sans-serif' }}>

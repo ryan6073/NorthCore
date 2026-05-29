@@ -13,6 +13,8 @@ import { USE_MOCK } from '@/services';
 import { healthCheck } from '@/services/http/healthService';
 import { registerApi, loginApi, loginAsGuestApi, getMeApi, logoutApi, updateProfileApi } from '@/services/http/authService';
 import sandboxService from '@/services/http/sandboxService';
+import { platform, FileNode, WorkspaceInfo, AgentProcessInfo } from '@/utils/platform';
+
 
 interface AgentHubStore {
   conversations: Conversation[];
@@ -30,9 +32,24 @@ interface AgentHubStore {
   isFullScreenOpen: boolean;
   selectedAgentId: string | null;
   configuringAgentId: string | null;
-  leftSidebarViewMode: 'conversations' | 'agents' | 'agent-detail';
+  leftSidebarViewMode: 'conversations' | 'agents' | 'agent-detail' | 'files' | 'workspace' | 'notifications' | 'settings';
   useMockMode: boolean;
   wsStatus: 'connecting' | 'connected' | 'disconnected';
+
+  // Desktop specific states
+  currentWorkspace: WorkspaceInfo | null;
+  workspaceStatus: 'none' | 'loading' | 'active' | 'unavailable' | 'error';
+  recentWorkspaces: WorkspaceInfo[];
+  workspaceFiles: FileNode[];
+  workspaceSearchKeyword: string;
+  workspaceContextFiles: string[];
+  selectedWorkspaceFilePath: string | null;
+  selectedWorkspaceFileContent: string | null;
+  localAgentProcesses: AgentProcessInfo[];
+  localAgentLogs: Record<string, string[]>;
+  localAgentLoading: Record<string, boolean>;
+  desktopNotifications: { id: string; title: string; body: string; timestamp: string; type: string; isRead: boolean }[];
+  isDesktop: boolean;
 
   // Phase 3 states
   replyContext: { id: string; senderName: string; content: string } | null;
@@ -63,7 +80,7 @@ interface AgentHubStore {
   setIsFullScreenOpen: (open: boolean) => void;
   setSelectedAgentId: (id: string | null) => void;
   setConfiguringAgentId: (id: string | null) => void;
-  setLeftSidebarViewMode: (mode: 'conversations' | 'agents' | 'agent-detail') => void;
+  setLeftSidebarViewMode: (mode: 'conversations' | 'agents' | 'agent-detail' | 'files' | 'workspace' | 'notifications' | 'settings') => void;
   
   // Phase 3 Actions
   setReplyContext: (reply: { id: string; senderName: string; content: string } | null) => void;
@@ -78,6 +95,16 @@ interface AgentHubStore {
     modelName: string;
     temperature: number;
     maxTokens: number;
+    // Desktop Settings
+    allowRead: boolean;
+    allowWrite: boolean;
+    confirmBeforeWrite: boolean;
+    defaultSaveDir: string;
+    autoOverwrite: boolean;
+    enableNotifications: boolean;
+    notifyOnTaskCompleted: boolean;
+    notifyOnArtifactCreated: boolean;
+    notifyOnAgentError: boolean;
   };
   isSettingsOpen: boolean;
   conversationAgentConfigs: Record<string, Record<string, Agent>>;
@@ -89,7 +116,7 @@ interface AgentHubStore {
   logout: () => void;
   loadBusinessData: () => Promise<void>;
   updateProfile: (name: string, email: string, avatar: string) => Promise<void>;
-  updateSettings: (settings: Partial<AgentHubStore['settings']>) => void;
+  updateSettings: (settings: Partial<AgentHubStore['settings']>) => Promise<void>;
   setIsSettingsOpen: (open: boolean) => void;
   
   loadConversationData: (convId: string) => Promise<void>;
@@ -135,6 +162,27 @@ interface AgentHubStore {
   loadSandboxConflicts: (runId: string) => Promise<void>;
   resolveSandboxConflict: (runId: string, conflictId: string, resolution: 'current' | 'incoming' | 'manual', content?: string) => Promise<void>;
   cancelSandboxRun: (runId: string) => Promise<void>;
+  
+  // Desktop Actions
+  setWorkspaceSearchKeyword: (keyword: string) => void;
+  selectWorkspace: () => Promise<void>;
+  scanWorkspace: () => Promise<void>;
+  clearWorkspace: () => Promise<void>;
+  removeRecentWorkspace: (workspacePath: string) => Promise<void>;
+  setSelectedWorkspaceFilePath: (path: string | null) => void;
+  loadWorkspaceFileContent: (path: string) => Promise<string>;
+  addFileToContext: (path: string) => void;
+  removeFileFromContext: (path: string) => void;
+  clearFileContext: () => void;
+  loadLocalAgents: () => Promise<void>;
+  startLocalAgent: (id: string) => Promise<void>;
+  stopLocalAgent: (id: string) => Promise<void>;
+  restartLocalAgent: (id: string) => Promise<void>;
+  loadLocalAgentLogs: (id: string) => Promise<void>;
+  applyArtifactToLocal: (artifactId: string, versionId: string, targetPath: string, autoOverwrite?: boolean) => Promise<{ success: boolean; error?: string; conflict?: boolean }>;
+  addDesktopNotification: (title: string, body: string, type: string) => void;
+  markNotificationAsRead: (id: string) => void;
+  clearNotifications: () => void;
 }
 
 const mergeLocalFlags = (list: Conversation[]): Conversation[] => {
@@ -172,6 +220,21 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   useMockMode: USE_MOCK,
   wsStatus: 'disconnected',
 
+  // Desktop specific states
+  currentWorkspace: null,
+  workspaceStatus: 'none',
+  recentWorkspaces: [],
+  workspaceFiles: [],
+  workspaceSearchKeyword: '',
+  workspaceContextFiles: [],
+  selectedWorkspaceFilePath: null,
+  selectedWorkspaceFileContent: null,
+  localAgentProcesses: [],
+  localAgentLogs: {},
+  localAgentLoading: {},
+  desktopNotifications: [],
+  isDesktop: platform.isDesktop(),
+
   // Phase 3 states
   replyContext: null,
   quoteArtifactRef: null,
@@ -193,6 +256,16 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     modelName: 'gpt-4o',
     temperature: 0.7,
     maxTokens: 4096,
+    // Desktop initial settings
+    allowRead: true,
+    allowWrite: true,
+    confirmBeforeWrite: true,
+    defaultSaveDir: '',
+    autoOverwrite: false,
+    enableNotifications: true,
+    notifyOnTaskCompleted: true,
+    notifyOnArtifactCreated: true,
+    notifyOnAgentError: true,
   },
   isSettingsOpen: false,
   conversationAgentConfigs: {},
@@ -355,6 +428,34 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       if (mockConversations[0]?.id) {
         await get().loadConversationData(mockConversations[0].id);
       }
+    }
+
+    // Load workspace settings and state
+    try {
+      const settingsRes = await platform.settings.get();
+      if (settingsRes.success && settingsRes.settings) {
+        set(state => ({
+          settings: { ...state.settings, ...settingsRes.settings }
+        }));
+      }
+
+      const workspaceRes = await platform.workspace.getCurrent();
+      if (workspaceRes.success && workspaceRes.workspace) {
+        set({
+          currentWorkspace: workspaceRes.workspace,
+          workspaceStatus: (workspaceRes as any).status || 'active'
+        });
+        await get().scanWorkspace();
+      }
+
+      const recentRes = await platform.workspace.getRecent();
+      if (recentRes.success && recentRes.workspaces) {
+        set({ recentWorkspaces: recentRes.workspaces });
+      }
+
+      await get().loadLocalAgents();
+    } catch (e) {
+      console.warn('Failed to load platform capabilities/workspace in initStore:', e);
     }
   },
 
@@ -722,11 +823,24 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
 
   sendMessage: async (content, attachments, targetAgentId) => {
-    const { activeConversationId, useMockMode, conversations, agents, replyContext, quoteArtifactRef } = get();
+    const { activeConversationId, useMockMode, conversations, agents, replyContext, quoteArtifactRef, workspaceContextFiles } = get();
     if (!activeConversationId) return;
 
     const activeConv = conversations.find(c => c.id === activeConversationId);
     if (!activeConv) return;
+
+    // Append workspace files context if any
+    let finalContent = content;
+    if (workspaceContextFiles && workspaceContextFiles.length > 0) {
+      let contextBlock = '\n\n---\n### [Workspace File Context]\n';
+      for (const filePath of workspaceContextFiles) {
+        const fileContent = await get().loadWorkspaceFileContent(filePath);
+        if (fileContent) {
+          contextBlock += `\nFile: \`${filePath}\`\n\`\`\`\n${fileContent}\n\`\`\`\n`;
+        }
+      }
+      finalContent += contextBlock;
+    }
 
     const newUserMessage: Message = {
       id: createId('msg'),
@@ -735,7 +849,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       senderName: '用户',
       role: 'user',
       type: 'text',
-      content,
+      content, // Keep original content for UI
       createdAt: getCurrentFullTime(),
       quotedMessage: replyContext || undefined,
       artifactRef: quoteArtifactRef || undefined,
@@ -754,11 +868,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       quoteArtifactRef: null,
     }));
 
+    get().clearFileContext();
+
     if (useMockMode) {
       const replyResult = generateMockReply({
         conversation: activeConv,
         agents,
-        userContent: content,
+        userContent: finalContent,
       });
 
       const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -862,7 +978,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     } else {
       try {
         const payload: SendMessageRequest = {
-          content,
+          content: finalContent,
           targetAgentId,
           quotedMessageId: replyContext?.id || undefined,
           artifactRef: quoteArtifactRef || undefined,
@@ -1640,10 +1756,16 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     localStorage.setItem('ag_user', JSON.stringify(user));
   },
 
-  updateSettings: (newSettings) => {
+  updateSettings: async (newSettings) => {
     const updated = { ...get().settings, ...newSettings };
     set({ settings: updated });
     localStorage.setItem('ag_settings', JSON.stringify(updated));
+
+    try {
+      await platform.settings.set(updated);
+    } catch (e) {
+      console.warn('Failed to save settings via platform:', e);
+    }
 
     if (newSettings.theme) {
       if (newSettings.theme === 'dark') {
@@ -2492,4 +2614,291 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       });
     }
   },
+
+  setWorkspaceSearchKeyword: (keyword) => set({ workspaceSearchKeyword: keyword }),
+
+  selectWorkspace: async () => {
+    set({ workspaceStatus: 'loading' });
+    try {
+      const res = await platform.dialog.selectDirectory();
+      if (res.success && res.path) {
+        const setRes = await platform.workspace.setCurrent(res.path);
+        if (setRes.success && setRes.workspace) {
+          set({
+            currentWorkspace: setRes.workspace,
+            workspaceStatus: 'active'
+          });
+          await get().scanWorkspace();
+          // Load recent list
+          const recentRes = await platform.workspace.getRecent();
+          if (recentRes.success) {
+            set({ recentWorkspaces: recentRes.workspaces });
+          }
+        } else {
+          set({ workspaceStatus: 'error' });
+        }
+      } else {
+        set({ workspaceStatus: get().currentWorkspace ? 'active' : 'none' });
+      }
+    } catch (e) {
+      console.error('Select workspace error:', e);
+      set({ workspaceStatus: 'error' });
+    }
+  },
+
+  scanWorkspace: async () => {
+    const { currentWorkspace } = get();
+    if (!currentWorkspace) return;
+    try {
+      const res = await platform.workspace.scanFiles(currentWorkspace.path);
+      if (res.success && res.files) {
+        set({ workspaceFiles: res.files });
+      }
+    } catch (e) {
+      console.error('Scan workspace files error:', e);
+    }
+  },
+
+  clearWorkspace: async () => {
+    try {
+      await platform.workspace.clearCurrent();
+      set({
+        currentWorkspace: null,
+        workspaceStatus: 'none',
+        workspaceFiles: [],
+        selectedWorkspaceFilePath: null,
+        selectedWorkspaceFileContent: null,
+        workspaceContextFiles: []
+      });
+    } catch (e) {
+      console.error('Clear workspace error:', e);
+    }
+  },
+
+  removeRecentWorkspace: async (workspacePath) => {
+    try {
+      await platform.workspace.removeRecent(workspacePath);
+      const recentRes = await platform.workspace.getRecent();
+      if (recentRes.success) {
+        set({ recentWorkspaces: recentRes.workspaces });
+      }
+    } catch (e) {
+      console.error('Remove recent workspace error:', e);
+    }
+  },
+
+  setSelectedWorkspaceFilePath: (path) => {
+    set({ selectedWorkspaceFilePath: path });
+    if (path) {
+      get().loadWorkspaceFileContent(path);
+    } else {
+      set({ selectedWorkspaceFileContent: null });
+    }
+  },
+
+  loadWorkspaceFileContent: async (path) => {
+    const { currentWorkspace } = get();
+    if (!currentWorkspace) return '';
+    try {
+      const fullPath = platform.isDesktop() ? path : `${currentWorkspace.path}/${path}`;
+      const res = await platform.file.readText(fullPath);
+      if (res.success && res.content !== undefined) {
+        set({ selectedWorkspaceFileContent: res.content });
+        return res.content;
+      }
+      return '';
+    } catch (e) {
+      console.error('Load workspace file content error:', e);
+      return '';
+    }
+  },
+
+  addFileToContext: (path) => {
+    set(state => {
+      if (state.workspaceContextFiles.includes(path)) return {};
+      return { workspaceContextFiles: [...state.workspaceContextFiles, path] };
+    });
+  },
+
+  removeFileFromContext: (path) => {
+    set(state => ({
+      workspaceContextFiles: state.workspaceContextFiles.filter(p => p !== path)
+    }));
+  },
+
+  clearFileContext: () => {
+    set({ workspaceContextFiles: [] });
+  },
+
+  loadLocalAgents: async () => {
+    try {
+      const res = await platform.agentProcess.list();
+      if (res.success && res.agents) {
+        set({ localAgentProcesses: res.agents });
+        // Initialize loading state
+        const loading: Record<string, boolean> = {};
+        res.agents.forEach((a: any) => {
+          loading[a.id] = false;
+        });
+        set({ localAgentLoading: loading });
+      }
+    } catch (e) {
+      console.error('Load local agents error:', e);
+    }
+  },
+
+  startLocalAgent: async (id) => {
+    set(state => ({ localAgentLoading: { ...state.localAgentLoading, [id]: true } }));
+    try {
+      const res = await platform.agentProcess.start(id);
+      if (res.success) {
+        await get().loadLocalAgents();
+        const agent = get().localAgentProcesses.find(a => a.id === id);
+        if (agent) {
+          await platform.notification.show({
+            title: '本地 Agent 正在启动',
+            body: `${agent.name} 正在后台启动中...`
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Start agent error:', e);
+    } finally {
+      setTimeout(async () => {
+        set(state => ({ localAgentLoading: { ...state.localAgentLoading, [id]: false } }));
+        await get().loadLocalAgents();
+      }, 2000);
+    }
+  },
+
+  stopLocalAgent: async (id) => {
+    set(state => ({ localAgentLoading: { ...state.localAgentLoading, [id]: true } }));
+    try {
+      const res = await platform.agentProcess.stop(id);
+      if (res.success) {
+        await get().loadLocalAgents();
+      }
+    } catch (e) {
+      console.error('Stop agent error:', e);
+    } finally {
+      setTimeout(async () => {
+        set(state => ({ localAgentLoading: { ...state.localAgentLoading, [id]: false } }));
+        await get().loadLocalAgents();
+      }, 1000);
+    }
+  },
+
+  restartLocalAgent: async (id) => {
+    set(state => ({ localAgentLoading: { ...state.localAgentLoading, [id]: true } }));
+    try {
+      const res = await platform.agentProcess.restart(id);
+      if (res.success) {
+        await get().loadLocalAgents();
+      }
+    } catch (e) {
+      console.error('Restart agent error:', e);
+    } finally {
+      setTimeout(async () => {
+        set(state => ({ localAgentLoading: { ...state.localAgentLoading, [id]: false } }));
+        await get().loadLocalAgents();
+      }, 3000);
+    }
+  },
+
+  loadLocalAgentLogs: async (id) => {
+    try {
+      const res = await platform.agentProcess.logs(id);
+      if (res.success && res.logs) {
+        set(state => ({
+          localAgentLogs: { ...state.localAgentLogs, [id]: res.logs || [] }
+        }));
+      }
+    } catch (e) {
+      console.error('Load agent logs error:', e);
+    }
+  },
+
+  applyArtifactToLocal: async (artifactId, versionId, targetPath, autoOverwrite = false) => {
+    const artifact = get().artifacts.find(a => a.id === artifactId);
+    if (!artifact) return { success: false, error: 'Artifact not found' };
+
+    const versions = get().artifactVersions[artifactId] || [];
+    const version = versions.find(v => v.id === versionId || String(v.version) === String(versionId));
+    if (!version) return { success: false, error: 'Artifact version not found' };
+
+    const { currentWorkspace } = get();
+    let absolutePath = targetPath;
+    if (currentWorkspace && !targetPath.startsWith('/') && !targetPath.includes(':')) {
+      absolutePath = `${currentWorkspace.path}/${targetPath}`;
+    }
+
+    try {
+      if (!autoOverwrite) {
+        const fileExists = await platform.file.readText(absolutePath);
+        if (fileExists.success) {
+          return { success: false, conflict: true };
+        }
+      }
+
+      const writeRes = await platform.file.writeText(absolutePath, version.content);
+      if (writeRes.success) {
+        await platform.notification.artifactApplied(targetPath);
+        
+        if (get().activeConversationId) {
+          const sysMsg: Message = {
+            id: createId('msg'),
+            conversationId: get().activeConversationId!,
+            senderId: 'system',
+            senderName: '系统',
+            role: 'system',
+            type: 'status',
+            content: `📁已成功应用 Artifact "${artifact.title}" (v${version.version}) 到本地路径: \`${targetPath}\``,
+            createdAt: getCurrentFullTime()
+          };
+          set(state => ({
+            messages: [...state.messages, sysMsg]
+          }));
+        }
+
+        get().addDesktopNotification(
+          '文件写入成功',
+          `Artifact ${artifact.title} 已写入 ${targetPath}`,
+          'success'
+        );
+
+        return { success: true };
+      } else {
+        return { success: false, error: writeRes.error || '写入文件失败' };
+      }
+    } catch (e: any) {
+      return { success: false, error: e.message || '操作失败' };
+    }
+  },
+
+  addDesktopNotification: (title, body, type) => {
+    const newNotification = {
+      id: createId('notif'),
+      title,
+      body,
+      timestamp: getCurrentFullTime(),
+      type,
+      isRead: false
+    };
+    set(state => ({
+      desktopNotifications: [newNotification, ...state.desktopNotifications]
+    }));
+  },
+
+  markNotificationAsRead: (id) => {
+    set(state => ({
+      desktopNotifications: state.desktopNotifications.map(n =>
+        n.id === id ? { ...n, isRead: true } : n
+      )
+    }));
+  },
+
+  clearNotifications: () => {
+    set({ desktopNotifications: [] });
+  },
+
 }));
