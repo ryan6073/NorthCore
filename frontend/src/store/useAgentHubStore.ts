@@ -579,13 +579,15 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
     let result;
     let errorMessage = '';
+    let apiMessage = '';
 
     if (!useMockMode) {
       try {
         const res = await compressContext(activeConversationId);
         if (res.code === 0) {
           result = res.data;
-          if (result.contextUsage) {
+          apiMessage = res.message;
+          if (result && result.contextUsage) {
             get().setContextUsage(result.contextUsage);
           }
         } else {
@@ -615,6 +617,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           contextLimitChars: 200000,
         },
       };
+      apiMessage = '上下文已压缩';
     }
 
     if (result && result.contextUsage) {
@@ -637,18 +640,32 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       }));
     } else if (result) {
       const systemMsg: Message = {
-        id: result.summary.id || createId('msg'),
+        id: (result.summary && result.summary.id) || createId('msg'),
         conversationId: activeConversationId,
         senderId: 'system',
         senderName: '系统',
         role: 'system',
         type: 'status',
-        content: `✅ 上下文已压缩\n\n📊 原始覆盖消息数：${result.summary.coveredMessageCount}\n📝 摘要：${result.summary.summary}`,
+        content: apiMessage,
         createdAt: getCurrentFullTime(),
       };
       set(state => ({
         messages: state.messages.map(m => m.id === tempId ? systemMsg : m),
       }));
+
+      if (!useMockMode) {
+        try {
+          await sendMessageNonStreaming(activeConversationId, {
+            content: systemMsg.content,
+            role: 'system',
+            senderId: 'system',
+            senderName: '系统',
+            type: 'status',
+          } as any);
+        } catch (e) {
+          console.warn('Failed to save compress system message to backend', e);
+        }
+      }
     } else {
       set(state => ({
         messages: state.messages.filter(m => m.id !== tempId),
