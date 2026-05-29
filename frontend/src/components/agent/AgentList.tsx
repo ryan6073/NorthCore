@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Agent } from '@/types';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
-import { Settings2, Plus, Trash2, Bot, Users, UserPlus, Sparkles } from 'lucide-react';
+import { Settings2, Plus, Trash2, Bot, Users, UserPlus, Sparkles, Monitor } from 'lucide-react';
 import ConfirmModal from '../modal/ConfirmModal';
+import { AgentOfficePlayground } from './AgentOfficePlayground';
 
 interface AgentListProps {
   agents: Agent[];
@@ -20,8 +21,8 @@ const AgentList: React.FC<AgentListProps> = ({ agents }) => {
   const activeConv = conversations.find(c => c.id === activeConversationId);
   const isGroupChat = activeConv?.mode === 'group';
 
-  // Tabs for Group Chat: 'members' or 'add'
-  const [activeTab, setActiveTab] = useState<'members' | 'add'>('members');
+  // Tabs for Chat: 'members', 'add' or 'office'
+  const [activeTab, setActiveTab] = useState<'members' | 'add' | 'office'>('members');
 
   // Confirmation state
   const [showConfirm, setShowConfirm] = useState(false);
@@ -51,25 +52,21 @@ const AgentList: React.FC<AgentListProps> = ({ agents }) => {
     <div className="h-full w-full flex flex-col overflow-hidden bg-slate-50/30 dark:bg-slate-950/20 font-sans">
       {/* Title / Tab Header */}
       <div className="p-3 pb-2 flex-shrink-0 border-b border-slate-100 dark:border-slate-800/80">
-        {!isGroupChat ? (
-          <div className="flex items-center gap-2 px-1 py-0.5">
-            <Bot className="w-4 h-4 text-violet-500" />
-            <h3 className="text-xs font-bold text-slate-700 dark:text-slate-200">协作成员</h3>
-          </div>
-        ) : (
-          <div className="flex items-center justify-between">
-            <div className="flex bg-slate-100 dark:bg-slate-800 p-0.5 rounded-lg w-full">
-              <button
-                onClick={() => setActiveTab('members')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-1 text-[11px] font-bold rounded-md transition-all ${
-                  activeTab === 'members'
-                    ? 'bg-white dark:bg-slate-900 text-violet-600 dark:text-violet-400 shadow-sm'
-                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-350'
-                }`}
-              >
-                <Users className="w-3.5 h-3.5" />
-                <span>群聊成员 ({agents.length})</span>
-              </button>
+        <div className="flex items-center justify-between">
+          <div className="flex bg-slate-100 dark:bg-slate-800 p-0.5 rounded-lg w-full">
+            <button
+              onClick={() => setActiveTab('members')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1 text-[11px] font-bold rounded-md transition-all ${
+                activeTab === 'members'
+                  ? 'bg-white dark:bg-slate-900 text-violet-600 dark:text-violet-400 shadow-sm'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-350'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>{isGroupChat ? `群聊成员 (${agents.length})` : '协作成员'}</span>
+            </button>
+            
+            {isGroupChat && (
               <button
                 onClick={() => setActiveTab('add')}
                 className={`flex-1 flex items-center justify-center gap-1.5 py-1 text-[11px] font-bold rounded-md transition-all ${
@@ -79,16 +76,30 @@ const AgentList: React.FC<AgentListProps> = ({ agents }) => {
                 }`}
               >
                 <UserPlus className="w-3.5 h-3.5" />
-                <span>添加成员 ({availableAgents.length})</span>
+                <span>添加成员</span>
               </button>
-            </div>
+            )}
+
+            <button
+              onClick={() => setActiveTab('office')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1 text-[11px] font-bold rounded-md transition-all ${
+                activeTab === 'office'
+                  ? 'bg-white dark:bg-slate-900 text-violet-600 dark:text-violet-400 shadow-sm'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-350'
+              }`}
+            >
+              <Monitor className="w-3.5 h-3.5" />
+              <span>办公室</span>
+            </button>
           </div>
-        )}
+        </div>
       </div>
 
       {/* List Area */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
-        {!isGroupChat || activeTab === 'members' ? (
+        {activeTab === 'office' ? (
+          <AgentOfficePlayground agents={allAgents} agentIds={agents.map(a => a.id)} />
+        ) : !isGroupChat || activeTab === 'members' ? (
           agents.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <Bot className="w-8 h-8 text-slate-300 dark:text-slate-700 stroke-1.5 mb-2" />

@@ -46,7 +46,7 @@ const AgentDirectory: React.FC<AgentDirectoryProps> = ({
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             placeholder="搜索Agent联系人..."
-            className="w-full pl-10 pr-4 py-2 bg-slate-100 dark:bg-slate-950 rounded-lg text-sm text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-600 border border-transparent dark:border-slate-800 outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-violet-650/20 focus:border-blue-500 dark:focus:border-violet-600 transition-all"
+            className="w-full pl-10 pr-4 py-2 bg-slate-100 dark:bg-slate-950 rounded-lg text-sm text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-655 border border-transparent dark:border-slate-800 outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-violet-650/20 focus:border-blue-500 dark:focus:border-violet-600 transition-all"
           />
         </div>
       </div>
@@ -66,7 +66,6 @@ const AgentDirectory: React.FC<AgentDirectoryProps> = ({
         )}
       </div>
     </div>
-
   );
 };
 
