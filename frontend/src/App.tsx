@@ -111,7 +111,8 @@ function App() {
   const handleSelectConversation = useCallback((conversationId: string) => {
     setActiveConversationId(conversationId);
     setLeftSidebarViewMode('conversations');
-  }, [setActiveConversationId, setLeftSidebarViewMode]);
+    setConfiguringAgentId(null);
+  }, [setActiveConversationId, setLeftSidebarViewMode, setConfiguringAgentId]);
 
   const handleSendMessage = useCallback(async (content: string, attachments?: any[], targetAgentId?: string) => {
     await sendMessage(content, attachments, targetAgentId);
