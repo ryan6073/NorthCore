@@ -112,6 +112,7 @@ DEFAULT_ADMIN_NAME = "默认管理员"
 GUEST_EMAIL = "guest@northcore.local"
 PASSWORD_HASH_ITERATIONS = 120_000
 SESSION_EXPIRE_DAYS = 14
+ORCHESTRATOR_AGENT_ID = "agent-orchestrator"
 
 
 DEFAULT_AGENTS = [
@@ -223,6 +224,30 @@ def init_db() -> None:
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS agent_user_overrides (
+                id TEXT PRIMARY KEY,
+                owner_user_id TEXT NOT NULL,
+                base_agent_id TEXT NOT NULL,
+                name TEXT,
+                avatar TEXT,
+                description TEXT,
+                tags_json TEXT,
+                status TEXT,
+                category TEXT,
+                provider TEXT,
+                enabled INTEGER,
+                last_used_at TEXT,
+                system_prompt TEXT NOT NULL DEFAULT '',
+                model_config_json TEXT,
+                tools_json TEXT,
+                permissions_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(owner_user_id, base_agent_id),
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (base_agent_id) REFERENCES agents(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS agents (
                 id TEXT PRIMARY KEY,
                 owner_user_id TEXT,
@@ -248,9 +273,13 @@ def init_db() -> None:
                 id TEXT PRIMARY KEY,
                 owner_user_id TEXT NOT NULL,
                 title TEXT NOT NULL,
-                mode TEXT NOT NULL CHECK (mode IN ('single', 'group')),
+                mode TEXT NOT NULL CHECK (mode IN ('agent', 'single', 'group')),
                 conversation_type TEXT NOT NULL DEFAULT 'manual',
                 contact_agent_id TEXT,
+                visible INTEGER NOT NULL DEFAULT 1,
+                is_pinned INTEGER NOT NULL DEFAULT 0,
+                is_archived INTEGER NOT NULL DEFAULT 0,
+                system_prompt TEXT NOT NULL DEFAULT '',
                 last_message TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -392,26 +421,45 @@ def init_db() -> None:
         ensure_column(conn, "artifacts", "latest_version", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "messages", "metadata_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(conn, "agents", "owner_user_id", "TEXT")
+        ensure_column(conn, "agent_user_overrides", "name", "TEXT")
+        ensure_column(conn, "agent_user_overrides", "avatar", "TEXT")
+        ensure_column(conn, "agent_user_overrides", "description", "TEXT")
+        ensure_column(conn, "agent_user_overrides", "tags_json", "TEXT")
+        ensure_column(conn, "agent_user_overrides", "status", "TEXT")
+        ensure_column(conn, "agent_user_overrides", "category", "TEXT")
+        ensure_column(conn, "agent_user_overrides", "provider", "TEXT")
+        ensure_column(conn, "agent_user_overrides", "enabled", "INTEGER")
+        ensure_column(conn, "agent_user_overrides", "last_used_at", "TEXT")
+        ensure_column(conn, "agent_user_overrides", "model_config_json", "TEXT")
+        ensure_column(conn, "agent_user_overrides", "tools_json", "TEXT")
+        ensure_column(conn, "agent_user_overrides", "permissions_json", "TEXT")
         ensure_column(conn, "conversations", "owner_user_id", "TEXT")
         ensure_column(conn, "conversations", "conversation_type", "TEXT NOT NULL DEFAULT 'manual'")
         ensure_column(conn, "conversations", "contact_agent_id", "TEXT")
+        ensure_column(conn, "conversations", "visible", "INTEGER NOT NULL DEFAULT 1")
+        ensure_column(conn, "conversations", "is_pinned", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "conversations", "is_archived", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "conversations", "system_prompt", "TEXT NOT NULL DEFAULT ''")
+        seed_default_user(conn)
+        migrate_legacy_ownership(conn)
+        migrate_agent_conversation_mode(conn)
         conn.executescript(
             """
+            DROP INDEX IF EXISTS idx_conversations_contact_unique;
             CREATE INDEX IF NOT EXISTS idx_conversations_owner_updated_at
                 ON conversations(owner_user_id, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_conversations_contact_agent
                 ON conversations(owner_user_id, contact_agent_id);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_contact_unique
                 ON conversations(owner_user_id, contact_agent_id)
-                WHERE conversation_type = 'contact' AND contact_agent_id IS NOT NULL;
+                WHERE mode = 'agent' AND contact_agent_id IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_agents_owner_enabled
                 ON agents(owner_user_id, enabled);
             """
         )
-        seed_default_user(conn)
-        migrate_legacy_ownership(conn)
         migrate_artifact_versions(conn)
         seed_agents(conn)
+        ensure_group_orchestrator_memberships(conn)
         ensure_all_user_contact_conversations(conn)
 
 
@@ -419,6 +467,73 @@ def ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, d
     rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
     if column_name not in {row["name"] for row in rows}:
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl}")
+
+
+def migrate_agent_conversation_mode(conn: sqlite3.Connection) -> None:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'conversations'"
+    ).fetchone()
+    create_sql = row["sql"] if row else ""
+    needs_rebuild = "mode IN ('agent', 'single', 'group')" not in create_sql
+    if needs_rebuild:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.executescript(
+            """
+            CREATE TABLE conversations_new (
+                id TEXT PRIMARY KEY,
+                owner_user_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                mode TEXT NOT NULL CHECK (mode IN ('agent', 'single', 'group')),
+                conversation_type TEXT NOT NULL DEFAULT 'manual',
+                contact_agent_id TEXT,
+                visible INTEGER NOT NULL DEFAULT 1,
+                is_pinned INTEGER NOT NULL DEFAULT 0,
+                is_archived INTEGER NOT NULL DEFAULT 0,
+                system_prompt TEXT NOT NULL DEFAULT '',
+                last_message TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (contact_agent_id) REFERENCES agents(id) ON DELETE SET NULL
+            );
+
+            INSERT INTO conversations_new (
+                id, owner_user_id, title, mode, conversation_type,
+                contact_agent_id, visible, is_pinned, is_archived,
+                system_prompt, last_message, created_at, updated_at
+            )
+            SELECT
+                id,
+                owner_user_id,
+                title,
+                CASE
+                    WHEN conversation_type = 'contact' OR contact_agent_id IS NOT NULL THEN 'agent'
+                    ELSE mode
+                END,
+                conversation_type,
+                contact_agent_id,
+                COALESCE(visible, 1),
+                COALESCE(is_pinned, 0),
+                COALESCE(is_archived, 0),
+                COALESCE(system_prompt, ''),
+                last_message,
+                created_at,
+                updated_at
+            FROM conversations;
+
+            DROP TABLE conversations;
+            ALTER TABLE conversations_new RENAME TO conversations;
+            """
+        )
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    conn.execute(
+        """
+        UPDATE conversations
+        SET mode = 'agent', conversation_type = 'contact'
+        WHERE conversation_type = 'contact' OR contact_agent_id IS NOT NULL
+        """
+    )
 
 
 def migrate_artifact_versions(conn: sqlite3.Connection) -> None:
@@ -518,10 +633,11 @@ def get_enabled_agents_for_user_conn(conn: sqlite3.Connection, owner_user_id: st
         FROM agents
         WHERE enabled = 1
           AND status != 'disabled'
+          AND id != ?
           AND (owner_user_id IS NULL OR owner_user_id = ?)
         ORDER BY name ASC
         """,
-        (owner_user_id,),
+        (ORCHESTRATOR_AGENT_ID, owner_user_id),
     ).fetchall()
 
 
@@ -530,18 +646,31 @@ def ensure_contact_conversation_conn(
     owner_user_id: str,
     agent_id: str,
     title: Optional[str] = None,
+    restore_visible: bool = True,
 ) -> Dict[str, Any]:
+    if agent_id == ORCHESTRATOR_AGENT_ID:
+        raise ValueError("Orchestrator 是群聊调度器，不提供长期联系人会话")
+
     existing = conn.execute(
         """
         SELECT *
         FROM conversations
         WHERE owner_user_id = ?
-          AND conversation_type = 'contact'
+          AND mode = 'agent'
           AND contact_agent_id = ?
         """,
         (owner_user_id, agent_id),
     ).fetchone()
     if existing:
+        if restore_visible and not existing["visible"]:
+            conn.execute(
+                "UPDATE conversations SET visible = 1, updated_at = ? WHERE id = ?",
+                (now_text(), existing["id"]),
+            )
+            existing = conn.execute(
+                "SELECT * FROM conversations WHERE id = ?",
+                (existing["id"],),
+            ).fetchone()
         return conversation_from_row(existing, get_conversation_agent_ids(conn, existing["id"]))
 
     agent = conn.execute(
@@ -562,11 +691,12 @@ def ensure_contact_conversation_conn(
     timestamp = now_text()
     conn.execute(
         """
-        INSERT INTO conversations (
-            id, owner_user_id, title, mode, conversation_type,
-            contact_agent_id, last_message, created_at, updated_at
-        )
-        VALUES (?, ?, ?, 'single', 'contact', ?, '', ?, ?)
+            INSERT INTO conversations (
+                id, owner_user_id, title, mode, conversation_type,
+                contact_agent_id, visible, is_pinned, is_archived,
+                system_prompt, last_message, created_at, updated_at
+            )
+            VALUES (?, ?, ?, 'agent', 'contact', ?, 1, 0, 0, '', '', ?, ?)
         """,
         (conversation_id, owner_user_id, title or agent["name"], agent_id, timestamp, timestamp),
     )
@@ -580,13 +710,45 @@ def ensure_contact_conversation_conn(
 
 def ensure_user_contact_conversations_conn(conn: sqlite3.Connection, owner_user_id: str) -> None:
     for agent in get_enabled_agents_for_user_conn(conn, owner_user_id):
-        ensure_contact_conversation_conn(conn, owner_user_id, agent["id"], agent["name"])
+        ensure_contact_conversation_conn(
+            conn,
+            owner_user_id,
+            agent["id"],
+            agent["name"],
+            restore_visible=False,
+        )
 
 
 def ensure_all_user_contact_conversations(conn: sqlite3.Connection) -> None:
     users = conn.execute("SELECT id FROM users").fetchall()
     for user in users:
         ensure_user_contact_conversations_conn(conn, user["id"])
+
+
+def ensure_group_orchestrator_memberships(conn: sqlite3.Connection) -> None:
+    if not conn.execute(
+        """
+        SELECT id FROM agents
+        WHERE id = ? AND enabled = 1 AND status != 'disabled'
+        """,
+        (ORCHESTRATOR_AGENT_ID,),
+    ).fetchone():
+        return
+    rows = conn.execute("SELECT id FROM conversations WHERE mode = 'group'").fetchall()
+    for row in rows:
+        agent_ids = get_conversation_agent_ids(conn, row["id"])
+        ordered_agent_ids = [ORCHESTRATOR_AGENT_ID] + [
+            agent_id for agent_id in agent_ids if agent_id != ORCHESTRATOR_AGENT_ID
+        ]
+        conn.execute("DELETE FROM conversation_agents WHERE conversation_id = ?", (row["id"],))
+        for agent_id in ordered_agent_ids:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO conversation_agents (conversation_id, agent_id)
+                VALUES (?, ?)
+                """,
+                (row["id"], agent_id),
+            )
 
 
 def seed_agents(conn: sqlite3.Connection) -> None:
@@ -648,6 +810,30 @@ def user_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }
+
+
+def update_user_profile(
+    user_id: str,
+    name: Optional[str] = None,
+    email: Optional[str] = None,
+    avatar: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    current = get_user(user_id)
+    if not current:
+        return None
+    updated_name = current["name"] if name is None else name.strip()
+    updated_email = current["email"] if email is None else email.strip().lower()
+    updated_avatar = current["avatar"] if avatar is None else avatar.strip()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET name = ?, email = ?, avatar = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (updated_name, updated_email, updated_avatar, now_text(), user_id),
+        )
+    return get_user(user_id)
 
 
 def get_user(user_id: str) -> Optional[Dict[str, Any]]:
@@ -794,7 +980,166 @@ def agent_from_row(row: sqlite3.Row) -> Dict[str, Any]:
     }
 
 
-def attach_agent_contact_conversation(agent: Dict[str, Any], owner_user_id: Optional[str]) -> Dict[str, Any]:
+def apply_agent_user_override(agent: Dict[str, Any], owner_user_id: Optional[str]) -> Dict[str, Any]:
+    if (
+        not owner_user_id
+        or agent.get("ownerUserId") is not None
+        or agent.get("id") == ORCHESTRATOR_AGENT_ID
+    ):
+        return agent
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM agent_user_overrides
+            WHERE owner_user_id = ? AND base_agent_id = ?
+            """,
+            (owner_user_id, agent["id"]),
+        ).fetchone()
+    if not row:
+        return agent
+    overridden = {
+        **agent,
+        "name": row["name"] if row["name"] is not None else agent["name"],
+        "avatar": row["avatar"] if row["avatar"] is not None else agent["avatar"],
+        "description": row["description"] if row["description"] is not None else agent["description"],
+        "tags": _json_load(row["tags_json"], agent["tags"]) if row["tags_json"] is not None else agent["tags"],
+        "status": row["status"] if row["status"] is not None else agent["status"],
+        "category": row["category"] if row["category"] is not None else agent["category"],
+        "provider": row["provider"] if row["provider"] is not None else agent["provider"],
+        "enabled": bool(row["enabled"]) if row["enabled"] is not None else agent["enabled"],
+        "lastUsedAt": row["last_used_at"] if row["last_used_at"] is not None else agent["lastUsedAt"],
+        "systemPrompt": row["system_prompt"] if row["system_prompt"] is not None else agent["systemPrompt"],
+        "modelConfig": _json_load(row["model_config_json"], agent["modelConfig"]) if row["model_config_json"] is not None else agent["modelConfig"],
+        "tools": _json_load(row["tools_json"], agent["tools"]) if row["tools_json"] is not None else agent["tools"],
+        "permissions": _json_load(row["permissions_json"], agent["permissions"]) if row["permissions_json"] is not None else agent["permissions"],
+        "overrideSource": "user",
+        "baseAgentId": agent["id"],
+    }
+    if overridden["status"] == "disabled":
+        overridden["enabled"] = False
+    return overridden
+
+
+def upsert_agent_user_override(
+    owner_user_id: str,
+    base_agent_id: str,
+    payload: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    timestamp = now_text()
+    with get_connection() as conn:
+        base_agent = conn.execute(
+            """
+            SELECT *
+            FROM agents
+            WHERE id = ?
+              AND owner_user_id IS NULL
+              AND id != ?
+            """,
+            (base_agent_id, ORCHESTRATOR_AGENT_ID),
+        ).fetchone()
+        if not base_agent:
+            return None
+        current = apply_agent_user_override(agent_from_row(base_agent), owner_user_id)
+        updated = {**current, **payload, "id": base_agent_id, "ownerUserId": None}
+        if payload.get("enabled") is False:
+            updated["status"] = "disabled"
+        elif payload.get("enabled") is True and "status" not in payload and updated.get("status") == "disabled":
+            updated["status"] = "online"
+        if updated.get("status") == "disabled":
+            updated["enabled"] = False
+
+        existing = conn.execute(
+            """
+            SELECT id
+            FROM agent_user_overrides
+            WHERE owner_user_id = ? AND base_agent_id = ?
+            """,
+            (owner_user_id, base_agent_id),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """
+                UPDATE agent_user_overrides
+                SET name = ?, avatar = ?, description = ?, tags_json = ?,
+                    status = ?, category = ?, provider = ?, enabled = ?, last_used_at = ?,
+                    system_prompt = ?, model_config_json = ?, tools_json = ?,
+                    permissions_json = ?, updated_at = ?
+                WHERE owner_user_id = ? AND base_agent_id = ?
+                """,
+                (
+                    updated["name"],
+                    updated.get("avatar", ""),
+                    updated.get("description", ""),
+                    _json_dump(updated.get("tags", [])),
+                    updated.get("status", "offline"),
+                    updated.get("category", "custom"),
+                    updated.get("provider", "mock"),
+                    1 if updated.get("enabled", True) else 0,
+                    updated.get("lastUsedAt"),
+                    updated.get("systemPrompt", ""),
+                    _json_dump(updated.get("modelConfig", {})),
+                    _json_dump(updated.get("tools", [])),
+                    _json_dump(updated.get("permissions", DEFAULT_PERMISSIONS)),
+                    timestamp,
+                    owner_user_id,
+                    base_agent_id,
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO agent_user_overrides (
+                    id, owner_user_id, base_agent_id, name, avatar, description, tags_json,
+                    status, category, provider, enabled, last_used_at, system_prompt,
+                    model_config_json, tools_json, permissions_json, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    create_id("agentOverride"),
+                    owner_user_id,
+                    base_agent_id,
+                    updated["name"],
+                    updated.get("avatar", ""),
+                    updated.get("description", ""),
+                    _json_dump(updated.get("tags", [])),
+                    updated.get("status", "offline"),
+                    updated.get("category", "custom"),
+                    updated.get("provider", "mock"),
+                    1 if updated.get("enabled", True) else 0,
+                    updated.get("lastUsedAt"),
+                    updated.get("systemPrompt", ""),
+                    _json_dump(updated.get("modelConfig", {})),
+                    _json_dump(updated.get("tools", [])),
+                    _json_dump(updated.get("permissions", DEFAULT_PERMISSIONS)),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+    return get_agent(base_agent_id, owner_user_id=owner_user_id)
+
+
+def upsert_agent_user_system_prompt(
+    owner_user_id: str,
+    base_agent_id: str,
+    system_prompt: str,
+) -> Optional[Dict[str, Any]]:
+    return upsert_agent_user_override(
+        owner_user_id,
+        base_agent_id,
+        {"systemPrompt": system_prompt.strip()},
+    )
+
+
+def attach_agent_contact_conversation(
+    agent: Dict[str, Any],
+    owner_user_id: Optional[str],
+    expose_orchestrator_as_disabled: bool = False,
+) -> Dict[str, Any]:
+    if agent.get("id") == ORCHESTRATOR_AGENT_ID:
+        return {**agent, "enabled": False} if expose_orchestrator_as_disabled else agent
+    agent = apply_agent_user_override(agent, owner_user_id)
     if not owner_user_id or not agent.get("enabled") or agent.get("status") == "disabled":
         return agent
     conversation = get_contact_conversation(owner_user_id, agent["id"])
@@ -811,6 +1156,10 @@ def conversation_from_row(row: sqlite3.Row, agent_ids: Optional[List[str]] = Non
         "mode": row["mode"],
         "conversationType": row["conversation_type"],
         "contactAgentId": row["contact_agent_id"],
+        "visible": bool(row["visible"]),
+        "isPinned": bool(row["is_pinned"]),
+        "isArchived": bool(row["is_archived"]),
+        "systemPrompt": row["system_prompt"],
         "agentIds": agent_ids or [],
         "lastMessage": row["last_message"],
         "updatedAt": row["updated_at"],
@@ -939,26 +1288,35 @@ def list_agents(
     if owner_user_id:
         query += " AND (owner_user_id IS NULL OR owner_user_id = ?)"
         params.append(owner_user_id)
-    if category:
-        query += " AND category = ?"
-        params.append(category)
-    if provider:
-        query += " AND provider = ?"
-        params.append(provider)
-    if keyword:
-        query += " AND (name LIKE ? OR description LIKE ?)"
-        like = f"%{keyword}%"
-        params.extend([like, like])
-    if enabled is not None:
-        query += " AND enabled = ?"
-        params.append(1 if enabled else 0)
     query += " ORDER BY enabled DESC, name ASC"
     with get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
     agents = [
-        attach_agent_contact_conversation(agent_from_row(row), owner_user_id)
+        attach_agent_contact_conversation(
+            agent_from_row(row),
+            owner_user_id,
+            expose_orchestrator_as_disabled=True,
+        )
         for row in rows
     ]
+    if category:
+        agents = [agent for agent in agents if agent.get("category") == category]
+    if provider:
+        agents = [agent for agent in agents if agent.get("provider") == provider]
+    if keyword:
+        normalized_keyword = keyword.lower()
+        agents = [
+            agent for agent in agents
+            if normalized_keyword in agent.get("name", "").lower()
+            or normalized_keyword in agent.get("description", "").lower()
+        ]
+    if enabled is not None:
+        agents = [
+            agent for agent in agents
+            if bool(agent.get("enabled")) == enabled
+            and ((agent.get("status") != "disabled") == enabled)
+        ]
+    agents.sort(key=lambda agent: (not agent.get("enabled", False), agent.get("name", "")))
     return paginate(agents, page, page_size)
 
 
@@ -985,7 +1343,7 @@ def get_contact_conversation(owner_user_id: str, agent_id: str) -> Optional[Dict
             SELECT *
             FROM conversations
             WHERE owner_user_id = ?
-              AND conversation_type = 'contact'
+              AND mode = 'agent'
               AND contact_agent_id = ?
             """,
             (owner_user_id, agent_id),
@@ -995,9 +1353,18 @@ def get_contact_conversation(owner_user_id: str, agent_id: str) -> Optional[Dict
         return conversation_from_row(row, get_conversation_agent_ids(conn, row["id"]))
 
 
-def ensure_contact_conversation(owner_user_id: str, agent_id: str) -> Dict[str, Any]:
+def ensure_contact_conversation(
+    owner_user_id: str,
+    agent_id: str,
+    restore_visible: bool = True,
+) -> Dict[str, Any]:
     with get_connection() as conn:
-        return ensure_contact_conversation_conn(conn, owner_user_id, agent_id)
+        return ensure_contact_conversation_conn(
+            conn,
+            owner_user_id,
+            agent_id,
+            restore_visible=restore_visible,
+        )
 
 
 def ensure_user_contact_conversations(owner_user_id: str) -> None:
@@ -1143,6 +1510,7 @@ def list_conversations(
     page_size: int = 20,
     mode: Optional[str] = None,
     keyword: Optional[str] = None,
+    is_archived: Optional[bool] = False,
     owner_user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     query = """
@@ -1151,15 +1519,17 @@ def list_conversations(
         LEFT JOIN agents a ON a.id = c.contact_agent_id
         WHERE 1=1
           AND (
-            c.conversation_type = 'manual'
+            c.mode IN ('single', 'group')
             OR (
-              c.conversation_type = 'contact'
+              c.mode = 'agent'
+              AND c.contact_agent_id != ?
+              AND c.visible = 1
               AND a.enabled = 1
               AND a.status != 'disabled'
             )
           )
     """
-    params: List[Any] = []
+    params: List[Any] = [ORCHESTRATOR_AGENT_ID]
     if owner_user_id:
         query += " AND c.owner_user_id = ?"
         params.append(owner_user_id)
@@ -1169,13 +1539,33 @@ def list_conversations(
     if keyword:
         query += " AND c.title LIKE ?"
         params.append(f"%{keyword}%")
-    query += " ORDER BY c.updated_at DESC"
+    if is_archived is not None:
+        query += " AND c.is_archived = ?"
+        params.append(1 if is_archived else 0)
+    query += " ORDER BY c.is_pinned DESC, c.updated_at DESC"
 
     with get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
         conversations = [
             conversation_from_row(row, get_conversation_agent_ids(conn, row["id"]))
             for row in rows
+        ]
+    if owner_user_id:
+        conversations = [
+            conversation
+            for conversation in conversations
+            if conversation["mode"] != "agent"
+            or (
+                conversation.get("contactAgentId")
+                and (
+                    agent := get_agent(
+                        conversation["contactAgentId"],
+                        owner_user_id=owner_user_id,
+                    )
+                )
+                and agent.get("enabled")
+                and agent.get("status") != "disabled"
+            )
         ]
     return paginate(conversations, page, page_size)
 
@@ -1187,7 +1577,14 @@ def create_conversation(
     owner_user_id: str = "user-admin",
     conversation_type: str = "manual",
     contact_agent_id: Optional[str] = None,
+    system_prompt: str = "",
 ) -> Dict[str, Any]:
+    if mode == "group":
+        normalized_agent_ids = []
+        for agent_id in [ORCHESTRATOR_AGENT_ID, *agent_ids]:
+            if agent_id not in normalized_agent_ids:
+                normalized_agent_ids.append(agent_id)
+        agent_ids = normalized_agent_ids
     conversation_id = create_id("conv")
     timestamp = now_text()
     with get_connection() as conn:
@@ -1195,11 +1592,22 @@ def create_conversation(
             """
             INSERT INTO conversations (
                 id, owner_user_id, title, mode, conversation_type,
-                contact_agent_id, last_message, created_at, updated_at
+                contact_agent_id, visible, is_pinned, is_archived,
+                system_prompt, last_message, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, '', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 1, 0, 0, ?, '', ?, ?)
             """,
-            (conversation_id, owner_user_id, title, mode, conversation_type, contact_agent_id, timestamp, timestamp),
+            (
+                conversation_id,
+                owner_user_id,
+                title,
+                mode,
+                conversation_type,
+                contact_agent_id,
+                system_prompt.strip(),
+                timestamp,
+                timestamp,
+            ),
         )
         for agent_id in agent_ids:
             conn.execute(
@@ -1231,12 +1639,13 @@ def update_conversation(conversation_id: str, payload: Dict[str, Any], owner_use
     if not current:
         return None
     title = payload.get("title", current["title"])
+    system_prompt = payload.get("systemPrompt", current.get("systemPrompt", ""))
     agent_ids = payload.get("agentIds")
     timestamp = now_text()
     with get_connection() as conn:
         conn.execute(
-            "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
-            (title, timestamp, conversation_id),
+            "UPDATE conversations SET title = ?, system_prompt = ?, updated_at = ? WHERE id = ?",
+            (title, str(system_prompt or "").strip(), timestamp, conversation_id),
         )
         if agent_ids is not None:
             conn.execute("DELETE FROM conversation_agents WHERE conversation_id = ?", (conversation_id,))
@@ -1245,6 +1654,54 @@ def update_conversation(conversation_id: str, payload: Dict[str, Any], owner_use
                     "INSERT OR IGNORE INTO conversation_agents (conversation_id, agent_id) VALUES (?, ?)",
                     (conversation_id, agent_id),
                 )
+    return get_conversation(conversation_id, owner_user_id=owner_user_id)
+
+
+def update_conversation_pin(
+    conversation_id: str,
+    is_pinned: bool,
+    owner_user_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    owner_clause = ""
+    params: List[Any] = [1 if is_pinned else 0, now_text(), conversation_id]
+    if owner_user_id:
+        owner_clause = "AND owner_user_id = ?"
+        params.append(owner_user_id)
+    with get_connection() as conn:
+        cur = conn.execute(
+            f"""
+            UPDATE conversations
+            SET is_pinned = ?, updated_at = ?
+            WHERE id = ? {owner_clause}
+            """,
+            params,
+        )
+        if cur.rowcount == 0:
+            return None
+    return get_conversation(conversation_id, owner_user_id=owner_user_id)
+
+
+def update_conversation_archive(
+    conversation_id: str,
+    is_archived: bool,
+    owner_user_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    owner_clause = ""
+    params: List[Any] = [1 if is_archived else 0, now_text(), conversation_id]
+    if owner_user_id:
+        owner_clause = "AND owner_user_id = ?"
+        params.append(owner_user_id)
+    with get_connection() as conn:
+        cur = conn.execute(
+            f"""
+            UPDATE conversations
+            SET is_archived = ?, updated_at = ?
+            WHERE id = ? {owner_clause}
+            """,
+            params,
+        )
+        if cur.rowcount == 0:
+            return None
     return get_conversation(conversation_id, owner_user_id=owner_user_id)
 
 
@@ -1260,6 +1717,47 @@ def delete_conversation(conversation_id: str, owner_user_id: Optional[str] = Non
             params,
         )
         return cur.rowcount > 0
+
+
+def hide_agent_conversation(conversation_id: str, owner_user_id: Optional[str] = None) -> bool:
+    owner_clause = ""
+    params: List[Any] = [now_text(), conversation_id]
+    if owner_user_id:
+        owner_clause = "AND owner_user_id = ?"
+        params.append(owner_user_id)
+    with get_connection() as conn:
+        cur = conn.execute(
+            f"""
+            UPDATE conversations
+            SET visible = 0, updated_at = ?
+            WHERE id = ?
+              AND mode = 'agent'
+              {owner_clause}
+            """,
+            params,
+        )
+        return cur.rowcount > 0
+
+
+def show_conversation(conversation_id: str, owner_user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    owner_clause = ""
+    params: List[Any] = [now_text(), conversation_id]
+    if owner_user_id:
+        owner_clause = "AND owner_user_id = ?"
+        params.append(owner_user_id)
+    with get_connection() as conn:
+        cur = conn.execute(
+            f"""
+            UPDATE conversations
+            SET visible = 1, updated_at = ?
+            WHERE id = ?
+              {owner_clause}
+            """,
+            params,
+        )
+        if cur.rowcount == 0:
+            return None
+    return get_conversation(conversation_id, owner_user_id=owner_user_id)
 
 
 def list_messages(conversation_id: str, page: int = 1, page_size: int = 50) -> Dict[str, Any]:
@@ -1672,6 +2170,61 @@ def create_memory(
             WHERE conversation_id = ? AND category = ? AND content = ?
             """,
             (conversation_id, category, normalized_content),
+        ).fetchone()
+    return memory_from_row(row) if row else None
+
+
+def update_memory(
+    conversation_id: str,
+    memory_id: str,
+    payload: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    current_payload = {
+        key: value
+        for key, value in payload.items()
+        if key in {"content", "category", "active"}
+    }
+    if not current_payload:
+        with get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM long_term_memories
+                WHERE id = ? AND conversation_id = ?
+                """,
+                (memory_id, conversation_id),
+            ).fetchone()
+        return memory_from_row(row) if row else None
+
+    assignments = []
+    params: List[Any] = []
+    if "content" in current_payload:
+        assignments.append("content = ?")
+        params.append(str(current_payload["content"]).strip())
+    if "category" in current_payload:
+        assignments.append("category = ?")
+        params.append(str(current_payload["category"]).strip())
+    if "active" in current_payload:
+        assignments.append("active = ?")
+        params.append(1 if bool(current_payload["active"]) else 0)
+    assignments.append("updated_at = ?")
+    params.append(now_text())
+    params.extend([memory_id, conversation_id])
+
+    with get_connection() as conn:
+        cur = conn.execute(
+            f"""
+            UPDATE long_term_memories
+            SET {", ".join(assignments)}
+            WHERE id = ? AND conversation_id = ?
+            """,
+            params,
+        )
+        if cur.rowcount == 0:
+            return None
+        row = conn.execute(
+            "SELECT * FROM long_term_memories WHERE id = ? AND conversation_id = ?",
+            (memory_id, conversation_id),
         ).fetchone()
     return memory_from_row(row) if row else None
 

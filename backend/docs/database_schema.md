@@ -75,27 +75,60 @@ messages 0..n attachments
 | created_at | TEXT | 创建时间 |
 | updated_at | TEXT | 更新时间 |
 
+## agent_user_overrides
+
+保存系统预置 Agent 的用户级配置覆盖。用户修改默认 Agent 时写入这里，不会修改公共系统 Agent 模板。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | TEXT PRIMARY KEY | 覆盖记录 ID |
+| owner_user_id | TEXT | 用户 ID |
+| base_agent_id | TEXT | 被覆盖的系统 Agent ID |
+| name | TEXT | 用户级名称覆盖 |
+| avatar | TEXT | 用户级头像覆盖 |
+| description | TEXT | 用户级描述覆盖 |
+| tags_json | TEXT | 用户级标签 JSON |
+| status | TEXT | 用户级状态覆盖 |
+| category | TEXT | 用户级分类覆盖 |
+| provider | TEXT | 用户级 provider 覆盖 |
+| enabled | INTEGER | 用户级启用状态 |
+| last_used_at | TEXT | 用户级最近使用时间 |
+| system_prompt | TEXT | 用户自己的 System Prompt |
+| model_config_json | TEXT | 用户级模型配置 JSON |
+| tools_json | TEXT | 用户级工具配置 JSON |
+| permissions_json | TEXT | 用户级权限配置 JSON |
+| created_at | TEXT | 创建时间 |
+| updated_at | TEXT | 更新时间 |
+
+唯一约束：`(owner_user_id, base_agent_id)`。
+
 ## conversations
 
-保存 IM 聊天窗口。会话分为长期联系人单聊和手动短期会话。
+保存 IM 聊天窗口。`agent/group` 是持久上下文会话，`single` 是临时单聊。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | id | TEXT PRIMARY KEY | 会话 ID |
 | owner_user_id | TEXT | 所属用户 ID |
 | title | TEXT | 会话标题 |
-| mode | TEXT | `single/group` |
-| conversation_type | TEXT | `contact/manual` |
-| contact_agent_id | TEXT | contact 长期单聊绑定的 Agent ID |
+| mode | TEXT | `agent/single/group` |
+| conversation_type | TEXT | 兼容旧字段，`contact/manual` |
+| contact_agent_id | TEXT | `agent` 长期联系人会话绑定的 Agent ID |
+| visible | INTEGER | 是否在会话列表展示，仅作用于 `mode=agent` |
+| is_pinned | INTEGER | 会话是否置顶 |
+| is_archived | INTEGER | 会话是否归档 |
+| system_prompt | TEXT | 会话级 System Prompt 覆盖 |
 | last_message | TEXT | 最近消息摘要 |
 | created_at | TEXT | 创建时间 |
 | updated_at | TEXT | 最近活跃时间 |
 
 约束说明：
 
-- `contact` 会话不允许用户通过会话删除接口删除。
-- `manual` 会话包括用户手动创建的单聊和群聊，允许删除。
-- `(owner_user_id, contact_agent_id)` 在 `contact` 会话下保持唯一。
+- `mode=agent` 会话通过删除接口只设置 `visible=0`，不删除历史。
+- `mode=agent/group` 会话参与长期记忆、会话摘要、Pinned Messages 和最近有效消息上下文。
+- `mode=single` 会话不参与长期记忆、会话摘要或 Pinned Messages 注入。
+- `mode=single/group` 会话包括用户手动创建的单聊和群聊，允许删除。
+- `(owner_user_id, contact_agent_id)` 在 `mode=agent` 会话下保持唯一。
 
 ## conversation_agents
 
@@ -192,7 +225,7 @@ messages 0..n attachments
 
 ## conversation_summaries
 
-保存群聊上下文压缩摘要。
+保存持久上下文会话的压缩摘要，适用于 `mode=agent/group`。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|

@@ -117,6 +117,8 @@ MVP 不宣称真实接入 Claude Code / Codex 平台。当前 Claude Code / Code
 - `ping`
 - `pong`
 - `conversation.message.create`
+- `conversation.subscribe`
+- `conversation.unsubscribe`
 - `conversation.message.user_created`
 - `agent.status.changed`
 - `agent.thinking.started`
@@ -125,7 +127,7 @@ MVP 不宣称真实接入 Claude Code / Codex 平台。当前 Claude Code / Code
 - `artifact.created`
 - `conversation.all_tasks.completed`
 
-`/ws/chat` 暂时保留为旧 Demo 兼容入口, 新前端应优先接 `/ws`。
+`/ws` 必须携带有效 token。服务端按 `userId + conversationId` 建立订阅房间，所有会话事件只广播给已鉴权订阅该会话的连接。`/ws/chat` 暂时保留为旧 Demo 兼容入口，但未鉴权连接会被拒绝。
 
 ## 开发环境
 

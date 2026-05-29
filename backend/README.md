@@ -62,7 +62,7 @@ Authorization: Bearer <token>
 
 ### Agent
 
-Agent 是 IM 联系人。系统预置 Agent 对所有用户可见，用户自建 Agent 只对创建者可见。
+Agent 是 IM 联系人。系统预置 Agent 对所有用户可见，用户自建 Agent 只对创建者可见。Orchestrator 是群聊调度器，不作为长期联系人。
 
 关键字段：
 
@@ -76,24 +76,26 @@ interface Agent {
   status: string;
   enabled: boolean;
   systemPrompt: string;
+  systemPromptSource?: 'user_override';
   modelConfig: Record<string, any>;
   tools: any[];
   permissions: Record<string, any>;
 }
 ```
 
-`ownerUserId = null` 表示系统预置 Agent。`conversationId` 是当前用户和该 Agent 的长期联系人单聊 ID。
+`ownerUserId = null` 表示系统预置 Agent。`conversationId` 是当前用户和联系人 Agent 的长期联系人单聊 ID，Orchestrator 不返回该字段。
 
 ### Conversation
 
-会话分为两类：
+会话用 `mode` 区分类型：
 
 ```ts
-type ConversationType = 'contact' | 'manual';
+type ConversationMode = 'agent' | 'single' | 'group';
 ```
 
-- `contact`：Agent 联系人长期单聊，伴随 Agent 生命周期，不允许用户直接删除。
-- `manual`：用户手动创建的短期单聊或群聊，允许删除。
+- `agent`：Agent 联系人长期会话，伴随 Agent 生命周期，不允许用户直接删除，参与长期记忆、会话摘要、Pinned Messages 和最近有效消息上下文。
+- `single`：用户手动创建的临时单聊，允许删除，不参与长期记忆、会话摘要或 Pinned Messages 注入。
+- `group`：用户手动创建的群聊，允许删除，参与长期记忆、会话摘要、Pinned Messages 和最近有效消息上下文。
 
 关键字段：
 
@@ -101,9 +103,13 @@ type ConversationType = 'contact' | 'manual';
 interface Conversation {
   id: string;
   ownerUserId: string;
-  mode: 'single' | 'group';
-  conversationType: 'contact' | 'manual';
+  mode: 'agent' | 'single' | 'group';
+  conversationType?: 'contact' | 'manual';
   contactAgentId?: string | null;
+  visible?: boolean;
+  isPinned: boolean;
+  isArchived: boolean;
+  systemPrompt: string;
   agentIds: string[];
   contextUsagePercent: number;
   contextUsageChars: number;
@@ -162,6 +168,8 @@ POST   /conversations
 GET    /conversations/{conversationId}
 PUT    /conversations/{conversationId}
 DELETE /conversations/{conversationId}
+PUT    /conversations/{conversationId}/pin
+PUT    /conversations/{conversationId}/archive
 POST   /conversations/{conversationId}/mention
 
 GET  /conversations/{conversationId}/messages
@@ -170,6 +178,7 @@ POST /conversations/{conversationId}/messages
 GET    /conversations/{conversationId}/context/usage
 POST   /conversations/{conversationId}/context/compress
 GET    /conversations/{conversationId}/memories
+PUT    /conversations/{conversationId}/memories/{memoryId}
 DELETE /conversations/{conversationId}/memories/{memoryId}
 GET    /conversations/{conversationId}/pins
 POST   /conversations/{conversationId}/messages/{messageId}/pin
@@ -188,7 +197,7 @@ WebSocket：
 ws://localhost:9007/ws?token=<token>
 ```
 
-旧 Demo 入口 `/ws/chat` 暂时保留，新前端应优先使用 `/ws`。
+`/ws` 必须携带有效 token，并通过 `conversation.subscribe` 按会话订阅；服务端按 `userId + conversationId` 隔离推送事件。旧 Demo 入口 `/ws/chat` 暂时保留，但未鉴权连接会被拒绝。
 
 ## SQLite
 

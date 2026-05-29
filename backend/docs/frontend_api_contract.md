@@ -60,9 +60,11 @@ conversations.owner_user_id
 - `conversations.owner_user_id` 表示会话所属用户。
 - `agents.owner_user_id = null` 表示系统预置 Agent，所有用户可见。
 - `agents.owner_user_id = 当前用户 id` 表示用户自建 Agent，仅创建者可见。
-- `conversations.conversation_type = contact` 表示 Agent 联系人长期单聊。
-- `conversations.conversation_type = manual` 表示用户手动创建的短期会话。
+- `conversations.mode = agent` 表示 Agent 联系人长期会话，参与长期记忆、会话摘要、Pinned Messages 和最近有效消息上下文。
+- `conversations.mode = group` 表示用户手动创建的群聊，也参与长期记忆、会话摘要、Pinned Messages 和最近有效消息上下文。
+- `conversations.mode = single` 表示用户手动创建的临时单聊，不参与长期记忆、会话摘要或 Pinned Messages 注入。
 - `conversations.contact_agent_id` 表示长期单聊绑定的 Agent。
+- `conversations.conversation_type` 暂时兼容旧前端，后续以前端使用 `mode` 为准。
 - 消息、产物、记忆、Pinned Message 通过 `conversationId` 间接归属用户。
 - 老数据迁移到默认管理员：`user-admin`。
 
@@ -117,6 +119,8 @@ interface Agent {
   enabled: boolean;
   lastUsedAt?: string | null;
   systemPrompt: string;
+  systemPromptSource?: 'user_override';
+  baseAgentId?: string;
   modelConfig: Record<string, any>;
   tools: any[];
   permissions: Record<string, any>;
@@ -130,9 +134,13 @@ interface Conversation {
   id: string;
   ownerUserId: string;
   title: string;
-  mode: 'single' | 'group';
-  conversationType: 'contact' | 'manual';
+  mode: 'agent' | 'single' | 'group';
+  conversationType?: 'contact' | 'manual'; // 兼容字段，前端新逻辑优先使用 mode
   contactAgentId?: string | null;
+  visible?: boolean;
+  isPinned: boolean;
+  isArchived: boolean;
+  systemPrompt: string;
   agentIds: string[];
   lastMessage: string;
   contextUsagePercent: number;
@@ -281,6 +289,24 @@ Response Data: `User`
 
 未登录或过期：`code = 40101`
 
+### 修改当前用户资料
+
+`PUT /auth/profile`
+
+Request:
+
+```json
+{
+  "name": "string",
+  "email": "string",
+  "avatar": "string"
+}
+```
+
+Response Data: `User`
+
+说明：只更新当前登录用户；`email` 会做格式和唯一性校验。
+
 ### 退出登录
 
 `POST /auth/logout`
@@ -316,7 +342,8 @@ Response Data: `PageResult<Agent>`
 
 - 默认只返回 `enabled=true`。
 - 返回系统预置 Agent + 当前用户自建 Agent。
-- 每个 enabled Agent 返回当前用户对应的长期单聊 `conversationId`。
+- Orchestrator 是群聊调度器，作为 `enabled=false` 的展示元数据返回，不带长期联系人 `conversationId`。
+- 每个 enabled 联系人 Agent 返回当前用户对应的长期单聊 `conversationId`。
 - 禁用 Agent 可通过 `enabled=false` 查询。
 
 ### 创建 Agent
@@ -347,7 +374,11 @@ Request:
 
 Response Data: `Agent`
 
-说明：创建自定义 Agent 后，后端会自动创建该 Agent 的长期联系人单聊，并在返回的 Agent 中带 `conversationId`。
+说明：
+
+- 创建自定义 Agent 后，后端会自动创建该 Agent 的长期联系人单聊，并在返回的 Agent 中带 `conversationId`。
+- 当前版本采用平台统一模型 Key。`modelConfig` 不允许包含 `apiKey/api_key/secret/token/authorization/headers` 等敏感鉴权字段。
+- 系统预置 Agent 和用户自建 Agent 暴露相同编辑能力。普通用户修改系统预置 Agent 时，后端保存为该用户自己的配置覆盖，不会修改公共模板，也不会影响其他用户。
 
 ### Agent 详情
 
@@ -397,7 +428,7 @@ Request: Agent 可编辑字段。
 
 Response Data: `Agent`
 
-说明：非 admin 用户不能修改系统预置 Agent。
+说明：系统预置 Agent 也支持修改。非 admin 用户修改系统预置 Agent 时，后端保存用户级覆盖；自建 Agent 则直接更新自己的 Agent 记录。
 
 ### 禁用 Agent
 
@@ -409,7 +440,7 @@ Response Data: `true`
 
 - 软删除：`enabled=false`，`status=disabled`。
 - 历史消息仍可展示。
-- 非 admin 用户不能禁用系统预置 Agent。
+- 非 admin 用户禁用系统预置 Agent 时，仅对当前用户生效，不影响公共模板或其他用户。
 
 ## 6. Conversation API
 
@@ -422,8 +453,9 @@ Query:
 ```text
 page?: number
 pageSize?: number
-mode?: single | group
+mode?: agent | single | group
 keyword?: string
+isArchived?: true | false | all
 ```
 
 Response Data: `PageResult<Conversation>`
@@ -432,9 +464,11 @@ Response Data: `PageResult<Conversation>`
 
 说明：
 
-- 返回 `manual` 短期会话。
-- 返回 enabled Agent 对应的 `contact` 长期会话。
-- 不返回 disabled Agent 对应的 `contact` 会话。
+- 返回 `mode=single/group` 的用户手动创建会话。
+- 返回 enabled Agent 对应的 `mode=agent` 长期联系人会话。
+- 不返回 disabled Agent 对应的 `mode=agent` 会话。
+- 默认返回未归档会话；`isArchived=true` 返回归档会话；`isArchived=all` 返回全部。
+- 排序为置顶优先，其次按最近活跃时间倒序。
 
 ### 创建会话
 
@@ -446,11 +480,15 @@ Request:
 {
   "title": "3人会话",
   "mode": "group",
-  "agentIds": ["agent-orchestrator", "agent-claude-code", "agent-codex"]
+  "agentIds": ["agent-claude-code", "agent-codex"],
+  "systemPrompt": ""
 }
 ```
 
 Response Data: `Conversation`
+
+说明：`mode=group` 时后端会自动加入 `agent-orchestrator` 作为群聊调度器。
+`agent-orchestrator` 只作为群聊调度器，不作为 `mode=agent` 长期联系人会话。
 
 ### 会话详情
 
@@ -467,7 +505,38 @@ Request:
 ```json
 {
   "title": "新标题",
-  "agentIds": ["agent-claude-code"]
+  "agentIds": ["agent-claude-code"],
+  "systemPrompt": "这个会话自己的系统提示词"
+}
+```
+
+Response Data: `Conversation`
+
+说明：`Conversation.systemPrompt` 是会话级覆盖，优先级高于 Agent 的 `systemPrompt`。修改 single 会话的 `systemPrompt` 不会修改 Agent 的个人 prompt 覆盖；修改 Agent prompt 也不会反写已有 single 会话。
+
+### 会话置顶/取消置顶
+
+`PUT /conversations/{conversationId}/pin`
+
+Request:
+
+```json
+{
+  "isPinned": true
+}
+```
+
+Response Data: `Conversation`
+
+### 会话归档/激活
+
+`PUT /conversations/{conversationId}/archive`
+
+Request:
+
+```json
+{
+  "isArchived": true
 }
 ```
 
@@ -481,16 +550,21 @@ Response Data: `true`
 
 说明：
 
-- `manual` 会话允许删除，包括手动单聊和群聊。
-- `contact` 长期联系人会话不允许删除。
-- 删除 `contact` 会话时返回：
+- `mode=single/group` 会话允许删除，会删除会话及其消息/产物。
+- `mode=agent` 长期联系人会话不会物理删除；该接口只把 `visible=false`，让它不再出现在会话列表中。
+- 用户之后从 Agent 联系人重新打开该 Agent 时，后端会把 `visible` 恢复为 `true` 并继续使用原历史。
 
-```json
-{
-  "code": 40007,
-  "message": "Agent 联系人会话不允许删除，请禁用对应 Agent"
-}
-```
+### 显示会话
+
+`POST /conversations/{conversationId}/show`
+
+Response Data: `Conversation`
+
+说明：
+
+- 幂等地把当前用户自己的会话 `visible=true`。
+- 主要用于恢复被隐藏的 `mode=agent` 长期联系人会话。
+- 如果原本已经可见，也直接返回成功。
 
 ## 7. Message API
 
@@ -658,7 +732,7 @@ Response Data:
 
 说明：
 
-- 只对群聊启用。
+- 只对 `mode=agent/group` 启用。
 - 不删除历史消息，只影响后续模型上下文。
 
 ### 长期记忆列表
@@ -686,6 +760,24 @@ interface Memory {
 `DELETE /conversations/{conversationId}/memories/{memoryId}`
 
 Response Data: `true`
+
+### 修改长期记忆
+
+`PUT /conversations/{conversationId}/memories/{memoryId}`
+
+Request:
+
+```json
+{
+  "content": "后端端口固定为 9007",
+  "category": "project",
+  "active": true
+}
+```
+
+Response Data: `Memory`
+
+说明：`category` 只支持 `preference/project/profile/constraint`。
 
 ### Pinned Messages 列表
 
@@ -780,7 +872,8 @@ wss://host/ws
 说明：
 
 - 如果前端无法给 WebSocket 加 Header，可以用 query token。
-- 未传 token 时回退默认管理员，兼容旧 Demo。
+- 必须传有效 token；未登录连接会被关闭。
+- 服务端按 `userId + conversationId` 做订阅隔离，跨用户无法订阅或接收事件。
 
 连接成功事件：
 
@@ -814,6 +907,32 @@ Server:
 ```
 
 ### 创建消息
+
+建议前端先订阅会话；发送消息时后端也会自动把当前连接加入该会话房间。
+
+Subscribe:
+
+```json
+{
+  "type": "conversation.subscribe",
+  "eventId": "evt_sub",
+  "data": {
+    "conversationId": "conv_xxx"
+  }
+}
+```
+
+Unsubscribe:
+
+```json
+{
+  "type": "conversation.unsubscribe",
+  "eventId": "evt_unsub",
+  "data": {
+    "conversationId": "conv_xxx"
+  }
+}
+```
 
 Client:
 
@@ -865,8 +984,7 @@ conversation.all_tasks.completed
 | 40003 | 引用消息不存在或不属于当前会话 |
 | 40004 | 邮箱已注册 |
 | 40005 | 邮箱或密码错误 |
-| 40006 | 系统预置 Agent 不允许修改/禁用 |
-| 40007 | Agent 联系人会话不允许删除 |
+| 40006 | 当前操作无权限 |
 | 40101 | 未登录或登录已过期 |
 
 ## 13. 前端接入建议

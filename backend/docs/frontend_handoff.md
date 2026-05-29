@@ -4,27 +4,29 @@
 
 ## 1. 当前核心产品语义
 
-现在后端把会话分成两类：
+现在后端直接用 `mode` 区分会话类型：
 
 ```ts
-type ConversationType = 'contact' | 'manual';
+type ConversationMode = 'agent' | 'single' | 'group';
 ```
 
-### contact 长期联系人会话
+### agent 长期联系人会话
 
 - Agent 作为联系人存在。
-- 每个用户对每个 enabled Agent 都有一个长期单聊。
+- 每个用户对每个 enabled 联系人 Agent 都有一个长期单聊。
+- Orchestrator 只作为群聊调度器，不作为长期联系人 Agent；后端会以 `enabled=false` 返回它的展示元数据，方便群聊成员区展示头像。
 - 这个长期单聊伴随 Agent 生命周期。
-- 前端不应该允许用户删除 contact 会话。
-- Agent 被禁用后，后端默认不再返回该 Agent，也不再展示它对应的 contact 会话。
+- `mode=agent` 会话会参与长期记忆、会话摘要、Pinned Messages 和最近有效消息上下文。
+- 前端如果对 `mode=agent` 会话调用删除接口，后端只会隐藏该会话，不删除历史消息。
+- Agent 被禁用后，后端默认不再返回该 Agent，也不再展示它对应的 agent 会话。
 - 历史数据不会被删除。
 
-### manual 短期手动会话
+### single / group 手动会话
 
 - 用户手动创建的单聊或群聊。
-- 群聊永远是 manual。
-- 用户手动创建的单聊也是 manual。
-- manual 会话允许删除。
+- `single` 是用户手动创建的临时单聊，不参与长期记忆、会话摘要或 Pinned Messages 注入。
+- `group` 是用户手动创建的群聊，会参与长期记忆、会话摘要、Pinned Messages 和最近有效消息上下文。
+- `single/group` 会话允许删除。
 
 ## 2. 登录接入流程
 
@@ -69,7 +71,7 @@ GET /api/v1/auth/me
 GET /api/v1/agents
 ```
 
-返回的每个 enabled Agent 都会带：
+返回的每个 enabled 联系人 Agent 都会带：
 
 ```ts
 interface Agent {
@@ -80,6 +82,8 @@ interface Agent {
   avatar: string;
   enabled: boolean;
   status: string;
+  systemPrompt?: string;
+  systemPromptSource?: 'user_override';
 }
 ```
 
@@ -88,6 +92,8 @@ interface Agent {
 - `ownerUserId = null`：系统预置 Agent，所有用户可见。
 - `ownerUserId = 当前用户 id`：用户自建 Agent。
 - `conversationId`：当前用户与该 Agent 的长期联系人单聊 ID。
+- 系统预置 Agent 和自建 Agent 的编辑能力一致。普通用户修改系统预置 Agent 时，后端保存为用户级配置覆盖，不会影响其他用户或公共模板。
+- Orchestrator 可能作为 `enabled=false` 的调度器元数据返回，不带 `conversationId`，前端不要作为可选联系人处理。
 
 前端点击某个 Agent 联系人时，优先打开：
 
@@ -121,7 +127,7 @@ Response Data:
 
 说明：
 
-- `contactId` 就是这个 Agent 联系人长期单聊的会话 ID。
+- `contactId` 就是这个 Agent 联系人长期会话 ID。
 - `conversationId` 与 `contactId` 相同，方便前端直接复用会话打开逻辑。
 - 普通用户只能查自己的 `userId`；admin 可以查任意用户。
 
@@ -140,9 +146,13 @@ interface Conversation {
   id: string;
   ownerUserId: string;
   title: string;
-  mode: 'single' | 'group';
-  conversationType: 'contact' | 'manual';
+  mode: 'agent' | 'single' | 'group';
+  conversationType?: 'contact' | 'manual'; // 兼容字段，前端新逻辑优先使用 mode
   contactAgentId?: string | null;
+  visible?: boolean;
+  isPinned: boolean;
+  isArchived: boolean;
+  systemPrompt: string;
   agentIds: string[];
   lastMessage: string;
   contextUsagePercent: number;
@@ -155,23 +165,32 @@ interface Conversation {
 
 展示规则建议：
 
-- `conversationType = contact`：作为 Agent 联系人长期单聊展示。
-- `conversationType = manual` 且 `mode = group`：作为用户创建的群聊展示。
-- `conversationType = manual` 且 `mode = single`：作为用户创建的临时单聊展示。
+- `mode = agent`：作为 Agent 联系人长期会话展示，后端会注入长期记忆、会话摘要、Pinned Messages 和最近有效消息。
+- `mode = group`：作为用户创建的群聊展示，后端同样会注入长期记忆、会话摘要、Pinned Messages 和最近有效消息。
+- `mode = single`：作为用户创建的临时单聊展示，不参与长期记忆、会话摘要或 Pinned Messages 注入。
 
 删除按钮规则：
 
-- `manual` 会话可以显示删除按钮。
-- `contact` 会话不要显示删除按钮。
+- `single/group` 会话可以显示删除按钮。
+- `agent` 会话可以显示“移除/隐藏”语义的按钮，调用同一个删除接口即可。
 
-如果误删 contact 会话，后端会返回：
+隐藏 agent 会话成功后，后端返回：
 
 ```json
 {
-  "code": 40007,
-  "message": "Agent 联系人会话不允许删除，请禁用对应 Agent"
+  "code": 0,
+  "message": "Agent 联系人会话已隐藏",
+  "data": true
 }
 ```
+
+如果前端需要主动恢复一个被隐藏的会话，可以调用：
+
+```text
+POST /api/v1/conversations/{conversationId}/show
+```
+
+该接口会幂等地把 `visible` 改回 `true`，并返回恢复后的 `Conversation`。
 
 ## 5. 创建 Agent
 
@@ -212,6 +231,12 @@ Request:
 
 所以前端创建成功后，可以直接把返回的 Agent 加到联系人列表里。
 
+## 5.1 修改 Agent 和 Prompt 的两个层级
+
+- 修改 Agent 配置：调用 `PUT /api/v1/agents/{agentId}`。系统预置 Agent 会保存为当前用户自己的配置覆盖；自建 Agent 会直接更新自己的记录。
+- 修改 single 会话的 `systemPrompt`：调用 `PUT /api/v1/conversations/{conversationId}`，请求体带 `systemPrompt`。这是会话级覆盖，只影响这个会话。
+- 两者互不反写。Agent prompt 不会自动改已有 single 会话；single prompt 也不会改 Agent prompt。
+
 ## 6. 禁用 Agent
 
 禁用 Agent：
@@ -246,9 +271,11 @@ POST /api/v1/conversations
 {
   "title": "3人会话",
   "mode": "group",
-  "agentIds": ["agent-orchestrator", "agent-claude-code", "agent-codex"]
+  "agentIds": ["agent-claude-code", "agent-codex"]
 }
 ```
+
+说明：Orchestrator 是群聊调度器。前端创建群聊时可以不传 `agent-orchestrator`，后端会自动把它加入群聊成员。
 
 创建手动单聊：
 
@@ -263,10 +290,10 @@ POST /api/v1/conversations
 后端会把这些会话标记为：
 
 ```ts
-conversationType = 'manual'
+mode = 'single' | 'group'
 ```
 
-manual 会话允许用户删除。
+`single/group` 会话允许用户删除。Orchestrator 只作为群聊调度器由后端默认加入 `group`，不作为 `agent` 长期联系人会话。
 
 ## 8. 发送消息
 
@@ -329,6 +356,20 @@ WebSocket 地址：
 /ws?token=<token>
 ```
 
+说明：`/ws` 必须携带有效 token。前端可以发送 `conversation.subscribe` 订阅会话，后端会按 `userId + conversationId` 做房间隔离；未拥有该会话的用户无法订阅，也不会收到该会话的流式事件。
+
+订阅事件：
+
+```json
+{
+  "type": "conversation.subscribe",
+  "eventId": "evt_sub",
+  "data": {
+    "conversationId": "conv_xxx"
+  }
+}
+```
+
 发送消息事件：
 
 ```json
@@ -351,8 +392,8 @@ WebSocket 地址：
 1. 登录成功后保存 token。
 2. HTTP 请求统一带 `Authorization`。
 3. 获取 Agent 列表，使用 `agent.conversationId` 打开联系人单聊。
-4. 渲染会话时区分 `conversationType`。
-5. contact 会话不展示删除按钮。
-6. manual 会话可以删除。
+4. 渲染会话时区分 `mode`。
+5. `mode=agent` 会话的删除按钮语义是“移除/隐藏”，不会删除历史。
+6. `mode=single/group` 会话可以物理删除。
 7. 创建自定义 Agent 后，把返回的 Agent 加入联系人列表。
 8. 发送引用消息时传 `quotedMessageId`。

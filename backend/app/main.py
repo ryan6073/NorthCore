@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fastapi import Body, FastAPI, Header, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +26,7 @@ from app.database import (
     ensure_user_contact_conversations,
     delete_conversation,
     delete_memory,
+    hide_agent_conversation,
     get_agent,
     get_artifact,
     get_artifact_version,
@@ -37,6 +38,7 @@ from app.database import (
     get_or_create_guest_user,
     get_pinned_message_ids,
     get_user,
+    get_user_by_email,
     get_user_by_session_token,
     init_db,
     is_effective_message_content,
@@ -50,13 +52,20 @@ from app.database import (
     list_pins,
     pin_message,
     revoke_user_session,
+    show_conversation,
     unpin_message,
     update_agent,
     update_artifact,
+    update_conversation_archive,
     update_conversation,
     update_conversation_activity,
+    update_conversation_pin,
+    update_memory,
+    update_user_profile,
+    upsert_agent_user_override,
     upsert_conversation_summary,
     verify_user_credentials,
+    ORCHESTRATOR_AGENT_ID,
 )
 from app.websocket.handler import handle_websocket_message
 
@@ -82,7 +91,7 @@ CONTEXT_CHAR_THRESHOLD = 8000
 CONTEXT_RETAIN_MESSAGE_COUNT = 12
 CONTEXT_CAPACITY_CHARS = 200_000
 MEMORY_EXTRACT_SYSTEM_PROMPT = """你是 AgentHub 的长期记忆提取器。
-请判断本轮群聊是否包含值得长期保存的信息。
+请判断本轮持久会话是否包含值得长期保存的信息。
 
 应该保存：
 - 用户偏好，例如技术栈、交互方式、开发习惯
@@ -109,7 +118,7 @@ MEMORY_EXTRACT_SYSTEM_PROMPT = """你是 AgentHub 的长期记忆提取器。
 }
 """
 CONTEXT_SUMMARY_SYSTEM_PROMPT = """你是 AgentHub 的会话压缩器。
-请把给定历史压缩成一段对后续多 Agent 协作有用的中文摘要。
+请把给定历史压缩成一段对后续 Agent 协作或长期会话有用的中文摘要。
 
 要求：
 - 保留用户目标、项目事实、技术约束、关键决策、已完成事项、未完成事项
@@ -117,6 +126,50 @@ CONTEXT_SUMMARY_SYSTEM_PROMPT = """你是 AgentHub 的会话压缩器。
 - 忽略 API key 错误、Unauthorized、模型调用失败等临时错误提示
 - 摘要要紧凑、结构清晰，可直接作为后续模型上下文
 """
+
+
+class WebSocketConnectionManager:
+    def __init__(self) -> None:
+        self._connections: Dict[WebSocket, str] = {}
+        self._rooms: Dict[Tuple[str, str], Set[WebSocket]] = {}
+
+    def connect(self, websocket: WebSocket, user_id: str) -> None:
+        self._connections[websocket] = user_id
+
+    def disconnect(self, websocket: WebSocket) -> None:
+        user_id = self._connections.pop(websocket, None)
+        if not user_id:
+            return
+        for room_key in list(self._rooms.keys()):
+            sockets = self._rooms[room_key]
+            sockets.discard(websocket)
+            if not sockets:
+                self._rooms.pop(room_key, None)
+
+    def subscribe(self, websocket: WebSocket, user_id: str, conversation_id: str) -> None:
+        if self._connections.get(websocket) != user_id:
+            self.connect(websocket, user_id)
+        self._rooms.setdefault((user_id, conversation_id), set()).add(websocket)
+
+    def unsubscribe(self, websocket: WebSocket, user_id: str, conversation_id: str) -> None:
+        room_key = (user_id, conversation_id)
+        sockets = self._rooms.get(room_key)
+        if not sockets:
+            return
+        sockets.discard(websocket)
+        if not sockets:
+            self._rooms.pop(room_key, None)
+
+    async def broadcast(self, user_id: str, conversation_id: str, payload: Dict[str, Any]) -> None:
+        sockets = list(self._rooms.get((user_id, conversation_id), set()))
+        for socket in sockets:
+            try:
+                await socket.send_json(payload)
+            except Exception:
+                self.disconnect(socket)
+
+
+ws_manager = WebSocketConnectionManager()
 
 
 @app.on_event("startup")
@@ -183,6 +236,44 @@ def is_valid_email(email: str) -> bool:
     return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email))
 
 
+SENSITIVE_CONFIG_KEYS = {"apikey", "api_key", "secret", "token", "authorization", "headers"}
+
+
+def find_sensitive_model_config_key(value: Any, path: str = "modelConfig") -> Optional[str]:
+    if isinstance(value, dict):
+        for key, nested_value in value.items():
+            normalized_key = str(key).replace("-", "_").lower()
+            if normalized_key in SENSITIVE_CONFIG_KEYS:
+                return f"{path}.{key}"
+            nested_path = find_sensitive_model_config_key(nested_value, f"{path}.{key}")
+            if nested_path:
+                return nested_path
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            nested_path = find_sensitive_model_config_key(item, f"{path}[{index}]")
+            if nested_path:
+                return nested_path
+    return None
+
+
+def validate_agent_payload_security(payload: Dict[str, Any]) -> Optional[str]:
+    if "modelConfig" not in payload:
+        return None
+    sensitive_path = find_sensitive_model_config_key(payload.get("modelConfig"))
+    if sensitive_path:
+        return f"当前版本不支持提交模型密钥或敏感鉴权字段: {sensitive_path}"
+    return None
+
+
+def parse_archived_filter(value: Optional[str]) -> Optional[bool]:
+    if value is None:
+        return False
+    normalized = value.strip().lower()
+    if normalized in {"all", "*"}:
+        return None
+    return normalized in {"1", "true", "yes", "on"}
+
+
 def validate_enabled_agent_ids(agent_ids: List[str], owner_user_id: Optional[str] = None) -> Optional[str]:
     for agent_id in agent_ids:
         agent = get_agent(agent_id, owner_user_id=owner_user_id)
@@ -193,21 +284,32 @@ def validate_enabled_agent_ids(agent_ids: List[str], owner_user_id: Optional[str
     return None
 
 
+def ensure_orchestrator_for_group(mode: str, agent_ids: List[str]) -> List[str]:
+    if mode != "group":
+        return agent_ids
+    normalized: List[str] = []
+    for agent_id in [ORCHESTRATOR_AGENT_ID, *agent_ids]:
+        if agent_id not in normalized:
+            normalized.append(agent_id)
+    return normalized
+
+
 def agent_is_callable(agent: Optional[Dict[str, Any]]) -> bool:
     return bool(agent and agent.get("enabled") and agent.get("status") != "disabled")
 
 
 def choose_agent_for_conversation(conversation: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     agent_ids = conversation.get("agentIds", [])
+    owner_user_id = conversation.get("ownerUserId")
     if conversation.get("mode") == "group" and "agent-orchestrator" in agent_ids:
         orchestrator = get_agent("agent-orchestrator")
         if agent_is_callable(orchestrator):
             return orchestrator
     for agent_id in agent_ids:
-        agent = get_agent(agent_id)
+        agent = get_agent(agent_id, owner_user_id=owner_user_id)
         if agent_is_callable(agent):
             return agent
-    fallback = get_agent("agent-claude-code")
+    fallback = get_agent("agent-claude-code", owner_user_id=owner_user_id)
     return fallback if agent_is_callable(fallback) else None
 
 
@@ -216,7 +318,7 @@ def choose_target_agent(conversation: Dict[str, Any], target_agent_id: Optional[
         return None
     if target_agent_id not in conversation.get("agentIds", []):
         return None
-    agent = get_agent(target_agent_id)
+    agent = get_agent(target_agent_id, owner_user_id=conversation.get("ownerUserId"))
     return agent if agent_is_callable(agent) else None
 
 
@@ -229,7 +331,7 @@ def infer_any_mentioned_agent(conversation: Dict[str, Any], content: str) -> Opt
     agents = [
         agent
         for agent_id in conversation.get("agentIds", [])
-        if (agent := get_agent(agent_id))
+        if (agent := get_agent(agent_id, owner_user_id=conversation.get("ownerUserId")))
     ]
     agents.sort(key=lambda item: len(item.get("name", "")), reverse=True)
     for agent in agents:
@@ -254,6 +356,15 @@ def system_prompt_for_agent(agent: Optional[Dict[str, Any]]) -> str:
     if agent.get("systemPrompt"):
         return agent["systemPrompt"]
     return AGENT_CONFIGS.get(agent["name"], AGENT_CONFIGS["Claude Code"])["system"]
+
+
+def system_prompt_for_conversation(
+    conversation: Optional[Dict[str, Any]],
+    agent: Optional[Dict[str, Any]],
+) -> str:
+    if conversation and str(conversation.get("systemPrompt") or "").strip():
+        return str(conversation["systemPrompt"]).strip()
+    return system_prompt_for_agent(agent)
 
 
 def estimate_context_chars(messages: List[Dict[str, str]]) -> int:
@@ -319,11 +430,15 @@ def build_user_input_with_quote(content: str, quoted_message: Optional[Dict[str,
     )
 
 
+def supports_persistent_context(conversation: Optional[Dict[str, Any]]) -> bool:
+    return bool(conversation and conversation.get("mode") in {"agent", "group"})
+
+
 def build_context_usage(conversation: Dict[str, Any]) -> Dict[str, Any]:
     agent = choose_agent_for_conversation(conversation)
-    base_system_prompt = system_prompt_for_agent(agent)
+    base_system_prompt = system_prompt_for_conversation(conversation, agent)
 
-    if conversation.get("mode") == "group":
+    if supports_persistent_context(conversation):
         summary = get_conversation_summary(conversation["id"])
         covered_until_message_id = summary["coveredUntilMessageId"] if summary else None
         pinned_ids = set(get_pinned_message_ids(conversation["id"]))
@@ -334,7 +449,7 @@ def build_context_usage(conversation: Dict[str, Any]) -> Dict[str, Any]:
             )
             if message["id"] not in pinned_ids
         ]
-        used_chars = len(build_group_system_context(conversation["id"], base_system_prompt))
+        used_chars = len(build_persistent_system_context(conversation["id"], base_system_prompt))
         used_chars += sum(len(message["content"]) for message in effective_messages)
     else:
         history = get_context_messages(conversation["id"])
@@ -466,7 +581,7 @@ async def compress_conversation_context(
     )
 
 
-def build_group_system_context(conversation_id: str, base_system_prompt: str) -> str:
+def build_persistent_system_context(conversation_id: str, base_system_prompt: str) -> str:
     sections = [base_system_prompt]
     memories = list_active_memories(conversation_id)
     if memories:
@@ -497,7 +612,7 @@ async def maybe_auto_compress_context(
     user_input: str,
     exclude_message_id: Optional[str] = None,
 ) -> None:
-    if conversation.get("mode") != "group":
+    if not supports_persistent_context(conversation):
         return
     summary = get_conversation_summary(conversation["id"])
     covered_until_message_id = summary["coveredUntilMessageId"] if summary else None
@@ -530,8 +645,8 @@ async def build_model_messages(
     exclude_message_id: Optional[str] = None,
 ) -> List[Dict[str, str]]:
     conversation = get_conversation(conversation_id)
-    base_system_prompt = system_prompt_for_agent(agent)
-    if not conversation or conversation.get("mode") != "group":
+    base_system_prompt = system_prompt_for_conversation(conversation, agent)
+    if not supports_persistent_context(conversation):
         history = get_context_messages(conversation_id, exclude_message_id=exclude_message_id)
         return [{"role": "system", "content": base_system_prompt}] + history + [
             {"role": "user", "content": user_input}
@@ -549,7 +664,7 @@ async def build_model_messages(
         )
         if message["id"] not in pinned_ids
     ]
-    messages = [{"role": "system", "content": build_group_system_context(conversation_id, base_system_prompt)}]
+    messages = [{"role": "system", "content": build_persistent_system_context(conversation_id, base_system_prompt)}]
     for message in effective_messages:
         role = "assistant" if message["role"] in ("agent", "orchestrator", "system") else "user"
         messages.append({"role": role, "content": message["content"]})
@@ -619,12 +734,29 @@ async def extract_long_term_memories(
     user_content: str,
     agent_messages: List[Dict[str, Any]],
 ) -> None:
+    print(
+        "[Memory] extract.start",
+        {
+            "conversationId": conversation_id,
+            "sourceMessageId": source_message_id,
+            "userContent": user_content[:120],
+            "agentMessageCount": len(agent_messages),
+        },
+    )
     useful_agent_messages = [
         message for message in agent_messages
         if message.get("type") in {"text", "code", "task-plan"}
         and is_effective_message_content(message.get("content", ""))
     ]
     if not is_effective_message_content(user_content) and not useful_agent_messages:
+        print(
+            "[Memory] extract.skip",
+            {
+                "conversationId": conversation_id,
+                "sourceMessageId": source_message_id,
+                "reason": "no_effective_content",
+            },
+        )
         return
 
     round_text = f"用户：{user_content}"
@@ -640,10 +772,28 @@ async def extract_long_term_memories(
             ],
             stream=False,
         )
-        payload = parse_json_object(response.choices[0].message.content or "")
+        raw_content = response.choices[0].message.content or ""
+        print(
+            "[Memory] extract.model_response",
+            {
+                "conversationId": conversation_id,
+                "sourceMessageId": source_message_id,
+                "raw": raw_content[:1000],
+            },
+        )
+        payload = parse_json_object(raw_content)
         if not payload.get("shouldRecord"):
+            print(
+                "[Memory] extract.skip",
+                {
+                    "conversationId": conversation_id,
+                    "sourceMessageId": source_message_id,
+                    "reason": payload.get("reason") or "model_should_record_false",
+                },
+            )
             return
         memories = payload.get("memories") or []
+        created_count = 0
         for memory in memories:
             if not isinstance(memory, dict):
                 continue
@@ -664,6 +814,25 @@ async def extract_long_term_memories(
                 confidence=max(0.0, min(confidence, 1.0)),
                 source_message_id=source_message_id,
             )
+            created_count += 1
+            print(
+                "[Memory] extract.saved",
+                {
+                    "conversationId": conversation_id,
+                    "sourceMessageId": source_message_id,
+                    "category": category,
+                    "confidence": max(0.0, min(confidence, 1.0)),
+                    "content": content,
+                },
+            )
+        print(
+            "[Memory] extract.done",
+            {
+                "conversationId": conversation_id,
+                "sourceMessageId": source_message_id,
+                "createdCount": created_count,
+            },
+        )
     except Exception as exc:
         print(f"❌ [Memory Extract Error]: {format_model_error(exc)}")
 
@@ -673,8 +842,25 @@ def schedule_memory_extraction(
     user_message: Dict[str, Any],
     agent_messages: List[Dict[str, Any]],
 ) -> None:
-    if conversation.get("mode") != "group":
+    if not supports_persistent_context(conversation):
+        print(
+            "[Memory] schedule.skip",
+            {
+                "conversationId": conversation.get("id"),
+                "mode": conversation.get("mode"),
+                "reason": "unsupported_conversation_mode",
+            },
+        )
         return
+    print(
+        "[Memory] schedule",
+        {
+            "conversationId": conversation["id"],
+            "mode": conversation.get("mode"),
+            "sourceMessageId": user_message["id"],
+            "agentMessageCount": len(agent_messages),
+        },
+    )
     asyncio.create_task(
         extract_long_term_memories(
             conversation_id=conversation["id"],
@@ -830,6 +1016,27 @@ async def send_ws_event(websocket: WebSocket, event_type: str, event_id: Optiona
     await websocket.send_json(payload)
 
 
+def build_ws_payload(event_type: str, event_id: Optional[str], data: Dict[str, Any]) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"type": event_type, "data": data}
+    if event_id:
+        payload["eventId"] = event_id
+    return payload
+
+
+async def emit_conversation_event(
+    current_user: Dict[str, Any],
+    conversation_id: str,
+    event_type: str,
+    event_id: Optional[str],
+    data: Dict[str, Any],
+) -> None:
+    await ws_manager.broadcast(
+        current_user["id"],
+        conversation_id,
+        build_ws_payload(event_type, event_id, data),
+    )
+
+
 async def send_ws_error(websocket: WebSocket, event_id: Optional[str], code: int, message: str) -> None:
     await send_ws_event(
         websocket,
@@ -844,16 +1051,19 @@ def ws_now() -> str:
 
 
 async def send_agent_status(
-    websocket: WebSocket,
+    current_user: Dict[str, Any],
+    conversation_id: str,
     event_id: Optional[str],
     agent_id: str,
     status: str,
 ) -> None:
-    await send_ws_event(
-        websocket,
+    await emit_conversation_event(
+        current_user,
+        conversation_id,
         "agent.status.changed",
         event_id,
         {
+            "conversationId": conversation_id,
             "agentId": agent_id,
             "newStatus": status,
             "timestamp": ws_now(),
@@ -862,16 +1072,19 @@ async def send_agent_status(
 
 
 async def send_message_completed(
-    websocket: WebSocket,
+    current_user: Dict[str, Any],
+    conversation_id: str,
     event_id: Optional[str],
     message: Dict[str, Any],
     finish_reason: str = "stop",
 ) -> None:
-    await send_ws_event(
-        websocket,
+    await emit_conversation_event(
+        current_user,
+        conversation_id,
         "conversation.message.completed",
         event_id,
         {
+            "conversationId": conversation_id,
             "messageId": message["id"],
             "finishReason": finish_reason,
             "fullMessage": message,
@@ -880,7 +1093,7 @@ async def send_message_completed(
 
 
 async def maybe_create_and_send_artifact(
-    websocket: WebSocket,
+    current_user: Dict[str, Any],
     event_id: Optional[str],
     conversation_id: str,
     message: Dict[str, Any],
@@ -900,11 +1113,12 @@ async def maybe_create_and_send_artifact(
         created_by_type="orchestrator" if message["role"] == "orchestrator" else "agent",
     )
     artifact_meta = {k: v for k, v in artifact.items() if k not in {"content", "currentVersion"}}
-    await send_ws_event(
-        websocket,
+    await emit_conversation_event(
+        current_user,
+        conversation_id,
         "artifact.created",
         event_id,
-        {"artifact": artifact_meta},
+        {"conversationId": conversation_id, "artifact": artifact_meta},
     )
     artifact_message = create_artifact_message(
         conversation_id=conversation_id,
@@ -914,7 +1128,7 @@ async def maybe_create_and_send_artifact(
         artifact=artifact,
     )
     update_conversation_activity(conversation_id, artifact_message["content"])
-    await send_message_completed(websocket, event_id, artifact_message)
+    await send_message_completed(current_user, conversation_id, event_id, artifact_message)
     return {"artifact": artifact_meta, "message": artifact_message}
 
 
@@ -940,6 +1154,7 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
     if not conversation:
         await send_ws_error(websocket, event_id, 40001, "会话不存在")
         return
+    ws_manager.subscribe(websocket, current_user["id"], conversation_id)
     quoted_message = None
     message_metadata: Dict[str, Any] = {}
     if quoted_message_id:
@@ -958,7 +1173,7 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
     if mentioned_agent and not agent_is_callable(mentioned_agent):
         await send_ws_error(websocket, event_id, 40002, "指定 Agent 已禁用，无法继续对话")
         return
-    if conversation["mode"] == "single" and not choose_agent_for_conversation(conversation):
+    if conversation["mode"] in {"agent", "single"} and not choose_agent_for_conversation(conversation):
         await send_ws_error(websocket, event_id, 40002, "当前 Agent 已禁用，无法继续对话")
         return
     if conversation["mode"] == "group" and not target_agent and not get_enabled_orchestrator(conversation):
@@ -975,11 +1190,12 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
         metadata=message_metadata,
     )
     update_conversation_activity(conversation_id, content)
-    await send_ws_event(
-        websocket,
+    await emit_conversation_event(
+        current_user,
+        conversation_id,
         "conversation.message.user_created",
         event_id,
-        {"message": user_message},
+        {"conversationId": conversation_id, "message": user_message},
     )
 
     total_artifacts = 0
@@ -1009,10 +1225,11 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
                 content=orchestrator_content,
             )
             update_conversation_activity(conversation_id, orchestrator_content)
-            await send_message_completed(websocket, event_id, orchestrator_message)
+            await send_message_completed(current_user, conversation_id, event_id, orchestrator_message)
             schedule_memory_extraction(conversation, user_message, [orchestrator_message])
-            await send_ws_event(
-                websocket,
+            await emit_conversation_event(
+                current_user,
+                conversation_id,
                 "conversation.all_tasks.completed",
                 event_id,
                 {
@@ -1035,7 +1252,7 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
             content=plan_content,
         )
         completed_messages.append(orchestrator_message)
-        await send_message_completed(websocket, event_id, orchestrator_message)
+        await send_message_completed(current_user, conversation_id, event_id, orchestrator_message)
 
     agent = target_agent or choose_agent_for_conversation(conversation)
     role = "orchestrator" if agent and agent["id"] == "agent-orchestrator" else "agent"
@@ -1043,9 +1260,10 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
     full_response_text = ""
     finish_reason = "stop"
 
-    await send_agent_status(websocket, event_id, agent["id"], "thinking")
-    await send_ws_event(
-        websocket,
+    await send_agent_status(current_user, conversation_id, event_id, agent["id"], "thinking")
+    await emit_conversation_event(
+        current_user,
+        conversation_id,
         "agent.thinking.started",
         event_id,
         {
@@ -1065,8 +1283,9 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
         ):
             sequence += 1
             full_response_text += token
-            await send_ws_event(
-                websocket,
+            await emit_conversation_event(
+                current_user,
+                conversation_id,
                 "conversation.message.chunk",
                 event_id,
                 {
@@ -1097,15 +1316,16 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
     )
     completed_messages.append(agent_message)
     update_conversation_activity(conversation_id, full_response_text)
-    await send_message_completed(websocket, event_id, agent_message, finish_reason)
+    await send_message_completed(current_user, conversation_id, event_id, agent_message, finish_reason)
 
-    artifact_result = await maybe_create_and_send_artifact(websocket, event_id, conversation_id, agent_message)
+    artifact_result = await maybe_create_and_send_artifact(current_user, event_id, conversation_id, agent_message)
     if artifact_result:
         total_artifacts += 1
 
-    await send_agent_status(websocket, event_id, agent["id"], "online")
-    await send_ws_event(
-        websocket,
+    await send_agent_status(current_user, conversation_id, event_id, agent["id"], "online")
+    await emit_conversation_event(
+        current_user,
+        conversation_id,
         "conversation.all_tasks.completed",
         event_id,
         {
@@ -1175,6 +1395,39 @@ async def api_auth_me(authorization: Optional[str] = Header(None)):
     return ok(user)
 
 
+@app.put(f"{API_PREFIX}/auth/profile")
+async def api_update_profile(payload: Dict[str, Any] = Body(...), authorization: Optional[str] = Header(None)):
+    token = extract_bearer_token(authorization)
+    if not token:
+        return fail(40101, "未登录")
+    current_user = get_user_by_session_token(token)
+    if not current_user:
+        return fail(40101, "登录已过期")
+
+    name = payload.get("name")
+    email = payload.get("email")
+    avatar = payload.get("avatar")
+    if name is not None and not str(name).strip():
+        return fail(40000, "昵称不能为空")
+    if email is not None:
+        normalized_email = str(email).strip().lower()
+        if not is_valid_email(normalized_email):
+            return fail(40000, "邮箱格式不正确")
+        existing_user = get_user_by_email(normalized_email)
+        if existing_user and existing_user["id"] != current_user["id"]:
+            return fail(40004, "邮箱已注册")
+
+    updated_user = update_user_profile(
+        user_id=current_user["id"],
+        name=str(name) if name is not None else None,
+        email=str(email) if email is not None else None,
+        avatar=str(avatar) if avatar is not None else None,
+    )
+    if not updated_user:
+        return fail(40001, "用户不存在")
+    return ok(updated_user, message="资料更新成功")
+
+
 @app.post(f"{API_PREFIX}/auth/logout")
 async def api_logout(authorization: Optional[str] = Header(None)):
     token = extract_bearer_token(authorization)
@@ -1208,6 +1461,9 @@ async def api_list_agents(
 @app.post(f"{API_PREFIX}/agents")
 async def api_create_agent(payload: Dict[str, Any] = Body(...), authorization: Optional[str] = Header(None)):
     current_user = current_user_or_default(authorization)
+    security_error = validate_agent_payload_security(payload)
+    if security_error:
+        return fail(40000, security_error)
     name = str(payload.get("name", "")).strip()
     if not name:
         return fail(40000, "Agent 名称不能为空")
@@ -1230,6 +1486,8 @@ async def api_get_agent_contact_conversation(agent_id: str, authorization: Optio
     agent = get_agent(agent_id, owner_user_id=current_user["id"])
     if not agent:
         return fail(40001, "Agent 不存在")
+    if agent_id == ORCHESTRATOR_AGENT_ID:
+        return fail(40002, "Orchestrator 是群聊调度器，不提供长期联系人会话")
     if not agent.get("enabled") or agent.get("status") == "disabled":
         return fail(40002, "Agent 已禁用，无法打开联系人会话")
     try:
@@ -1254,6 +1512,8 @@ async def api_get_user_agent_contact_id(
     agent = get_agent(agent_id, owner_user_id=user_id)
     if not agent:
         return fail(40001, "Agent 不存在")
+    if agent_id == ORCHESTRATOR_AGENT_ID:
+        return fail(40002, "Orchestrator 是群聊调度器，不提供长期联系人会话")
     if not agent_is_callable(agent):
         return fail(40002, "Agent 已禁用，无法打开联系人会话")
 
@@ -1273,12 +1533,53 @@ async def api_get_user_agent_contact_id(
 @app.put(f"{API_PREFIX}/agents/{{agent_id}}")
 async def api_update_agent(agent_id: str, payload: Dict[str, Any] = Body(...), authorization: Optional[str] = Header(None)):
     current_user = current_user_or_default(authorization)
+    if "systemPrompt" in payload:
+        prompt_preview = str(payload.get("systemPrompt") or "").strip().replace("\n", "\\n")
+        print(
+            "AGENT SYSTEM PROMPT UPDATE:",
+            {
+                "agentId": agent_id,
+                "userId": current_user["id"],
+                "promptLength": len(str(payload.get("systemPrompt") or "")),
+                "promptPreview": prompt_preview[:120],
+            },
+        )
+    security_error = validate_agent_payload_security(payload)
+    if security_error:
+        return fail(40000, security_error)
     existing_agent = get_agent(agent_id, owner_user_id=current_user["id"])
     if existing_agent and existing_agent.get("ownerUserId") is None and current_user.get("role") != "admin":
-        return fail(40006, "系统预置 Agent 不允许修改")
+        agent = upsert_agent_user_override(
+            current_user["id"],
+            agent_id,
+            payload,
+        )
+        if not agent:
+            return fail(40001, "Agent 不存在")
+        if "systemPrompt" in payload:
+            print(
+                "AGENT USER OVERRIDE SAVED:",
+                {
+                    "agentId": agent_id,
+                    "userId": current_user["id"],
+                    "savedPromptLength": len(agent.get("systemPrompt") or ""),
+                    "savedPromptPreview": str(agent.get("systemPrompt") or "").strip().replace("\n", "\\n")[:120],
+                },
+            )
+        return ok(agent, message="Agent 配置更新成功")
     agent = update_agent(agent_id, payload, owner_user_id=current_user["id"])
     if not agent:
         return fail(40001, "Agent 不存在")
+    if "systemPrompt" in payload:
+        print(
+            "AGENT SYSTEM PROMPT UPDATE SAVED:",
+            {
+                "agentId": agent_id,
+                "userId": current_user["id"],
+                "savedPromptLength": len(agent.get("systemPrompt") or ""),
+                "savedPromptPreview": str(agent.get("systemPrompt") or "").strip().replace("\n", "\\n")[:120],
+            },
+        )
     return ok(agent, message="Agent 配置更新成功")
 
 
@@ -1289,7 +1590,14 @@ async def api_delete_agent(agent_id: str, authorization: Optional[str] = Header(
     if not existing_agent:
         return fail(40001, "Agent 不存在")
     if existing_agent.get("ownerUserId") is None and current_user.get("role") != "admin":
-        return fail(40006, "系统预置 Agent 不允许禁用")
+        agent = upsert_agent_user_override(
+            current_user["id"],
+            agent_id,
+            {"enabled": False, "status": "disabled"},
+        )
+        if not agent:
+            return fail(40001, "Agent 不存在")
+        return ok(True, message="Agent 已禁用")
     disabled = disable_agent(agent_id, owner_user_id=current_user["id"])
     if not disabled:
         return fail(40001, "Agent 不存在")
@@ -1302,6 +1610,7 @@ async def api_list_conversations(
     pageSize: int = Query(20, ge=1, le=100),
     mode: Optional[str] = None,
     keyword: Optional[str] = None,
+    isArchived: Optional[str] = None,
     authorization: Optional[str] = Header(None),
 ):
     current_user = current_user_or_default(authorization)
@@ -1310,6 +1619,7 @@ async def api_list_conversations(
         page_size=pageSize,
         mode=mode,
         keyword=keyword,
+        is_archived=parse_archived_filter(isArchived),
         owner_user_id=current_user["id"],
     )
     return ok(attach_context_usage_to_page(conversations))
@@ -1321,12 +1631,14 @@ async def api_create_conversation(payload: Dict[str, Any] = Body(...), authoriza
     title = str(payload.get("title", "")).strip()
     mode = payload.get("mode", "single")
     agent_ids = payload.get("agentIds", [])
+    system_prompt = str(payload.get("systemPrompt") or "").strip()
     if not title:
         return fail(40000, "会话标题不能为空")
     if mode not in {"single", "group"}:
-        return fail(40000, "mode 只支持 single 或 group")
+        return fail(40000, "mode 只支持 single 或 group；agent 会话由 Agent 联系人接口自动创建")
     if not isinstance(agent_ids, list) or not agent_ids:
         return fail(40000, "agentIds 不能为空")
+    agent_ids = ensure_orchestrator_for_group(mode, agent_ids)
     agent_error = validate_enabled_agent_ids(agent_ids, owner_user_id=current_user["id"])
     if agent_error:
         return fail(40002, agent_error)
@@ -1335,6 +1647,7 @@ async def api_create_conversation(payload: Dict[str, Any] = Body(...), authoriza
         mode=mode,
         agent_ids=agent_ids,
         owner_user_id=current_user["id"],
+        system_prompt=system_prompt,
     )
     return ok(attach_context_usage(conversation), message="会话创建成功")
 
@@ -1351,10 +1664,27 @@ async def api_get_conversation(conversation_id: str, authorization: Optional[str
 @app.put(f"{API_PREFIX}/conversations/{{conversation_id}}")
 async def api_update_conversation(conversation_id: str, payload: Dict[str, Any] = Body(...), authorization: Optional[str] = Header(None)):
     current_user = current_user_or_default(authorization)
+    current_conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
+    if not current_conversation:
+        return fail(40001, "会话不存在")
+    if "systemPrompt" in payload:
+        prompt_preview = str(payload.get("systemPrompt") or "").strip().replace("\n", "\\n")
+        print(
+            "CONVERSATION SYSTEM PROMPT UPDATE:",
+            {
+                "conversationId": conversation_id,
+                "mode": current_conversation["mode"],
+                "userId": current_user["id"],
+                "promptLength": len(str(payload.get("systemPrompt") or "")),
+                "promptPreview": prompt_preview[:120],
+            },
+        )
     agent_ids = payload.get("agentIds")
     if agent_ids is not None:
         if not isinstance(agent_ids, list) or not agent_ids:
             return fail(40000, "agentIds 不能为空")
+        agent_ids = ensure_orchestrator_for_group(current_conversation["mode"], agent_ids)
+        payload = {**payload, "agentIds": agent_ids}
         agent_error = validate_enabled_agent_ids(agent_ids, owner_user_id=current_user["id"])
         if agent_error:
             return fail(40002, agent_error)
@@ -1362,6 +1692,44 @@ async def api_update_conversation(conversation_id: str, payload: Dict[str, Any] 
     if not conversation:
         return fail(40001, "会话不存在")
     return ok(attach_context_usage(conversation), message="会话更新成功")
+
+
+@app.put(f"{API_PREFIX}/conversations/{{conversation_id}}/pin")
+async def api_update_conversation_pin(
+    conversation_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(None),
+):
+    current_user = current_user_or_default(authorization)
+    if "isPinned" not in payload:
+        return fail(40000, "isPinned 不能为空")
+    conversation = update_conversation_pin(
+        conversation_id,
+        bool(payload.get("isPinned")),
+        owner_user_id=current_user["id"],
+    )
+    if not conversation:
+        return fail(40001, "会话不存在")
+    return ok(attach_context_usage(conversation), message="会话置顶状态已更新")
+
+
+@app.put(f"{API_PREFIX}/conversations/{{conversation_id}}/archive")
+async def api_update_conversation_archive(
+    conversation_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(None),
+):
+    current_user = current_user_or_default(authorization)
+    if "isArchived" not in payload:
+        return fail(40000, "isArchived 不能为空")
+    conversation = update_conversation_archive(
+        conversation_id,
+        bool(payload.get("isArchived")),
+        owner_user_id=current_user["id"],
+    )
+    if not conversation:
+        return fail(40001, "会话不存在")
+    return ok(attach_context_usage(conversation), message="会话归档状态已更新")
 
 
 @app.get(f"{API_PREFIX}/conversations/{{conversation_id}}/context/usage")
@@ -1373,14 +1741,26 @@ async def api_get_context_usage(conversation_id: str, authorization: Optional[st
     return ok(build_context_usage(conversation))
 
 
+@app.post(f"{API_PREFIX}/conversations/{{conversation_id}}/show")
+async def api_show_conversation(conversation_id: str, authorization: Optional[str] = Header(None)):
+    current_user = current_user_or_default(authorization)
+    conversation = show_conversation(conversation_id, owner_user_id=current_user["id"])
+    if not conversation:
+        return fail(40001, "会话不存在")
+    return ok(attach_context_usage(conversation), message="会话已显示")
+
+
 @app.delete(f"{API_PREFIX}/conversations/{{conversation_id}}")
 async def api_delete_conversation(conversation_id: str, authorization: Optional[str] = Header(None)):
     current_user = current_user_or_default(authorization)
     conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
     if not conversation:
         return fail(40001, "会话不存在", False)
-    if conversation.get("conversationType") == "contact":
-        return fail(40007, "Agent 联系人会话不允许删除，请禁用对应 Agent")
+    if conversation.get("mode") == "agent" or conversation.get("conversationType") == "contact":
+        hidden = hide_agent_conversation(conversation_id, owner_user_id=current_user["id"])
+        if not hidden:
+            return fail(40001, "会话不存在", False)
+        return ok(True, message="Agent 联系人会话已隐藏")
     deleted = delete_conversation(conversation_id, owner_user_id=current_user["id"])
     if not deleted:
         return fail(40001, "会话不存在", False)
@@ -1418,8 +1798,8 @@ async def api_compress_context(conversation_id: str, authorization: Optional[str
     conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
     if not conversation:
         return fail(40001, "会话不存在")
-    if conversation["mode"] != "group":
-        return fail(40000, "当前阶段仅支持群聊上下文压缩")
+    if not supports_persistent_context(conversation):
+        return fail(40000, "当前阶段仅支持群聊和 Agent 长期会话上下文压缩")
     before = get_conversation_summary(conversation_id)
     summary = await compress_conversation_context(conversation_id, manual=True)
     if not summary:
@@ -1442,6 +1822,27 @@ async def api_list_memories(conversation_id: str, authorization: Optional[str] =
     if not get_conversation(conversation_id, owner_user_id=current_user["id"]):
         return fail(40001, "会话不存在")
     return ok(list_active_memories(conversation_id, limit=100))
+
+
+@app.put(f"{API_PREFIX}/conversations/{{conversation_id}}/memories/{{memory_id}}")
+async def api_update_memory(
+    conversation_id: str,
+    memory_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(None),
+):
+    current_user = current_user_or_default(authorization)
+    if not get_conversation(conversation_id, owner_user_id=current_user["id"]):
+        return fail(40001, "会话不存在")
+    allowed_categories = {"preference", "project", "profile", "constraint"}
+    if "category" in payload and str(payload.get("category") or "").strip() not in allowed_categories:
+        return fail(40000, "category 只支持 preference/project/profile/constraint")
+    if "content" in payload and not str(payload.get("content") or "").strip():
+        return fail(40000, "content 不能为空")
+    memory = update_memory(conversation_id, memory_id, payload)
+    if not memory:
+        return fail(40001, "记忆不存在")
+    return ok(memory, message="记忆已更新")
 
 
 @app.delete(f"{API_PREFIX}/conversations/{{conversation_id}}/memories/{{memory_id}}")
@@ -1533,7 +1934,7 @@ async def api_send_message(conversation_id: str, payload: Dict[str, Any] = Body(
     mentioned_agent = infer_any_mentioned_agent(conversation, content)
     if mentioned_agent and not agent_is_callable(mentioned_agent):
         return fail(40002, "指定 Agent 已禁用，无法继续对话")
-    if conversation["mode"] == "single" and not choose_agent_for_conversation(conversation):
+    if conversation["mode"] in {"agent", "single"} and not choose_agent_for_conversation(conversation):
         return fail(40002, "当前 Agent 已禁用，无法继续对话")
     if conversation["mode"] == "group" and not target_agent and not get_enabled_orchestrator(conversation):
         return fail(40002, "Orchestrator 已禁用，无法自动调度；请 @ 一个可用 Agent")
@@ -1710,14 +2111,62 @@ async def api_update_artifact(artifact_id: str, payload: Dict[str, Any] = Body(.
     return ok(artifact, message="产物更新成功")
 
 
+async def handle_ws_conversation_subscribe(
+    websocket: WebSocket,
+    event: Dict[str, Any],
+    current_user: Dict[str, Any],
+) -> None:
+    event_id = event.get("eventId")
+    data = event.get("data") or {}
+    conversation_id = str(data.get("conversationId") or "").strip()
+    if not conversation_id:
+        await send_ws_error(websocket, event_id, 40000, "conversationId 不能为空")
+        return
+    conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
+    if not conversation:
+        await send_ws_error(websocket, event_id, 40001, "会话不存在")
+        return
+    ws_manager.subscribe(websocket, current_user["id"], conversation_id)
+    await send_ws_event(
+        websocket,
+        "conversation.subscribed",
+        event_id,
+        {"conversationId": conversation_id},
+    )
+
+
+async def handle_ws_conversation_unsubscribe(
+    websocket: WebSocket,
+    event: Dict[str, Any],
+    current_user: Dict[str, Any],
+) -> None:
+    event_id = event.get("eventId")
+    data = event.get("data") or {}
+    conversation_id = str(data.get("conversationId") or "").strip()
+    if not conversation_id:
+        await send_ws_error(websocket, event_id, 40000, "conversationId 不能为空")
+        return
+    ws_manager.unsubscribe(websocket, current_user["id"], conversation_id)
+    await send_ws_event(
+        websocket,
+        "conversation.unsubscribed",
+        event_id,
+        {"conversationId": conversation_id},
+    )
+
+
 @app.websocket("/ws")
 async def websocket_root(websocket: WebSocket):
     token = websocket.query_params.get("token")
     if not token:
         auth_header = websocket.headers.get("authorization")
         token = extract_bearer_token(auth_header)
-    current_user = user_from_token_or_default(token)
+    current_user = get_user_by_session_token(token) if token else None
+    if not current_user:
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
+    ws_manager.connect(websocket, current_user["id"])
     await websocket.send_json({
         "type": "connected",
         "sessionId": "agenthub-ws",
@@ -1735,6 +2184,10 @@ async def websocket_root(websocket: WebSocket):
                 continue
             if event.get("type") == "ping":
                 await websocket.send_json({"type": "pong", "timestamp": int(__import__("time").time() * 1000)})
+            elif event.get("type") == "conversation.subscribe":
+                await handle_ws_conversation_subscribe(websocket, event, current_user)
+            elif event.get("type") == "conversation.unsubscribe":
+                await handle_ws_conversation_unsubscribe(websocket, event, current_user)
             elif event.get("type") == "conversation.message.create":
                 await handle_ws_message_create(websocket, event, current_user)
 
@@ -1747,6 +2200,8 @@ async def websocket_root(websocket: WebSocket):
                 )
     except WebSocketDisconnect:
         print("💡 [WebSocket System]: /ws 客户端连接已安全断开")
+    finally:
+        ws_manager.disconnect(websocket)
 
 
 @app.websocket("/ws/chat")
@@ -1755,6 +2210,12 @@ async def websocket_endpoint(websocket: WebSocket):
     WebSocket 实时交互长连接端点
     接管全流式单聊 (1v1) 与 Orchestrator 群聊分布式状态编排
     """
+    token = websocket.query_params.get("token")
+    if not token:
+        token = extract_bearer_token(websocket.headers.get("authorization"))
+    if not token or not get_user_by_session_token(token):
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     try:
         while True:
