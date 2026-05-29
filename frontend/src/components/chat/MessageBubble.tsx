@@ -131,6 +131,21 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     }, 150);
   };
 
+  const handleQuoteClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!message.quotedMessage) return;
+    const element = document.getElementById(`msg-${message.quotedMessage.id}`);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Add visual highlighting classes smoothly
+      element.classList.add('ring-2', 'ring-indigo-400/60', 'bg-indigo-50/50', 'dark:bg-indigo-950/30', 'p-2.5', '-m-2.5', 'rounded-xl');
+      setTimeout(() => {
+        element.classList.remove('ring-2', 'ring-indigo-400/60', 'bg-indigo-50/50', 'dark:bg-indigo-950/30', 'p-2.5', '-m-2.5', 'rounded-xl');
+      }, 1500);
+    }
+  };
+
   const formatMessageText = (text: string) => {
     if (!text) return '';
     // Match @ followed by non-whitespace characters (including Chinese, letters, numbers, etc.)
@@ -229,8 +244,15 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
 
           <div className={`w-full flex flex-col gap-1.5 relative ${isUser ? 'items-end' : 'items-start'}`}>
             {message.quotedMessage && (
-              <div className="w-full self-stretch p-2 bg-slate-50 dark:bg-slate-900 border-l-2 border-slate-300 dark:border-slate-700 rounded-r-lg text-[10px] text-slate-500 dark:text-slate-400 mb-1 flex flex-col gap-0.5 select-none shadow-sm transition-colors">
-                <span className="font-semibold text-slate-700 dark:text-slate-300">回复 @{message.quotedMessage.senderName}：</span>
+              <div 
+                onClick={handleQuoteClick}
+                className="w-full self-stretch p-2 bg-slate-50 dark:bg-slate-900 border-l-2 border-slate-300 dark:border-slate-700 rounded-r-lg text-[10px] text-slate-500 dark:text-slate-400 mb-1 flex flex-col gap-0.5 select-none shadow-sm cursor-pointer hover:bg-slate-100/80 dark:hover:bg-slate-850 hover:border-slate-400 dark:hover:border-slate-650 transition-all"
+                title="点击跳转到被引用的原始消息"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">回复 @{message.quotedMessage.senderName}：</span>
+                  <span className="text-[9px] text-indigo-500 dark:text-indigo-400 font-medium">点击跳转</span>
+                </div>
                 <span className="truncate">{message.quotedMessage.content}</span>
               </div>
             )}

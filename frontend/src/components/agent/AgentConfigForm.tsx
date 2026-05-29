@@ -131,7 +131,7 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
         </div>
 
         {/* Mobile quick tabs */}
-        <div className="lg:hidden flex overflow-x-auto border-b border-slate-200/60 dark:border-slate-800 bg-white dark:bg-slate-900 p-2 gap-1.5 flex-shrink-0">
+        <div className="lg:hidden flex overflow-x-auto border-b border-slate-200/60 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2.5 gap-1.5 flex-shrink-0">
           {tabs.map(tab => {
             const isActive = activeTab === tab.id;
             return (
@@ -149,6 +149,8 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
               </button>
             );
           })}
+          {/* Spacer to fix Flexbox right scroll padding bug on mobile */}
+          <div className="w-6 flex-shrink-0" />
         </div>
 
         {/* Right Side Scrollable Form Content */}
@@ -486,7 +488,7 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
                         </div>
                         <div className="min-w-0">
                           <span className={`text-xs font-bold block transition-colors ${
-                            isPermOn ? 'text-violet-750 dark:text-violet-400' : 'text-slate-700 dark:text-slate-350'
+                            isPermOn ? 'text-violet-700 dark:text-violet-400' : 'text-slate-700 dark:text-slate-350'
                           }`}>
                             {p.label}
                           </span>

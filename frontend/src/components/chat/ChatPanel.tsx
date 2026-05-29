@@ -174,7 +174,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
 
     if (lastScrolledConversationId.current !== conversationId) {
       scrollToBottom('instant');
-      if (belongsToCurrentConv || messages.length === 0 || !conversationId) {
+      if (belongsToCurrentConv) {
         lastScrolledConversationId.current = conversationId;
       }
     } else {

@@ -136,6 +136,7 @@ export interface Message {
   };
   artifactRef?: ArtifactReference;
   isPinned?: boolean;
+  metadata?: Record<string, any>;
 }
 
 export interface Artifact {

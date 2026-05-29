@@ -15,6 +15,41 @@ import { registerApi, loginApi, loginAsGuestApi, getMeApi, logoutApi, updateProf
 import sandboxService from '@/services/http/sandboxService';
 import { platform, FileNode, WorkspaceInfo, AgentProcessInfo } from '@/utils/platform';
 
+// Helper functions to cache message-specific artifact references locally
+const saveArtifactRefToLocal = (messageId: string, ref: ArtifactReference): void => {
+  try {
+    const cached = JSON.parse(localStorage.getItem('ag_message_artifact_refs') || '{}');
+    cached[messageId] = ref;
+    localStorage.setItem('ag_message_artifact_refs', JSON.stringify(cached));
+  } catch (e) {
+    console.error('Failed to save artifactRef to localStorage', e);
+  }
+};
+
+const getArtifactRefFromLocal = (messageId: string): ArtifactReference | undefined => {
+  try {
+    const cached = JSON.parse(localStorage.getItem('ag_message_artifact_refs') || '{}');
+    return cached[messageId];
+  } catch (e) {
+    console.error('Failed to get artifactRef from localStorage', e);
+    return undefined;
+  }
+};
+
+// Map backend metadata fields back to message root properties
+const mapMessageMetadata = (m: Message): Message => {
+  const metadata = (m as any).metadata;
+  let artifactRef = m.artifactRef || metadata?.artifactRef;
+  if (!artifactRef && m.id) {
+    artifactRef = getArtifactRefFromLocal(m.id);
+  }
+  return {
+    ...m,
+    quotedMessage: m.quotedMessage || metadata?.quotedMessage || undefined,
+    artifactRef: artifactRef || undefined,
+  };
+};
+
 
 interface AgentHubStore {
   conversations: Conversation[];
@@ -469,11 +504,14 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       isProcessing: false,
       replyContext: null,
       quoteArtifactRef: null,
+      messages: [],
+      artifacts: [],
+      pins: [],
+      memories: [],
+      artifactVersions: {},
     });
     if (id) {
       await get().loadConversationData(id);
-    } else {
-      set({ messages: [], artifacts: [], artifactVersions: {} });
     }
   },
 
@@ -595,7 +633,10 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
       let pinsData: PinItem[] = [];
       if (pinsRes.code === 0 && pinsRes.data) {
-        pinsData = pinsRes.data;
+        pinsData = pinsRes.data.map((p: PinItem) => ({
+          ...p,
+          message: p.message ? mapMessageMetadata(p.message) : p.message
+        }));
       }
 
       let memoriesData: MemoryItem[] = [];
@@ -605,10 +646,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
       let messagesData: Message[] = [];
       if (msgRes.code === 0 && msgRes.data && msgRes.data.list) {
-        messagesData = msgRes.data.list.map((m: Message) => ({
-          ...m,
-          isPinned: pinsData.some(p => p.messageId === m.id)
-        }));
+        messagesData = msgRes.data.list.map((m: Message) => {
+          const mapped = mapMessageMetadata(m);
+          return {
+            ...mapped,
+            isPinned: pinsData.some(p => p.messageId === m.id)
+          };
+        });
       }
 
       set({
@@ -987,14 +1031,22 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         const res = await sendMessageNonStreaming(activeConversationId, payload);
         if (res.code === 0) {
           const { userMessage, agentMessages, artifacts, contextUsage } = res.data;
+          
+          // Cache the artifactRef with the server-side message ID if present
+          const mappedUserMessage = mapMessageMetadata(userMessage);
+          const finalArtifactRef = mappedUserMessage.artifactRef || newUserMessage.artifactRef;
+          if (finalArtifactRef && userMessage.id) {
+            saveArtifactRefToLocal(userMessage.id, finalArtifactRef);
+          }
+
           set(state => {
             // Replace the optimistic message with the actual user message, preserving local reply/citation fields
             const updatedMessages = state.messages.map(m => {
               if (m.id === newUserMessage.id) {
                 return {
-                  ...userMessage,
-                  quotedMessage: userMessage.quotedMessage || m.quotedMessage,
-                  artifactRef: userMessage.artifactRef || m.artifactRef,
+                  ...mappedUserMessage,
+                  quotedMessage: mappedUserMessage.quotedMessage || m.quotedMessage,
+                  artifactRef: finalArtifactRef,
                 };
               }
               return m;
@@ -1005,7 +1057,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             agentMessages.forEach(msg => {
               finalMessages = finalMessages.filter(m => m.id !== `thinking-${msg.senderId}`);
               if (!finalMessages.some(m => m.id === msg.id)) {
-                finalMessages.push(msg);
+                finalMessages.push(mapMessageMetadata(msg));
               }
             });
 
@@ -1434,11 +1486,12 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         set(state => {
           if (state.activeConversationId !== fullMessage.conversationId) return {};
 
+          const mappedMessage = mapMessageMetadata(fullMessage);
           const updatedMessages = state.messages.map(m =>
-            m.id === fullMessage.id ? fullMessage : m
+            m.id === fullMessage.id ? mappedMessage : m
           );
           if (!state.messages.some(m => m.id === fullMessage.id)) {
-            updatedMessages.push(fullMessage);
+            updatedMessages.push(mappedMessage);
           }
 
           const updatedAgents = state.agents.map(a =>
@@ -1813,7 +1866,10 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         if (res.code === 0) {
           set(state => ({
             messages: state.messages.map(m => m.id === messageId ? { ...m, isPinned: true } : m),
-            pins: [...state.pins, res.data]
+            pins: [...state.pins, {
+              ...res.data,
+              message: res.data.message ? mapMessageMetadata(res.data.message) : res.data.message
+            }]
           }));
         }
       } else {
