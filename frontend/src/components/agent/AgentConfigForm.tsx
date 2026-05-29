@@ -215,6 +215,52 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
                   />
                 </div>
 
+                {/* Tags Editing Section */}
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">能力标签 (Tags)</label>
+                  <div className="flex flex-wrap gap-2 p-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl min-h-[44px] items-center">
+                    {(form.tags || []).map((tag, idx) => (
+                      <span
+                        key={idx}
+                        className="px-2.5 py-1 bg-violet-100/50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 text-[10px] font-semibold rounded-full border border-violet-200/50 dark:border-violet-900/30 flex items-center gap-1 group"
+                      >
+                        <span>{tag}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setForm(prev => ({
+                              ...prev,
+                              tags: (prev.tags || []).filter((_, i) => i !== idx)
+                            }));
+                          }}
+                          className="text-violet-400 hover:text-red-500 rounded-full transition-colors"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      </span>
+                    ))}
+                    
+                    <input
+                      type="text"
+                      placeholder="输入标签并按回车..."
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const val = e.currentTarget.value.trim();
+                          if (val && !(form.tags || []).includes(val)) {
+                            setForm(prev => ({
+                              ...prev,
+                              tags: [...(prev.tags || []), val]
+                            }));
+                            e.currentTarget.value = '';
+                          }
+                        }
+                      }}
+                      className="flex-grow bg-transparent text-xs text-slate-800 dark:text-slate-150 outline-none min-w-[120px] py-0.5 px-1 placeholder-slate-400 dark:placeholder-slate-600"
+                    />
+                  </div>
+                </div>
+
                 <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
                   <div className="min-w-0">
                     <span className="text-xs font-bold text-slate-700 dark:text-slate-350 block">启用智能体状态</span>
