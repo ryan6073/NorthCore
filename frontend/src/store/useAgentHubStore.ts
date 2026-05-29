@@ -638,7 +638,26 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       set(state => ({
         messages: state.messages.map(m => m.id === tempId ? failMsg : m),
       }));
+
+      if (!useMockMode) {
+        try {
+          await sendMessageNonStreaming(activeConversationId, {
+            content: failMsg.content,
+            role: 'system',
+            senderId: 'system',
+            senderName: '系统',
+            type: 'status',
+          } as any);
+        } catch (e) {
+          console.warn('Failed to save compress fail system message to backend', e);
+        }
+      }
     } else if (result) {
+      let finalContent = apiMessage;
+      if (result.summary && result.summary.summary) {
+        finalContent = `${apiMessage}\n\n📝 摘要：${result.summary.summary}`;
+      }
+
       const systemMsg: Message = {
         id: (result.summary && result.summary.id) || createId('msg'),
         conversationId: activeConversationId,
@@ -646,7 +665,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         senderName: '系统',
         role: 'system',
         type: 'status',
-        content: apiMessage,
+        content: finalContent,
         createdAt: getCurrentFullTime(),
       };
       set(state => ({
