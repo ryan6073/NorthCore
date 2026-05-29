@@ -54,7 +54,7 @@ SQLite
 - `/api/v1/artifacts`
 
 - `/ws`
-- `/ws/chat`
+- `/ws/chat`（已弃用，仅返回迁移提示）
 
 ### Application Service Layer
 
@@ -84,6 +84,14 @@ Harness 用于让 Agent 执行可控、可追踪、可复用。
 - Orchestrator 调度链路
 - 上下文压缩
 - 长期记忆注入
+
+当前 Sandbox Run V1 已补齐：
+
+- 每个 run 一个空 Docker 工作区，默认 `--network none`
+- Orchestrator 输出 DAG，后端按依赖并行调度 ready step
+- step 认领、状态、日志和失败/阻塞状态持久化
+- 文件版本采用 `baseVersion` 乐观锁，冲突进入人工解决流程
+- run 输出文件同步到 Artifact / ArtifactVersion
 
 ### Adapter Layer
 
@@ -126,8 +134,16 @@ MVP 不宣称真实接入 Claude Code / Codex 平台。当前 Claude Code / Code
 - `conversation.message.completed`
 - `artifact.created`
 - `conversation.all_tasks.completed`
+- `run.created`
+- `run.step.started`
+- `run.step.log`
+- `run.step.completed`
+- `run.step.failed`
+- `run.step.conflict`
+- `run.completed`
+- `run.failed`
 
-`/ws` 必须携带有效 token。服务端按 `userId + conversationId` 建立订阅房间，所有会话事件只广播给已鉴权订阅该会话的连接。`/ws/chat` 暂时保留为旧 Demo 兼容入口，但未鉴权连接会被拒绝。
+`/ws` 必须携带有效 token。服务端按 `userId + conversationId` 建立订阅房间，所有会话事件只广播给已鉴权订阅该会话的连接。`/ws/chat` 已弃用，前端应统一使用 `/ws`。
 
 ## 开发环境
 

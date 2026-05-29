@@ -1,24 +1,27 @@
 import asyncio
 import json
-import os
 import re
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fastapi import Body, FastAPI, Header, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
 from openai import OpenAI
 
 from app.config import settings
 from app.core.orchestrator import AGENT_CONFIGS, analyze_orchestrator_intent
 from app.database import (
+    add_conversation_agent,
     create_artifact,
     create_agent,
+    create_agent_run,
+    create_agent_run_steps,
     create_conversation,
     create_id,
     create_memory,
     create_message,
+    create_sandbox,
     create_user,
     create_user_session,
     disable_agent,
@@ -28,8 +31,10 @@ from app.database import (
     delete_memory,
     hide_agent_conversation,
     get_agent,
+    get_conversation_agent_config,
     get_artifact,
     get_artifact_version,
+    get_agent_run_detail,
     get_context_messages,
     get_conversation,
     get_conversation_summary,
@@ -37,6 +42,7 @@ from app.database import (
     get_message_in_conversation,
     get_or_create_guest_user,
     get_pinned_message_ids,
+    get_sandbox,
     get_user,
     get_user_by_email,
     get_user_by_session_token,
@@ -50,8 +56,12 @@ from app.database import (
     list_effective_messages,
     list_messages,
     list_pins,
+    list_agent_runs_for_conversation,
+    list_sandbox_conflicts,
+    list_sandbox_files,
     pin_message,
     revoke_user_session,
+    remove_conversation_agent,
     show_conversation,
     unpin_message,
     update_agent,
@@ -61,13 +71,19 @@ from app.database import (
     update_conversation_activity,
     update_conversation_pin,
     update_memory,
+    update_agent_run,
+    update_agent_run_step,
+    update_sandbox,
     update_user_profile,
     upsert_agent_user_override,
+    upsert_conversation_agent_config,
     upsert_conversation_summary,
     verify_user_credentials,
     ORCHESTRATOR_AGENT_ID,
 )
-from app.websocket.handler import handle_websocket_message
+from app.services.file_version_service import FileVersionService
+from app.services.run_scheduler import RunScheduler, generate_dag
+from app.services.sandbox_service import SandboxService
 
 # 初始化工业级 FastAPI 实例
 app = FastAPI(
@@ -237,6 +253,29 @@ def is_valid_email(email: str) -> bool:
 
 
 SENSITIVE_CONFIG_KEYS = {"apikey", "api_key", "secret", "token", "authorization", "headers"}
+CONVERSATION_AGENT_CONFIG_FIELDS = {
+    "name",
+    "avatar",
+    "description",
+    "tags",
+    "status",
+    "category",
+    "provider",
+    "enabled",
+    "lastUsedAt",
+    "systemPrompt",
+    "modelConfig",
+    "tools",
+    "permissions",
+}
+CONVERSATION_AGENT_IDENTITY_FIELDS = {
+    "id",
+    "ownerUserId",
+    "conversationId",
+    "baseAgentId",
+    "overrideSource",
+    "systemPromptSource",
+}
 
 
 def find_sensitive_model_config_key(value: Any, path: str = "modelConfig") -> Optional[str]:
@@ -263,6 +302,19 @@ def validate_agent_payload_security(payload: Dict[str, Any]) -> Optional[str]:
     if sensitive_path:
         return f"当前版本不支持提交模型密钥或敏感鉴权字段: {sensitive_path}"
     return None
+
+
+def sanitize_conversation_agent_config_payload(payload: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    blocked_fields = sorted(key for key in payload if key in CONVERSATION_AGENT_IDENTITY_FIELDS)
+    if blocked_fields:
+        return None, f"会话级 Agent 配置不允许修改身份字段: {', '.join(blocked_fields)}"
+    unsupported_fields = sorted(key for key in payload if key not in CONVERSATION_AGENT_CONFIG_FIELDS)
+    if unsupported_fields:
+        return None, f"会话级 Agent 配置包含不支持字段: {', '.join(unsupported_fields)}"
+    security_error = validate_agent_payload_security(payload)
+    if security_error:
+        return None, security_error
+    return {key: payload[key] for key in CONVERSATION_AGENT_CONFIG_FIELDS if key in payload}, None
 
 
 def parse_archived_filter(value: Optional[str]) -> Optional[bool]:
@@ -298,6 +350,24 @@ def agent_is_callable(agent: Optional[Dict[str, Any]]) -> bool:
     return bool(agent and agent.get("enabled") and agent.get("status") != "disabled")
 
 
+def get_effective_agent_for_conversation(
+    conversation: Dict[str, Any],
+    agent_id: str,
+) -> Optional[Dict[str, Any]]:
+    owner_user_id = conversation.get("ownerUserId")
+    if (
+        conversation.get("mode") == "group"
+        and agent_id != ORCHESTRATOR_AGENT_ID
+        and agent_id in conversation.get("agentIds", [])
+    ):
+        return get_conversation_agent_config(
+            conversation["id"],
+            agent_id,
+            owner_user_id=owner_user_id,
+        )
+    return get_agent(agent_id, owner_user_id=owner_user_id)
+
+
 def choose_agent_for_conversation(conversation: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     agent_ids = conversation.get("agentIds", [])
     owner_user_id = conversation.get("ownerUserId")
@@ -306,7 +376,7 @@ def choose_agent_for_conversation(conversation: Dict[str, Any]) -> Optional[Dict
         if agent_is_callable(orchestrator):
             return orchestrator
     for agent_id in agent_ids:
-        agent = get_agent(agent_id, owner_user_id=owner_user_id)
+        agent = get_effective_agent_for_conversation(conversation, agent_id)
         if agent_is_callable(agent):
             return agent
     fallback = get_agent("agent-claude-code", owner_user_id=owner_user_id)
@@ -318,7 +388,7 @@ def choose_target_agent(conversation: Dict[str, Any], target_agent_id: Optional[
         return None
     if target_agent_id not in conversation.get("agentIds", []):
         return None
-    agent = get_agent(target_agent_id, owner_user_id=conversation.get("ownerUserId"))
+    agent = get_effective_agent_for_conversation(conversation, target_agent_id)
     return agent if agent_is_callable(agent) else None
 
 
@@ -331,7 +401,7 @@ def infer_any_mentioned_agent(conversation: Dict[str, Any], content: str) -> Opt
     agents = [
         agent
         for agent_id in conversation.get("agentIds", [])
-        if (agent := get_agent(agent_id, owner_user_id=conversation.get("ownerUserId")))
+        if (agent := get_effective_agent_for_conversation(conversation, agent_id))
     ]
     agents.sort(key=lambda item: len(item.get("name", "")), reverse=True)
     for agent in agents:
@@ -362,6 +432,14 @@ def system_prompt_for_conversation(
     conversation: Optional[Dict[str, Any]],
     agent: Optional[Dict[str, Any]],
 ) -> str:
+    if (
+        conversation
+        and conversation.get("mode") == "group"
+        and agent
+        and agent.get("systemPromptSource") == "conversation_override"
+        and str(agent.get("systemPrompt") or "").strip()
+    ):
+        return str(agent["systemPrompt"]).strip()
     if conversation and str(conversation.get("systemPrompt") or "").strip():
         return str(conversation["systemPrompt"]).strip()
     return system_prompt_for_agent(agent)
@@ -410,24 +488,92 @@ def build_quote_metadata(quoted_message: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def build_user_input_with_quote(content: str, quoted_message: Optional[Dict[str, Any]]) -> str:
-    if not quoted_message:
+def build_artifact_ref_context(
+    payload: Dict[str, Any],
+    conversation_id: str,
+    owner_user_id: str,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    raw_ref = payload.get("artifactRef")
+    if not isinstance(raw_ref, dict):
+        return None, None
+    artifact_id = str(raw_ref.get("artifactId") or "").strip()
+    if not artifact_id:
+        return None, "artifactRef.artifactId 不能为空"
+    artifact = get_artifact(artifact_id)
+    if not artifact or artifact.get("conversationId") != conversation_id:
+        return None, "引用产物不存在或不属于当前会话"
+    if not get_conversation(conversation_id, owner_user_id=owner_user_id):
+        return None, "会话不存在"
+
+    quoted_text = str(raw_ref.get("quotedText") or "").strip()
+    start_line = raw_ref.get("startLine")
+    end_line = raw_ref.get("endLine")
+    if not quoted_text and artifact.get("content"):
+        try:
+            start = max(int(start_line or 1), 1)
+            end = max(int(end_line or start), start)
+            lines = str(artifact.get("content") or "").splitlines()
+            quoted_text = "\n".join(lines[start - 1:end]).strip()
+        except (TypeError, ValueError):
+            quoted_text = str(artifact.get("content") or "")[:8000]
+
+    artifact_ref = {
+        "artifactId": artifact_id,
+        "artifactTitle": str(raw_ref.get("artifactTitle") or artifact.get("title") or ""),
+        "artifactType": artifact.get("type"),
+        "version": raw_ref.get("version") or artifact.get("latestVersion"),
+        "startLine": start_line,
+        "endLine": end_line,
+        "quotedText": quoted_text[:12000],
+    }
+    return artifact_ref, None
+
+
+def build_user_input_with_references(
+    content: str,
+    quoted_message: Optional[Dict[str, Any]],
+    artifact_ref: Optional[Dict[str, Any]],
+) -> str:
+    if not quoted_message and not artifact_ref:
         return content
-    return (
-        "用户本次消息引用了一条历史消息。引用消息是用户正在追问、解释、修改或讨论的对象，"
-        "不是新的用户指令。\n\n"
-        "[被引用消息]\n"
-        f"消息ID: {quoted_message['id']}\n"
-        f"发送者: {quoted_message['senderName']}\n"
-        f"角色: {quoted_message['role']}\n"
-        f"类型: {quoted_message['type']}\n"
-        "内容:\n"
-        f"{quoted_message['content']}\n\n"
+
+    sections = [
+        "用户本次消息带有引用上下文。引用内容是用户正在追问、解释、修改或讨论的对象，"
+        "不是新的用户指令。请优先结合引用上下文理解用户当前问题。"
+    ]
+    if quoted_message:
+        sections.append(
+            "[被引用消息]\n"
+            f"消息ID: {quoted_message['id']}\n"
+            f"发送者: {quoted_message['senderName']}\n"
+            f"角色: {quoted_message['role']}\n"
+            f"类型: {quoted_message['type']}\n"
+            "内容:\n"
+            f"{quoted_message['content']}"
+        )
+    if artifact_ref:
+        sections.append(
+            "[被引用产物]\n"
+            f"产物ID: {artifact_ref.get('artifactId')}\n"
+            f"标题: {artifact_ref.get('artifactTitle')}\n"
+            f"类型: {artifact_ref.get('artifactType')}\n"
+            f"版本: {artifact_ref.get('version')}\n"
+            f"行号: {artifact_ref.get('startLine')} - {artifact_ref.get('endLine')}\n"
+            "引用片段:\n"
+            f"{artifact_ref.get('quotedText') or ''}\n\n"
+            "如果用户要求修改产物，请基于上面的产物ID、版本、行号和引用片段给出精确修改方案；"
+            "需要输出完整替换内容时，保持未提及部分不变。"
+        )
+    sections.append(
         "[用户当前消息]\n"
         f"{content}\n\n"
-        "请结合被引用消息理解用户当前问题。若用户说“这是什么意思”“这个怎么改”“上面的问题”，"
-        "默认指向被引用消息。"
+        "若用户说“这里”“这个”“上面的问题”，默认指向被引用消息或被引用产物片段。"
     )
+    return "\n\n".join(sections)
+
+
+def build_user_input_with_quote(content: str, quoted_message: Optional[Dict[str, Any]]) -> str:
+    return build_user_input_with_references(content, quoted_message, None)
 
 
 def supports_persistent_context(conversation: Optional[Dict[str, Any]]) -> bool:
@@ -469,6 +615,70 @@ def attach_context_usage(conversation: Dict[str, Any]) -> Dict[str, Any]:
         **conversation,
         **build_context_usage(conversation),
     }
+
+
+RUN_ACTIVE_STATUSES = {"pending", "running", "conflict"}
+RUN_STALE_AFTER = timedelta(minutes=10)
+
+
+def parse_db_time(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def run_is_stale(run: Dict[str, Any], now: Optional[datetime] = None) -> bool:
+    if run.get("status") not in RUN_ACTIVE_STATUSES:
+        return False
+    started_at = parse_db_time(run.get("startedAt") or run.get("createdAt"))
+    if not started_at:
+        return False
+    return (now or datetime.now()) - started_at > RUN_STALE_AFTER
+
+
+def mark_run_stale(run: Dict[str, Any], reason: str = "沙箱任务超时未完成，已自动标记为失败") -> None:
+    for step in run.get("steps", []):
+        if step.get("status") == "running":
+            update_agent_run_step(step["id"], status="failed", error=reason, mark_finished=True)
+        elif step.get("status") == "pending":
+            update_agent_run_step(step["id"], status="blocked", error=reason, mark_finished=True)
+    update_agent_run(run["id"], status="failed", summary=reason, error=reason, mark_finished=True)
+    sandbox = run.get("sandbox")
+    if sandbox:
+        update_sandbox(sandbox["id"], status="failed", error=reason)
+
+
+def cleanup_stale_runs_for_conversation(conversation_id: str, owner_user_id: str) -> None:
+    page = list_agent_runs_for_conversation(
+        conversation_id,
+        owner_user_id=owner_user_id,
+        page=1,
+        page_size=20,
+    )
+    now = datetime.now()
+    for run in page.get("list", []):
+        if run_is_stale(run, now):
+            mark_run_stale(run)
+
+
+def latest_active_run_for_conversation(
+    conversation_id: str,
+    owner_user_id: str,
+) -> Optional[Dict[str, Any]]:
+    cleanup_stale_runs_for_conversation(conversation_id, owner_user_id)
+    page = list_agent_runs_for_conversation(
+        conversation_id,
+        owner_user_id=owner_user_id,
+        page=1,
+        page_size=5,
+    )
+    for run in page.get("list", []):
+        if run.get("status") in {"pending", "running", "conflict"}:
+            return run
+    return None
 
 
 def attach_context_usage_to_page(page_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -883,6 +1093,18 @@ def extract_artifact_payload(content: str) -> Optional[Dict[str, str]]:
     code_match = re.search(r"```([a-zA-Z0-9_+-]*)\s*([\s\S]*?)```", content)
     if code_match:
         language = code_match.group(1).strip() or "code"
+        if language.lower() in {"mermaid", "mmd"}:
+            return {
+                "title": "diagram.mmd",
+                "type": "mermaid",
+                "content": code_match.group(2).strip(),
+            }
+        if language.lower() in {"markdown", "md"}:
+            return {
+                "title": "document.md",
+                "type": "markdown",
+                "content": code_match.group(2).strip(),
+            }
         return {
             "title": f"artifact.{language}",
             "type": "code",
@@ -915,6 +1137,12 @@ def infer_artifact_base_name(artifact_type: str, content: str) -> str:
             if heading:
                 return heading
         return "document"
+    if artifact_type == "mermaid":
+        if "sequencediagram" in lowered or "sequenceDiagram" in content:
+            return "sequence-diagram"
+        if "flowchart" in lowered or "graph " in lowered:
+            return "flowchart"
+        return "diagram"
     if "tsx" in lowered or "jsx" in lowered or "export default" in lowered:
         return "component"
     return "code"
@@ -931,6 +1159,8 @@ def artifact_extension(payload: Dict[str, str]) -> str:
         return "html"
     if payload["type"] == "markdown":
         return "md"
+    if payload["type"] == "mermaid":
+        return "mmd"
     title = payload.get("title", "")
     if "." in title:
         ext = title.rsplit(".", 1)[-1].lower()
@@ -969,6 +1199,7 @@ def create_artifact_message(
     sender_name: str,
     role: str,
     artifact: Dict[str, Any],
+    content: Optional[str] = None,
 ) -> Dict[str, Any]:
     return create_message(
         conversation_id=conversation_id,
@@ -976,9 +1207,62 @@ def create_artifact_message(
         sender_name=sender_name,
         role=role,
         msg_type="artifact",
-        content=f"生成产物 {artifact['title']}",
+        content=content or f"生成产物 {artifact['title']}",
         artifact_id=artifact["id"],
     )
+
+
+def persist_artifact_from_message(
+    conversation_id: str,
+    message: Dict[str, Any],
+    artifact_ref: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    artifact_payload = extract_artifact_payload(message["content"])
+    if not artifact_payload:
+        return None
+
+    referenced_artifact_id = artifact_ref.get("artifactId") if artifact_ref else None
+    if referenced_artifact_id:
+        artifact = update_artifact(
+            referenced_artifact_id,
+            artifact_payload["content"],
+            change_summary=f"由 {message['senderName']} 更新",
+            created_by=message["senderId"],
+            created_by_type="orchestrator" if message["role"] == "orchestrator" else "agent",
+            metadata={
+                "sourceMessageId": message["id"],
+                "source": "artifactRef",
+            },
+        )
+        if not artifact:
+            return None
+        action = "updated"
+        artifact_message_content = f"更新产物 {artifact['title']} 到 v{artifact['latestVersion']}"
+    else:
+        artifact_title = build_artifact_title(conversation_id, artifact_payload)
+        artifact = create_artifact(
+            conversation_id=conversation_id,
+            message_id=message["id"],
+            title=artifact_title,
+            artifact_type=artifact_payload["type"],
+            content=artifact_payload["content"],
+            description=f"由 {message['senderName']} 生成",
+            created_by=message["senderId"],
+            created_by_type="orchestrator" if message["role"] == "orchestrator" else "agent",
+        )
+        action = "created"
+        artifact_message_content = f"生成产物 {artifact['title']}"
+
+    artifact_meta = {k: v for k, v in artifact.items() if k not in {"content", "currentVersion"}}
+    artifact_message = create_artifact_message(
+        conversation_id=conversation_id,
+        sender_id=message["senderId"],
+        sender_name=message["senderName"],
+        role=message["role"],
+        artifact=artifact,
+        content=artifact_message_content,
+    )
+    return {"artifact": artifact_meta, "message": artifact_message, "action": action}
 
 
 def list_mentionable_agents(conversation: Dict[str, Any], keyword: str = "") -> List[Dict[str, Any]]:
@@ -1097,39 +1381,26 @@ async def maybe_create_and_send_artifact(
     event_id: Optional[str],
     conversation_id: str,
     message: Dict[str, Any],
+    artifact_ref: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
-    artifact_payload = extract_artifact_payload(message["content"])
-    if not artifact_payload:
+    artifact_result = persist_artifact_from_message(conversation_id, message, artifact_ref)
+    if not artifact_result:
         return None
-    artifact_title = build_artifact_title(conversation_id, artifact_payload)
-    artifact = create_artifact(
-        conversation_id=conversation_id,
-        message_id=message["id"],
-        title=artifact_title,
-        artifact_type=artifact_payload["type"],
-        content=artifact_payload["content"],
-        description=f"由 {message['senderName']} 生成",
-        created_by=message["senderId"],
-        created_by_type="orchestrator" if message["role"] == "orchestrator" else "agent",
-    )
-    artifact_meta = {k: v for k, v in artifact.items() if k not in {"content", "currentVersion"}}
     await emit_conversation_event(
         current_user,
         conversation_id,
         "artifact.created",
         event_id,
-        {"conversationId": conversation_id, "artifact": artifact_meta},
+        {
+            "conversationId": conversation_id,
+            "artifact": artifact_result["artifact"],
+            "action": artifact_result["action"],
+        },
     )
-    artifact_message = create_artifact_message(
-        conversation_id=conversation_id,
-        sender_id=message["senderId"],
-        sender_name=message["senderName"],
-        role=message["role"],
-        artifact=artifact,
-    )
+    artifact_message = artifact_result["message"]
     update_conversation_activity(conversation_id, artifact_message["content"])
     await send_message_completed(current_user, conversation_id, event_id, artifact_message)
-    return {"artifact": artifact_meta, "message": artifact_message}
+    return artifact_result
 
 
 async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], current_user: Optional[Dict[str, Any]] = None) -> None:
@@ -1163,7 +1434,13 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
             await send_ws_error(websocket, event_id, 40003, "引用消息不存在或不属于当前会话")
             return
         message_metadata = build_quote_metadata(quoted_message)
-    model_user_input = build_user_input_with_quote(content, quoted_message)
+    artifact_ref, artifact_ref_error = build_artifact_ref_context(data, conversation_id, current_user["id"])
+    if artifact_ref_error:
+        await send_ws_error(websocket, event_id, 40003, artifact_ref_error)
+        return
+    if artifact_ref:
+        message_metadata["artifactRef"] = artifact_ref
+    model_user_input = build_user_input_with_references(content, quoted_message, artifact_ref)
     target_agent = choose_target_agent(conversation, target_agent_id)
     if target_agent_id and not target_agent:
         await send_ws_error(websocket, event_id, 40002, "指定 Agent 不存在、已禁用或不属于当前会话")
@@ -1205,7 +1482,7 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
         intent_result = analyze_orchestrator_intent(content)
         if intent_result["intent"] == "chat":
             orchestrator_content = intent_result["reply"]
-            if quoted_message:
+            if quoted_message or artifact_ref:
                 orchestrator_agent = get_enabled_orchestrator(conversation) or choose_agent_for_conversation(conversation)
                 try:
                     orchestrator_content = await call_agent_once(
@@ -1318,7 +1595,13 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
     update_conversation_activity(conversation_id, full_response_text)
     await send_message_completed(current_user, conversation_id, event_id, agent_message, finish_reason)
 
-    artifact_result = await maybe_create_and_send_artifact(current_user, event_id, conversation_id, agent_message)
+    artifact_result = await maybe_create_and_send_artifact(
+        current_user,
+        event_id,
+        conversation_id,
+        agent_message,
+        artifact_ref=artifact_ref,
+    )
     if artifact_result:
         total_artifacts += 1
 
@@ -1658,7 +1941,132 @@ async def api_get_conversation(conversation_id: str, authorization: Optional[str
     conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
     if not conversation:
         return fail(40001, "会话不存在")
-    return ok(attach_context_usage(conversation))
+    return ok({
+        **attach_context_usage(conversation),
+        "latestActiveRun": latest_active_run_for_conversation(conversation_id, current_user["id"]),
+    })
+
+
+@app.get(f"{API_PREFIX}/conversations/{{conversation_id}}/agents/{{agent_id}}/config")
+async def api_get_conversation_agent_config(
+    conversation_id: str,
+    agent_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    current_user = current_user_or_default(authorization)
+    conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
+    if not conversation:
+        return fail(40001, "会话不存在")
+    if conversation.get("mode") != "group":
+        return fail(40002, "仅群聊支持会话级 Agent 配置")
+    if agent_id not in conversation.get("agentIds", []):
+        return fail(40002, "Agent 不属于当前群聊")
+    if agent_id == ORCHESTRATOR_AGENT_ID:
+        agent = get_agent(agent_id, owner_user_id=current_user["id"])
+        if not agent:
+            return fail(40001, "Agent 不存在")
+        return ok({
+            **agent,
+            "conversationId": conversation_id,
+            "overrideSource": "global",
+            "readonly": True,
+        })
+    agent = get_conversation_agent_config(
+        conversation_id,
+        agent_id,
+        owner_user_id=current_user["id"],
+    )
+    if not agent:
+        return fail(40001, "Agent 不存在")
+    return ok(agent)
+
+
+@app.put(f"{API_PREFIX}/conversations/{{conversation_id}}/agents/{{agent_id}}/config")
+async def api_update_conversation_agent_config(
+    conversation_id: str,
+    agent_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(None),
+):
+    current_user = current_user_or_default(authorization)
+    conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
+    if not conversation:
+        return fail(40001, "会话不存在")
+    if conversation.get("mode") != "group":
+        return fail(40002, "仅群聊支持会话级 Agent 配置")
+    if agent_id == ORCHESTRATOR_AGENT_ID:
+        return fail(40002, "Orchestrator 是群聊调度器，不支持会话级配置")
+    if agent_id not in conversation.get("agentIds", []):
+        return fail(40002, "Agent 不属于当前群聊")
+
+    sanitized_payload, payload_error = sanitize_conversation_agent_config_payload(payload)
+    if payload_error:
+        return fail(40000, payload_error)
+    agent = upsert_conversation_agent_config(
+        conversation_id,
+        agent_id,
+        sanitized_payload or {},
+        owner_user_id=current_user["id"],
+    )
+    if not agent:
+        return fail(40001, "Agent 不存在")
+    return ok(agent, message="群聊 Agent 配置更新成功")
+
+
+@app.post(f"{API_PREFIX}/conversations/{{conversation_id}}/agents")
+async def api_add_conversation_agent(
+    conversation_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(None),
+):
+    current_user = current_user_or_default(authorization)
+    conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
+    if not conversation:
+        return fail(40001, "会话不存在")
+    if conversation.get("mode") != "group":
+        return fail(40002, "仅群聊支持添加成员智能体")
+    agent_id = str(payload.get("agentId") or "").strip()
+    if not agent_id:
+        return fail(40000, "agentId 不能为空")
+    if agent_id == ORCHESTRATOR_AGENT_ID:
+        return ok(attach_context_usage(conversation), message="群聊调度器已存在")
+    agent_error = validate_enabled_agent_ids([agent_id], owner_user_id=current_user["id"])
+    if agent_error:
+        return fail(40002, agent_error)
+    updated_conversation = add_conversation_agent(
+        conversation_id,
+        agent_id,
+        owner_user_id=current_user["id"],
+    )
+    if not updated_conversation:
+        return fail(40001, "会话不存在")
+    return ok(attach_context_usage(updated_conversation), message="群聊成员已更新")
+
+
+@app.delete(f"{API_PREFIX}/conversations/{{conversation_id}}/agents/{{agent_id}}")
+async def api_remove_conversation_agent(
+    conversation_id: str,
+    agent_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    current_user = current_user_or_default(authorization)
+    conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
+    if not conversation:
+        return fail(40001, "会话不存在")
+    if conversation.get("mode") != "group":
+        return fail(40002, "仅群聊支持删除成员智能体")
+    if agent_id == ORCHESTRATOR_AGENT_ID:
+        return fail(40002, "Orchestrator 是群聊调度器，不能从群聊中删除")
+    if agent_id not in conversation.get("agentIds", []):
+        return ok(attach_context_usage(conversation), message="群聊成员已更新")
+    updated_conversation = remove_conversation_agent(
+        conversation_id,
+        agent_id,
+        owner_user_id=current_user["id"],
+    )
+    if not updated_conversation:
+        return fail(40001, "会话不存在")
+    return ok(attach_context_usage(updated_conversation), message="群聊成员已更新")
 
 
 @app.put(f"{API_PREFIX}/conversations/{{conversation_id}}")
@@ -1926,7 +2334,12 @@ async def api_send_message(conversation_id: str, payload: Dict[str, Any] = Body(
         if not quoted_message:
             return fail(40003, "引用消息不存在或不属于当前会话")
         message_metadata = build_quote_metadata(quoted_message)
-    model_user_input = build_user_input_with_quote(content, quoted_message)
+    artifact_ref, artifact_ref_error = build_artifact_ref_context(payload, conversation_id, current_user["id"])
+    if artifact_ref_error:
+        return fail(40003, artifact_ref_error)
+    if artifact_ref:
+        message_metadata["artifactRef"] = artifact_ref
+    model_user_input = build_user_input_with_references(content, quoted_message, artifact_ref)
     target_agent = choose_target_agent(conversation, target_agent_id)
     if target_agent_id and not target_agent:
         return fail(40002, "指定 Agent 不存在、已禁用或不属于当前会话")
@@ -1957,7 +2370,7 @@ async def api_send_message(conversation_id: str, payload: Dict[str, Any] = Body(
         intent_result = analyze_orchestrator_intent(content)
         if intent_result["intent"] == "chat":
             orchestrator_content = intent_result["reply"]
-            if quoted_message:
+            if quoted_message or artifact_ref:
                 orchestrator_agent = get_enabled_orchestrator(conversation) or choose_agent_for_conversation(conversation)
                 try:
                     orchestrator_content = await call_agent_once(
@@ -2020,27 +2433,13 @@ async def api_send_message(conversation_id: str, payload: Dict[str, Any] = Body(
     agent_messages.append(agent_message)
     update_conversation_activity(conversation_id, reply_content)
 
-    artifact_payload = extract_artifact_payload(reply_content)
-    if artifact_payload:
-        artifact_title = build_artifact_title(conversation_id, artifact_payload)
-        artifact = create_artifact(
-            conversation_id=conversation_id,
-            message_id=agent_message["id"],
-            title=artifact_title,
-            artifact_type=artifact_payload["type"],
-            content=artifact_payload["content"],
-            description=f"由 {agent_message['senderName']} 生成",
-            created_by=agent_message["senderId"],
-            created_by_type="orchestrator" if agent_message["role"] == "orchestrator" else "agent",
-        )
-        artifacts.append({k: v for k, v in artifact.items() if k not in {"content", "currentVersion"}})
-        artifact_message = create_artifact_message(
-            conversation_id=conversation_id,
-            sender_id=agent_message["senderId"],
-            sender_name=agent_message["senderName"],
-            role=agent_message["role"],
-            artifact=artifact,
-        )
+    artifact_result = persist_artifact_from_message(conversation_id, agent_message, artifact_ref)
+    if artifact_result:
+        artifacts.append({
+            **artifact_result["artifact"],
+            "action": artifact_result["action"],
+        })
+        artifact_message = artifact_result["message"]
         agent_messages.append(artifact_message)
         update_conversation_activity(conversation_id, artifact_message["content"])
 
@@ -2051,6 +2450,230 @@ async def api_send_message(conversation_id: str, payload: Dict[str, Any] = Body(
         "artifacts": artifacts,
         "contextUsage": build_context_usage(conversation),
     }, message="消息发送成功")
+
+
+def run_allowed_agent_ids(conversation: Dict[str, Any]) -> List[str]:
+    agent_ids = [
+        agent_id for agent_id in conversation.get("agentIds", [])
+        if agent_id != ORCHESTRATOR_AGENT_ID
+    ]
+    callable_ids = []
+    for agent_id in agent_ids:
+        agent = get_effective_agent_for_conversation(conversation, agent_id)
+        if agent_is_callable(agent):
+            callable_ids.append(agent_id)
+    if callable_ids:
+        return callable_ids
+    fallback = choose_agent_for_conversation(conversation)
+    return [fallback["id"]] if fallback else ["agent-claude-code"]
+
+
+async def emit_run_event(
+    current_user: Dict[str, Any],
+    conversation_id: str,
+    event_type: str,
+    data: Dict[str, Any],
+) -> None:
+    await emit_conversation_event(current_user, conversation_id, event_type, None, data)
+
+
+def build_run_event_payload(run_id: str, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    run = get_agent_run_detail(run_id)
+    payload: Dict[str, Any] = {"runId": run_id}
+    if run:
+        payload.update({
+            "conversationId": run.get("conversationId"),
+            "status": run.get("status"),
+            "run": run,
+            "sandbox": run.get("sandbox"),
+            "steps": run.get("steps", []),
+            "files": run.get("files", []),
+            "conflicts": run.get("conflicts", []),
+        })
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def namespace_run_dag(run_id: str, dag: Dict[str, Any]) -> Dict[str, Any]:
+    steps = dag.get("steps") if isinstance(dag.get("steps"), list) else []
+    id_map = {
+        str(step.get("id") or f"step-{index + 1}"): f"{run_id}-step-{index + 1}"
+        for index, step in enumerate(steps)
+        if isinstance(step, dict)
+    }
+    namespaced_steps = []
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            continue
+        original_id = str(step.get("id") or f"step-{index + 1}")
+        depends_on = step.get("dependsOn") if isinstance(step.get("dependsOn"), list) else []
+        namespaced_steps.append({
+            **step,
+            "id": id_map.get(original_id, f"{run_id}-step-{index + 1}"),
+            "dependsOn": [
+                id_map[dep]
+                for dep in [str(item) for item in depends_on]
+                if dep in id_map
+            ],
+        })
+    return {**dag, "steps": namespaced_steps}
+
+
+@app.post(f"{API_PREFIX}/conversations/{{conversation_id}}/runs")
+async def api_create_run(conversation_id: str, payload: Dict[str, Any] = Body(...), authorization: Optional[str] = Header(None)):
+    current_user = current_user_or_default(authorization)
+    conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
+    if not conversation:
+        return fail(40001, "会话不存在")
+    if conversation.get("mode") not in {"agent", "group"}:
+        return fail(40000, "Sandbox Run 仅支持 agent 或 group 会话")
+    prompt = str(payload.get("prompt") or payload.get("content") or "").strip()
+    if not prompt:
+        return fail(40000, "prompt 不能为空")
+
+    allowed_agent_ids = run_allowed_agent_ids(conversation)
+    run_id = create_id("run")
+    dag = namespace_run_dag(run_id, await generate_dag(prompt, allowed_agent_ids=allowed_agent_ids))
+    sandbox_service = SandboxService()
+    workspace_path = sandbox_service.prepare_workspace(run_id)
+    sandbox = create_sandbox(
+        owner_user_id=current_user["id"],
+        conversation_id=conversation_id,
+        image=settings.SANDBOX_IMAGE,
+        network=settings.SANDBOX_NETWORK,
+        workspace_path=str(workspace_path),
+    )
+    run = create_agent_run(
+        owner_user_id=current_user["id"],
+        conversation_id=conversation_id,
+        sandbox_id=sandbox["id"],
+        prompt=prompt,
+        dag=dag,
+        run_id=run_id,
+    )
+    create_agent_run_steps(run_id, dag.get("steps", []))
+    detail = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
+
+    async def emit(event_type: str, data: Dict[str, Any]) -> None:
+        await emit_run_event(current_user, conversation_id, event_type, data)
+
+    await emit("run.created", build_run_event_payload(run_id, {"run": detail}))
+    asyncio.create_task(RunScheduler(sandbox_service=sandbox_service).run(run_id, emit=emit))
+    return ok(detail, message="沙箱任务已创建")
+
+
+@app.get(f"{API_PREFIX}/conversations/{{conversation_id}}/runs")
+async def api_list_conversation_runs(
+    conversation_id: str,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=100),
+    authorization: Optional[str] = Header(None),
+):
+    current_user = current_user_or_default(authorization)
+    conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
+    if not conversation:
+        return fail(40001, "会话不存在")
+    return ok(
+        list_agent_runs_for_conversation(
+            conversation_id,
+            owner_user_id=current_user["id"],
+            page=page,
+            page_size=pageSize,
+        )
+    )
+
+
+@app.get(f"{API_PREFIX}/runs/{{run_id}}")
+async def api_get_run(run_id: str, authorization: Optional[str] = Header(None)):
+    current_user = current_user_or_default(authorization)
+    detail = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
+    if not detail:
+        return fail(40001, "Run 不存在")
+    return ok(detail)
+
+
+@app.get(f"{API_PREFIX}/runs/{{run_id}}/files")
+async def api_list_run_files(run_id: str, authorization: Optional[str] = Header(None)):
+    current_user = current_user_or_default(authorization)
+    detail = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
+    if not detail:
+        return fail(40001, "Run 不存在")
+    return ok(list_sandbox_files(run_id))
+
+
+@app.get(f"{API_PREFIX}/runs/{{run_id}}/files/{{file_path:path}}")
+async def api_get_run_file(run_id: str, file_path: str, authorization: Optional[str] = Header(None)):
+    current_user = current_user_or_default(authorization)
+    detail = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
+    if not detail:
+        return fail(40001, "Run 不存在")
+    try:
+        file_detail = FileVersionService().read_file(run_id, file_path)
+    except ValueError:
+        return fail(40000, "非法文件路径")
+    if not file_detail:
+        return fail(40001, "文件不存在")
+    return ok(file_detail)
+
+
+@app.get(f"{API_PREFIX}/runs/{{run_id}}/conflicts")
+async def api_list_run_conflicts(run_id: str, authorization: Optional[str] = Header(None)):
+    current_user = current_user_or_default(authorization)
+    detail = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
+    if not detail:
+        return fail(40001, "Run 不存在")
+    return ok(list_sandbox_conflicts(run_id))
+
+
+@app.post(f"{API_PREFIX}/runs/{{run_id}}/conflicts/{{conflict_id}}/resolve")
+async def api_resolve_run_conflict(
+    run_id: str,
+    conflict_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(None),
+):
+    current_user = current_user_or_default(authorization)
+    detail = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
+    if not detail:
+        return fail(40001, "Run 不存在")
+    resolution = str(payload.get("resolution") or "").strip()
+    if resolution not in {"current", "incoming", "manual"}:
+        return fail(40000, "resolution 只支持 current/incoming/manual")
+    manual_content = str(payload.get("content") or "") if resolution == "manual" else None
+    try:
+        conflict = FileVersionService().resolve_conflict(
+            run_id=run_id,
+            conflict_id=conflict_id,
+            resolution=resolution,
+            manual_content=manual_content,
+            sandbox=detail.get("sandbox"),
+        )
+    except ValueError as exc:
+        return fail(40000, str(exc))
+    if not conflict:
+        return fail(40001, "冲突不存在或已解决")
+    return ok(conflict, message="冲突已解决")
+
+
+@app.post(f"{API_PREFIX}/runs/{{run_id}}/cancel")
+async def api_cancel_run(run_id: str, authorization: Optional[str] = Header(None)):
+    current_user = current_user_or_default(authorization)
+    detail = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
+    if not detail:
+        return fail(40001, "Run 不存在")
+    sandbox = detail.get("sandbox") or get_sandbox(detail["sandboxId"], owner_user_id=current_user["id"])
+    update_agent_run(run_id, status="cancelled", summary="用户已取消", mark_finished=True)
+    if sandbox:
+        await SandboxService().stop_container(sandbox["id"], sandbox.get("containerId"))
+        update_sandbox(sandbox["id"], status="cancelled")
+    await emit_run_event(
+        current_user,
+        detail["conversationId"],
+        "run.failed",
+        build_run_event_payload(run_id, {"status": "cancelled"}),
+    )
+    return ok(get_agent_run_detail(run_id, owner_user_id=current_user["id"]), message="Run 已取消")
 
 
 @app.get(f"{API_PREFIX}/conversations/{{conversation_id}}/artifacts")
@@ -2133,6 +2756,14 @@ async def handle_ws_conversation_subscribe(
         event_id,
         {"conversationId": conversation_id},
     )
+    active_run = latest_active_run_for_conversation(conversation_id, current_user["id"])
+    if active_run:
+        await send_ws_event(
+            websocket,
+            "run.created",
+            None,
+            build_run_event_payload(active_run["id"], {"run": active_run}),
+        )
 
 
 async def handle_ws_conversation_unsubscribe(
@@ -2206,58 +2837,35 @@ async def websocket_root(websocket: WebSocket):
 
 @app.websocket("/ws/chat")
 async def websocket_endpoint(websocket: WebSocket):
-    """
-    WebSocket 实时交互长连接端点
-    接管全流式单聊 (1v1) 与 Orchestrator 群聊分布式状态编排
-    """
-    token = websocket.query_params.get("token")
-    if not token:
-        token = extract_bearer_token(websocket.headers.get("authorization"))
-    if not token or not get_user_by_session_token(token):
-        await websocket.close(code=1008)
-        return
+    """旧 Demo WebSocket 入口已弃用，正式协议统一使用 /ws。"""
     await websocket.accept()
-    try:
-        while True:
-            # 接收前端打包传送过来的复杂 JSON 数据
-            data_text = await websocket.receive_text()
-            
-            # 分流并路由至专职的业务处理器，由其完成关系映射、上下文组装及流式吞吐
-            await handle_websocket_message(websocket, data_text)
-            
-    except WebSocketDisconnect:
-        # 优雅捕获客户端安全断开状态，避免控制台溢出错误堆栈
-        print("💡 [WebSocket System]: 客户端连接已安全断开")
-    except Exception as e:
-        print(f"❌ [WebSocket System Error]: 运行时捕获异常: {str(e)}")
+    await websocket.send_json({
+        "type": "error",
+        "data": {
+            "code": 41000,
+            "message": "/ws/chat 已弃用，请使用 /ws",
+        },
+    })
+    await websocket.close(code=1008)
 
 # =====================================================================
-#  MVP 阶段前端静态沙箱与视图就地挂载 (适配你的本地项目调试)
+#  MVP 阶段后端运行状态页
 # =====================================================================
 
 @app.get("/", response_class=HTMLResponse)
 async def get_index():
-    """根路径默认返回单页应用骨架 index.html"""
-    if os.path.exists("index.html"):
-        with open("index.html", "r", encoding="utf-8") as f:
-            return f.read()
+    """根路径仅返回后端运行状态，不托管本地静态文件。"""
     return (
         "<div style='text-align:center; margin-top:20%; font-family:sans-serif;'>"
         "<h1>🚀 AgentHub Backend 运行成功</h1>"
-        "<p style='color:#666;'>未检测到 index.html，请确保前端静态资源放置在根目录下</p>"
+        "<p style='color:#666;'>请使用前端开发服务访问应用界面</p>"
         "</div>"
     )
 
 @app.get('/favicon.ico', include_in_schema=False)
 async def favicon():
-    """修复浏览器默认请求 favicon 导致的 502/404 挂起隐患"""
-    if os.path.exists("favicon.ico"):
-        return FileResponse("favicon.ico")
+    """浏览器默认请求 favicon 时返回空响应。"""
     return Response(status_code=204)
-
-# 动态挂载根目录下所有的静态资产 (如 main.js, css 等) 
-# 这允许你在本地以单一服务形式流畅跑通全栈应用
-app.mount("/", StaticFiles(directory="."), name="static")
 
 if __name__ == "__main__":
     import uvicorn

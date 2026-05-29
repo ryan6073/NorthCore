@@ -83,7 +83,7 @@ interface Agent {
   enabled: boolean;
   status: string;
   systemPrompt?: string;
-  systemPromptSource?: 'user_override';
+  systemPromptSource?: 'user_override' | 'conversation_override';
 }
 ```
 
@@ -194,6 +194,8 @@ POST /api/v1/conversations/{conversationId}/show
 
 ## 5. 创建 Agent
 
+系统预置 Agent 目前包括：默认聊天助手、翻译助手、图表助手、文档助手、Claude Code、Codex、Orchestrator。前端可以直接使用 `tags` 展示能力标签，例如翻译、Mermaid、Markdown、PPT、代码生成、代码审查。Orchestrator 仍只作为群聊调度器，不作为联系人会话。
+
 创建自定义 Agent：
 
 ```text
@@ -295,6 +297,25 @@ mode = 'single' | 'group'
 
 `single/group` 会话允许用户删除。Orchestrator 只作为群聊调度器由后端默认加入 `group`，不作为 `agent` 长期联系人会话。
 
+### 7.1 群聊 Agent 配置与成员管理
+
+群聊内普通 Agent 配置和全局 Agent 隔离；保存后只影响当前群聊。Orchestrator 是系统调度器，不支持配置或删除。
+
+```text
+GET /api/v1/conversations/{conversationId}/agents/{agentId}/config
+PUT /api/v1/conversations/{conversationId}/agents/{agentId}/config
+```
+
+PUT 请求体使用 `Partial<Agent>`，允许保存名称、头像、描述、Prompt、模型参数、工具和权限等安全可编辑字段，不允许提交身份字段或模型密钥。
+GET/PUT 返回的 `Agent.conversationId` 始终指当前群聊 ID，方便前端把它和联系人单聊配置区分开。
+
+```text
+POST /api/v1/conversations/{conversationId}/agents
+DELETE /api/v1/conversations/{conversationId}/agents/{agentId}
+```
+
+添加重复成员和删除不存在成员都会返回当前群聊状态。普通成员可以删空，但后端会保留 `agent-orchestrator`。
+
 ## 8. 发送消息
 
 发送消息接口不变：
@@ -386,6 +407,38 @@ WebSocket 地址：
 ```
 
 建议前端当前主流程仍可继续使用 HTTP。WS 已支持同样的 `targetAgentId` 和 `quotedMessageId`。
+
+## 9.1 Sandbox Run
+
+可运行任务工作区走独立 Run API：
+
+```text
+POST /api/v1/conversations/{conversationId}/runs
+GET  /api/v1/conversations/{conversationId}/runs
+GET  /api/v1/runs/{runId}
+GET  /api/v1/runs/{runId}/files
+GET  /api/v1/runs/{runId}/files/{filePath}
+GET  /api/v1/runs/{runId}/conflicts
+POST /api/v1/runs/{runId}/conflicts/{conflictId}/resolve
+POST /api/v1/runs/{runId}/cancel
+```
+
+创建 Run 的请求体：
+
+```json
+{
+  "prompt": "生成一个 Todo 页面并做代码审查"
+}
+```
+
+说明：
+
+- 后端会创建空工作区 Docker 沙箱，默认禁网。
+- 仅支持 `mode=agent` 和 `mode=group` 会话。
+- Orchestrator 会生成 DAG，后端并行调度无依赖 step。
+- 文件写入使用 `baseVersion` 乐观锁，冲突会进入 `sandbox_conflicts`。
+- 运行完成后，沙箱输出文件会同步成现有 Artifact。
+- 前端可监听 `run.*` WebSocket 事件展示 DAG 节点、日志、冲突和完成状态。
 
 ## 10. 前端最小接入清单
 

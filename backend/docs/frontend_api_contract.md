@@ -119,7 +119,7 @@ interface Agent {
   enabled: boolean;
   lastUsedAt?: string | null;
   systemPrompt: string;
-  systemPromptSource?: 'user_override';
+  systemPromptSource?: 'user_override' | 'conversation_override';
   baseAgentId?: string;
   modelConfig: Record<string, any>;
   tools: any[];
@@ -190,7 +190,7 @@ interface Artifact {
   id: string;
   conversationId: string;
   title: string;
-  type: string;
+  type: 'html' | 'markdown' | 'mermaid' | 'code' | 'diff' | 'deploy' | string;
   description?: string;
   tags: string[];
   currentVersionId: string;
@@ -216,6 +216,21 @@ interface ArtifactVersion {
   parentVersionId?: string;
   metadata: Record<string, any>;
   createdAt: string;
+}
+```
+
+沙箱 Run 同步出来的 ArtifactVersion 会在 `metadata` 中携带来源信息，方便前端区分同一次 run 的多个产物：
+
+```ts
+interface SandboxArtifactMetadata {
+  source: 'sandbox';
+  sourceRunId: string;
+  sourceSandboxId: string;
+  sourceSandboxFileId: string;
+  sourceFilePath: string;
+  sourceFileVersion: number;
+  sourceContentHash: string;
+  sourceStepId?: string | null;
 }
 ```
 
@@ -345,6 +360,8 @@ Response Data: `PageResult<Agent>`
 - Orchestrator 是群聊调度器，作为 `enabled=false` 的展示元数据返回，不带长期联系人 `conversationId`。
 - 每个 enabled 联系人 Agent 返回当前用户对应的长期单聊 `conversationId`。
 - 禁用 Agent 可通过 `enabled=false` 查询。
+- 当前系统预置 Agent 包含：默认聊天助手、翻译助手、图表助手、文档助手、Claude Code、Codex、Orchestrator。
+- `tags` 用于能力标签展示和筛选提示，例如翻译、Mermaid、Markdown、PPT、代码生成、代码审查等。
 
 ### 创建 Agent
 
@@ -512,7 +529,53 @@ Request:
 
 Response Data: `Conversation`
 
-说明：`Conversation.systemPrompt` 是会话级覆盖，优先级高于 Agent 的 `systemPrompt`。修改 single 会话的 `systemPrompt` 不会修改 Agent 的个人 prompt 覆盖；修改 Agent prompt 也不会反写已有 single 会话。
+说明：`Conversation.systemPrompt` 是旧版会话级覆盖。群聊普通成员如果保存了会话级 Agent 专属 `systemPrompt`，运行时优先使用该专属配置；否则继续回退到 `Conversation.systemPrompt`。修改 single 会话的 `systemPrompt` 不会修改 Agent 的个人 prompt 覆盖；修改 Agent prompt 也不会反写已有 single 会话或群聊专属配置。
+
+### 群聊 Agent 专属配置
+
+仅 `mode=group` 支持。`agent-orchestrator` 是群聊调度器，不支持读取、修改或删除配置。
+
+`GET /conversations/{conversationId}/agents/{agentId}/config`
+
+Response Data: `Agent`
+
+说明：无群聊专属覆盖时，返回当前用户可见的全局/用户级 Agent 配置；有覆盖时返回合并后的群聊内有效配置。该接口返回的 `conversationId` 始终是当前群聊 ID，不是 Agent 联系人会话 ID。
+
+`PUT /conversations/{conversationId}/agents/{agentId}/config`
+
+Request: `Partial<Agent>`
+
+允许字段：`name/avatar/description/tags/status/category/provider/enabled/lastUsedAt/systemPrompt/modelConfig/tools/permissions`。
+不允许字段：`id/ownerUserId/conversationId/baseAgentId/overrideSource/systemPromptSource`。
+`modelConfig` 不允许携带 `apiKey/api_key/secret/token/authorization/headers` 等敏感鉴权字段。
+
+Response Data: `Agent`
+
+说明：只更新当前群聊内该 Agent 的专属配置，不修改全局 Agent。前端如果要“一键同步到全局 Agent”，继续调用 `PUT /agents/{agentId}`。
+
+### 群聊成员智能体
+
+仅 `mode=group` 支持。
+
+`POST /conversations/{conversationId}/agents`
+
+Request:
+
+```json
+{
+  "agentId": "agent-codex"
+}
+```
+
+Response Data: `Conversation`
+
+说明：重复添加幂等成功。添加成员要求 Agent 存在且当前用户可用。
+
+`DELETE /conversations/{conversationId}/agents/{agentId}`
+
+Response Data: `Conversation`
+
+说明：删除不存在成员幂等成功；普通成员可删空，但 `agent-orchestrator` 会保留且不能删除。
 
 ### 会话置顶/取消置顶
 
@@ -854,7 +917,80 @@ Response Data: `ArtifactVersion[]`
 
 Response Data: `ArtifactVersion`
 
-## 11. WebSocket API
+## 11. Sandbox Run API
+
+Sandbox Run 用于可运行任务工作区。第一版每个 run 使用空工作区、Docker 容器禁网、DAG 子任务并行调度、文件乐观锁冲突检测。
+
+### 创建并启动 Run
+
+`POST /conversations/{conversationId}/runs`
+
+Request:
+
+```json
+{
+  "prompt": "生成一个 Todo 页面并做代码审查"
+}
+```
+
+Response Data: `AgentRunDetail`
+
+说明：
+
+- 后端会创建 `sandbox + agent_run + agent_run_steps`，随后后台启动调度器。
+- 仅支持 `mode=agent` 和 `mode=group` 会话。
+- WebSocket 会推送 `run.created/run.step.started/run.step.log/run.step.completed/run.step.failed/run.step.conflict/run.completed/run.failed/artifact.created`。
+
+### Run 详情
+
+`GET /conversations/{conversationId}/runs`
+
+Response Data: `PageResult<AgentRunDetail>`
+
+说明：按创建时间倒序返回当前会话的 run 列表，用于页面刷新后恢复右侧沙箱面板。支持 `page/pageSize` 查询参数。
+
+`GET /runs/{runId}`
+
+Response Data: `AgentRunDetail`
+
+### 文件列表和文件内容
+
+```text
+GET /runs/{runId}/files
+GET /runs/{runId}/files/{filePath}
+```
+
+文件内容接口返回当前版本内容和版本元数据。
+
+### 冲突列表和冲突解决
+
+```text
+GET  /runs/{runId}/conflicts
+POST /runs/{runId}/conflicts/{conflictId}/resolve
+```
+
+Resolve Request:
+
+```json
+{
+  "resolution": "current | incoming | manual",
+  "content": "manual 时提交完整文件内容"
+}
+```
+
+说明：
+
+- `current` 保留当前版本，不写入 incoming。
+- `incoming` 使用冲突中的 incoming 内容生成新版本。
+- `manual` 使用前端提交的 `content` 生成新版本。
+
+### 取消 Run
+
+`POST /runs/{runId}/cancel`
+
+Response Data: `AgentRunDetail`
+
+## 12. WebSocket API
 
 ### 连接
 
@@ -959,6 +1095,20 @@ conversation.message.chunk
 conversation.message.completed
 artifact.created                可选
 conversation.all_tasks.completed
+```
+
+Sandbox Run 事件：
+
+```text
+run.created
+run.step.started
+run.step.log
+run.step.completed
+run.step.failed
+run.step.conflict
+run.completed
+run.failed
+artifact.created
 ```
 
 错误事件：

@@ -29,6 +29,11 @@ ARK_API_KEY="your_key"
 ARK_BASE_URL="your_base_url"
 MODEL_EP="your_model_endpoint"
 DATABASE_URL="sqlite:///./agenthub.db"
+SANDBOX_IMAGE="python:3.11-slim"
+SANDBOX_NETWORK="none"
+SANDBOX_TIMEOUT_SECONDS=120
+SANDBOX_MAX_PARALLEL_STEPS=2
+SANDBOX_WORKSPACE_ROOT="/tmp/agenthub-sandboxes"
 ```
 
 前端真实模式建议：
@@ -63,6 +68,7 @@ Authorization: Bearer <token>
 ### Agent
 
 Agent 是 IM 联系人。系统预置 Agent 对所有用户可见，用户自建 Agent 只对创建者可见。Orchestrator 是群聊调度器，不作为长期联系人。
+当前系统预置 Agent 包含：默认聊天助手、翻译助手、图表助手、文档助手、Claude Code、Codex、Orchestrator。前端可使用 `tags` 展示能力标签。
 
 关键字段：
 
@@ -76,7 +82,7 @@ interface Agent {
   status: string;
   enabled: boolean;
   systemPrompt: string;
-  systemPromptSource?: 'user_override';
+  systemPromptSource?: 'user_override' | 'conversation_override';
   modelConfig: Record<string, any>;
   tools: any[];
   permissions: Record<string, any>;
@@ -84,6 +90,7 @@ interface Agent {
 ```
 
 `ownerUserId = null` 表示系统预置 Agent。`conversationId` 是当前用户和联系人 Agent 的长期联系人单聊 ID，Orchestrator 不返回该字段。
+群聊内普通 Agent 可以有当前会话专属配置，返回时会带 `overrideSource: 'conversation'` 和当前 `conversationId`，该配置不反写全局 Agent。
 
 ### Conversation
 
@@ -96,6 +103,7 @@ type ConversationMode = 'agent' | 'single' | 'group';
 - `agent`：Agent 联系人长期会话，伴随 Agent 生命周期，不允许用户直接删除，参与长期记忆、会话摘要、Pinned Messages 和最近有效消息上下文。
 - `single`：用户手动创建的临时单聊，允许删除，不参与长期记忆、会话摘要或 Pinned Messages 注入。
 - `group`：用户手动创建的群聊，允许删除，参与长期记忆、会话摘要、Pinned Messages 和最近有效消息上下文。
+- 群聊会自动保留 `agent-orchestrator` 作为调度器；前端不能配置或删除该调度器，普通成员可通过专用接口增删。
 
 关键字段：
 
@@ -189,6 +197,14 @@ GET /artifacts/{artifactId}
 PUT /artifacts/{artifactId}
 GET /artifacts/{artifactId}/versions
 GET /artifacts/{artifactId}/versions/{versionId}
+
+POST /conversations/{conversationId}/runs
+GET  /runs/{runId}
+POST /runs/{runId}/cancel
+GET  /runs/{runId}/files
+GET  /runs/{runId}/files/{filePath}
+GET  /runs/{runId}/conflicts
+POST /runs/{runId}/conflicts/{conflictId}/resolve
 ```
 
 WebSocket：
@@ -197,7 +213,7 @@ WebSocket：
 ws://localhost:9007/ws?token=<token>
 ```
 
-`/ws` 必须携带有效 token，并通过 `conversation.subscribe` 按会话订阅；服务端按 `userId + conversationId` 隔离推送事件。旧 Demo 入口 `/ws/chat` 暂时保留，但未鉴权连接会被拒绝。
+`/ws` 必须携带有效 token，并通过 `conversation.subscribe` 按会话订阅；服务端按 `userId + conversationId` 隔离推送事件。旧 Demo 入口 `/ws/chat` 已弃用，前端应统一使用 `/ws`。
 
 ## SQLite
 
@@ -228,6 +244,12 @@ attachments
 conversation_summaries
 long_term_memories
 pinned_messages
+sandboxes
+agent_runs
+agent_run_steps
+sandbox_files
+sandbox_file_versions
+sandbox_conflicts
 ```
 
 ## Docs

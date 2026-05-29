@@ -15,9 +15,16 @@ users 1..n user_sessions
 users 1..n conversations
 users 0..n agents
 agents n..m conversations via conversation_agents
+conversations 1..n conversation_agent_overrides
 conversations 1..n messages
 conversations 1..n artifacts
 artifacts 1..n artifact_versions
+conversations 1..n sandboxes
+sandboxes 1..1 agent_runs
+agent_runs 1..n agent_run_steps
+agent_runs 1..n sandbox_files
+sandbox_files 1..n sandbox_file_versions
+agent_runs 0..n sandbox_conflicts
 conversations 1..1 conversation_summaries
 conversations 1..n long_term_memories
 conversations 1..n pinned_messages
@@ -54,6 +61,7 @@ messages 0..n attachments
 ## agents
 
 保存 AI 联系人。`owner_user_id = NULL` 表示系统预置 Agent；非空表示用户自建 Agent。
+系统启动时会按默认 Agent ID 执行幂等 seed，旧库会自动补齐缺失的系统预置 Agent，不覆盖已有默认 Agent 的运行中配置。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -141,6 +149,33 @@ messages 0..n attachments
 
 主键：`(conversation_id, agent_id)`。
 
+## conversation_agent_overrides
+
+保存群聊内普通 Agent 的会话级专属配置。该表只影响指定 `group` 会话内的指定 Agent，不修改全局 Agent 或用户级 Agent 覆盖。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | TEXT PRIMARY KEY | 覆盖记录 ID |
+| conversation_id | TEXT | 群聊会话 ID |
+| agent_id | TEXT | 被覆盖的普通 Agent ID |
+| name | TEXT | 群聊内名称覆盖 |
+| avatar | TEXT | 群聊内头像覆盖 |
+| description | TEXT | 群聊内描述覆盖 |
+| tags_json | TEXT | 群聊内标签 JSON |
+| status | TEXT | 群聊内状态覆盖 |
+| category | TEXT | 群聊内分类覆盖 |
+| provider | TEXT | 群聊内 provider 覆盖 |
+| enabled | INTEGER | 群聊内启用状态 |
+| last_used_at | TEXT | 群聊内最近使用时间 |
+| system_prompt | TEXT | 群聊内 System Prompt |
+| model_config_json | TEXT | 群聊内模型配置 JSON |
+| tools_json | TEXT | 群聊内工具配置 JSON |
+| permissions_json | TEXT | 群聊内权限配置 JSON |
+| created_at | TEXT | 创建时间 |
+| updated_at | TEXT | 更新时间 |
+
+唯一约束：`(conversation_id, agent_id)`。`agent-orchestrator` 不写入该表。
+
 ## messages
 
 保存聊天流消息。
@@ -173,7 +208,7 @@ messages 0..n attachments
 | id | TEXT PRIMARY KEY | 产物 ID |
 | conversation_id | TEXT | 所属会话 |
 | message_id | TEXT | 来源消息 |
-| run_id | TEXT | AgentRun 预留 |
+| run_id | TEXT | 关联 AgentRun |
 | title | TEXT | 产物标题 |
 | type | TEXT | `html/code/markdown/diff/deploy` |
 | description | TEXT | 产物说明 |
@@ -205,6 +240,76 @@ messages 0..n attachments
 | created_at | TEXT | 创建时间 |
 
 唯一约束：`(artifact_id, version)`。
+
+## sandboxes
+
+保存可运行任务工作区。第一版使用本机 Docker，容器默认禁网，只挂载该 run 的空工作区目录。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | TEXT PRIMARY KEY | 沙箱 ID |
+| owner_user_id | TEXT | 所属用户 |
+| conversation_id | TEXT | 所属会话 |
+| run_id | TEXT | 当前关联 run |
+| status | TEXT | `pending/starting/running/completed/failed/conflict/cancelled` |
+| container_id | TEXT | Docker 容器 ID |
+| image | TEXT | Docker 镜像 |
+| network | TEXT | 网络策略，默认 `none` |
+| workspace_path | TEXT | 宿主机工作区路径 |
+| error | TEXT | 错误信息 |
+| created_at | TEXT | 创建时间 |
+| updated_at | TEXT | 更新时间 |
+
+## agent_runs
+
+保存一次用户任务运行。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | TEXT PRIMARY KEY | Run ID |
+| sandbox_id | TEXT | 沙箱 ID |
+| conversation_id | TEXT | 所属会话 |
+| owner_user_id | TEXT | 所属用户 |
+| status | TEXT | `pending/running/completed/failed/conflict/cancelled` |
+| prompt | TEXT | 用户原始任务 |
+| dag_json | TEXT | Orchestrator DAG JSON |
+| summary | TEXT | 运行摘要 |
+| error | TEXT | 错误信息 |
+| created_at | TEXT | 创建时间 |
+| updated_at | TEXT | 更新时间 |
+| started_at | TEXT | 开始时间 |
+| finished_at | TEXT | 结束时间 |
+
+## agent_run_steps
+
+保存 DAG 子任务节点。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | TEXT PRIMARY KEY | Step ID |
+| run_id | TEXT | Run ID |
+| agent_id | TEXT | 执行 Agent |
+| agent_name | TEXT | Agent 名称 |
+| task | TEXT | 子任务描述 |
+| depends_on_json | TEXT | 依赖 Step ID 数组 |
+| expected_outputs_json | TEXT | 期望输出文件 |
+| status | TEXT | `pending/running/completed/failed/conflict/blocked` |
+| claimed_by | TEXT | 认领 Agent ID |
+| output_json | TEXT | Agent 结构化输出 |
+| logs | TEXT | 命令日志 |
+| error | TEXT | 错误信息 |
+| created_at | TEXT | 创建时间 |
+| updated_at | TEXT | 更新时间 |
+| started_at | TEXT | 开始时间 |
+| finished_at | TEXT | 结束时间 |
+
+## sandbox_files / sandbox_file_versions
+
+保存沙箱文件索引和版本快照。文件写入采用乐观锁：提交内容必须带 `baseVersion`，不匹配时生成冲突，不覆盖当前版本。
+
+## sandbox_conflicts
+
+保存多个 step 并行修改同一文件时产生的冲突。第一版不自动三方合并，由前端选择 current/incoming/manual 解决。
 
 ## attachments
 

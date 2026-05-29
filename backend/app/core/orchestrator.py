@@ -6,6 +6,18 @@ from app.config import settings
 client = OpenAI(api_key=settings.ARK_API_KEY, base_url=settings.ARK_BASE_URL)
 
 AGENT_CONFIGS = {
+    "默认聊天助手": {
+        "system": "你是一个友好、清晰、可靠的默认聊天助手。请直接回答用户问题，必要时给出结构化步骤；不确定时说明假设，不编造事实。"
+    },
+    "翻译助手": {
+        "system": "你是一个好用的翻译助手。请将用户提供的中文翻译成英文，将非中文内容翻译成中文；只返回翻译结果，保持原意、格式和语气，必要时让译文更自然。"
+    },
+    "图表助手": {
+        "system": "你是一个擅长 Mermaid 图表的助手。请判断用户需求是否适合用图解释；适合时输出简洁说明和正确的 Mermaid 代码块，不适合时正常回答。"
+    },
+    "文档助手": {
+        "system": "你是一个文档生成助手。请根据用户目标生成结构清晰的 Markdown 文档、汇报材料或 PPT 大纲；内容要有标题、层级、要点和可执行结论。"
+    },
     "Claude Code": {
         "system": "你是一个精通全栈开发的 AI 工程师。请直接根据用户的要求编写高质量的代码产物。当用户要求制作、构建或修改网页/UI时，你**必须且只能**输出包含在 ```html ... ``` 代码块中的完整单文件 HTML（包含 Tailwind CSS 样式）。不要说废话，直接开始编写或回答。"
     },
@@ -20,10 +32,15 @@ AGENT_CONFIGS = {
 TASK_KEYWORDS = {
     "帮我", "生成", "写", "做", "实现", "开发", "修改", "优化", "修复", "审查",
     "代码", "页面", "网页", "组件", "接口", "后端", "前端", "部署", "文档",
+    "翻译", "图表", "流程图", "时序图", "架构图", "mermaid", "markdown", "ppt",
     "workflow", "agent", "diff", "bug", "review",
 }
 
 AGENT_NAME_TO_ID = {
+    "默认聊天助手": "agent-chat",
+    "翻译助手": "agent-translator",
+    "图表助手": "agent-mermaid",
+    "文档助手": "agent-document",
     "Claude Code": "agent-claude-code",
     "Codex": "agent-codex",
     "Orchestrator": "agent-orchestrator",
@@ -37,7 +54,11 @@ ORCHESTRATOR_INTENT_SYSTEM = """你是 AgentHub 的群聊协调器 Orchestrator�
 - task：要求生成、修改、实现、审查、优化、调试、部署、整理文档、构建网页或 workflow 等需要 Agent 执行的工作。
 
 如果是 chat，请给出自然、简洁的中文回复，并保持 taskPlan 为空数组。
-如果是 task，请拆解为 1-3 个可执行子任务，只使用这些 agentName：Claude Code、Codex。
+如果是 task，请拆解为 1-3 个可执行子任务，只使用这些 agentName：默认聊天助手、翻译助手、图表助手、文档助手、Claude Code、Codex。
+- 默认聊天助手：负责通用问答、解释说明和轻量整理。
+- 翻译助手：负责中英互译、多语言翻译和文本润色。
+- 图表助手：负责 Mermaid 流程图、时序图、架构图和关系图。
+- 文档助手：负责 Markdown 文档、汇报材料和 PPT 大纲。
 - Claude Code：负责代码生成、页面实现、工程改造。
 - Codex：负责代码审查、质量检查、Bug 分析和优化建议。
 
@@ -80,22 +101,43 @@ def _looks_like_task(user_input: str) -> bool:
 
 def _fallback_intent(user_input: str) -> dict:
     if _looks_like_task(user_input):
-        return {
-            "intent": "task",
-            "confidence": 0.55,
-            "reply": "我会先拆解任务，再安排合适的 Agent 处理。",
-            "taskPlan": [
-                {
-                    "agentId": "agent-claude-code",
-                    "agentName": "Claude Code",
-                    "task": f"请围绕以下需求生成方案或代码：{user_input}",
-                },
+        lowered = user_input.lower()
+        if any(keyword in user_input for keyword in ("翻译", "译成", "英译", "中译")) or "translate" in lowered:
+            agent_id = "agent-translator"
+            agent_name = "翻译助手"
+            task = f"请翻译或润色以下内容：{user_input}"
+        elif any(keyword in lowered for keyword in ("mermaid", "diagram")) or any(keyword in user_input for keyword in ("图表", "流程图", "时序图", "架构图", "关系图")):
+            agent_id = "agent-mermaid"
+            agent_name = "图表助手"
+            task = f"请为以下需求生成合适的 Mermaid 图表和简要说明：{user_input}"
+        elif any(keyword in lowered for keyword in ("markdown", "ppt")) or any(keyword in user_input for keyword in ("文档", "汇报", "大纲", "PPT")):
+            agent_id = "agent-document"
+            agent_name = "文档助手"
+            task = f"请围绕以下需求生成结构化文档或 PPT 大纲：{user_input}"
+        else:
+            agent_id = "agent-claude-code"
+            agent_name = "Claude Code"
+            task = f"请围绕以下需求生成方案或代码：{user_input}"
+        task_plan = [
+            {
+                "agentId": agent_id,
+                "agentName": agent_name,
+                "task": task,
+            }
+        ]
+        if agent_id == "agent-claude-code":
+            task_plan.append(
                 {
                     "agentId": "agent-codex",
                     "agentName": "Codex",
                     "task": "请对生成结果进行 Code Review，并给出优化建议。",
-                },
-            ],
+                }
+            )
+        return {
+            "intent": "task",
+            "confidence": 0.55,
+            "reply": "我会先拆解任务，再安排合适的 Agent 处理。",
+            "taskPlan": task_plan,
         }
     return {
         "intent": "chat",

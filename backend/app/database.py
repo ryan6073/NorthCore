@@ -145,6 +145,108 @@ DEFAULT_AGENTS = [
         },
     },
     {
+        "id": "agent-chat",
+        "name": "默认聊天助手",
+        "avatar": "https://api.dicebear.com/7.x/shapes/svg?seed=chat-agent",
+        "description": "通用问答、解释说明与日常对话",
+        "tags": ["聊天", "问答", "通用助手"],
+        "status": "online",
+        "category": "assistant",
+        "provider": "mock",
+        "enabled": True,
+        "lastUsedAt": None,
+        "systemPrompt": "你是一个友好、清晰、可靠的默认聊天助手。请直接回答用户问题，必要时给出结构化步骤；不确定时说明假设，不编造事实。",
+        "modelConfig": {
+            "provider": "mock",
+            "modelName": "chat-assistant-v1",
+            "temperature": 0.6,
+            "maxTokens": 8192,
+        },
+        "tools": [
+            {"id": "general_chat", "name": "通用问答", "description": "回答问题、解释概念、整理思路", "enabled": True},
+        ],
+        "permissions": {
+            **DEFAULT_PERMISSIONS,
+        },
+    },
+    {
+        "id": "agent-translator",
+        "name": "翻译助手",
+        "avatar": "https://api.dicebear.com/7.x/shapes/svg?seed=translator-agent",
+        "description": "中英互译、多语言翻译与文本润色",
+        "tags": ["翻译", "中英互译", "文本润色"],
+        "status": "online",
+        "category": "language",
+        "provider": "mock",
+        "enabled": True,
+        "lastUsedAt": None,
+        "systemPrompt": "你是一个好用的翻译助手。请将用户提供的中文翻译成英文，将非中文内容翻译成中文；只返回翻译结果，保持原意、格式和语气，必要时让译文更自然。",
+        "modelConfig": {
+            "provider": "mock",
+            "modelName": "translator-v1",
+            "temperature": 0.2,
+            "maxTokens": 8192,
+        },
+        "tools": [
+            {"id": "translate", "name": "翻译", "description": "执行中英互译和文本润色", "enabled": True},
+        ],
+        "permissions": {
+            **DEFAULT_PERMISSIONS,
+        },
+    },
+    {
+        "id": "agent-mermaid",
+        "name": "图表助手",
+        "avatar": "https://api.dicebear.com/7.x/shapes/svg?seed=mermaid-agent",
+        "description": "使用 Mermaid 生成流程图、时序图、架构图和关系图",
+        "tags": ["图表", "Mermaid", "流程图", "时序图", "架构图"],
+        "status": "online",
+        "category": "diagram",
+        "provider": "mock",
+        "enabled": True,
+        "lastUsedAt": None,
+        "systemPrompt": "你是一个擅长 Mermaid 图表的助手。请判断用户需求是否适合用图解释；适合时输出简洁说明和正确的 Mermaid 代码块，不适合时正常回答。Mermaid 语法必须有效、清晰、不过度复杂。",
+        "modelConfig": {
+            "provider": "mock",
+            "modelName": "mermaid-diagram-v1",
+            "temperature": 0.3,
+            "maxTokens": 8192,
+        },
+        "tools": [
+            {"id": "mermaid_generate", "name": "Mermaid 图表", "description": "生成 Mermaid 流程图、时序图和结构图", "enabled": True},
+        ],
+        "permissions": {
+            **DEFAULT_PERMISSIONS,
+            "canGenerateArtifacts": True,
+        },
+    },
+    {
+        "id": "agent-document",
+        "name": "文档助手",
+        "avatar": "https://api.dicebear.com/7.x/shapes/svg?seed=document-agent",
+        "description": "生成 Markdown 文档、汇报材料和 PPT 大纲",
+        "tags": ["Markdown", "文档生成", "PPT", "富文档"],
+        "status": "online",
+        "category": "document",
+        "provider": "mock",
+        "enabled": True,
+        "lastUsedAt": None,
+        "systemPrompt": "你是一个文档生成助手。请根据用户目标生成结构清晰的 Markdown 文档、汇报材料或 PPT 大纲；内容要有标题、层级、要点和可执行结论。",
+        "modelConfig": {
+            "provider": "mock",
+            "modelName": "document-writer-v1",
+            "temperature": 0.4,
+            "maxTokens": 8192,
+        },
+        "tools": [
+            {"id": "document_generate", "name": "文档生成", "description": "生成 Markdown、汇报文档和 PPT 大纲", "enabled": True},
+        ],
+        "permissions": {
+            **DEFAULT_PERMISSIONS,
+            "canGenerateArtifacts": True,
+        },
+    },
+    {
         "id": "agent-claude-code",
         "name": "Claude Code",
         "avatar": "https://api.dicebear.com/7.x/shapes/svg?seed=claude-code",
@@ -198,6 +300,8 @@ DEFAULT_AGENTS = [
         },
     },
 ]
+
+DEFAULT_AGENT_IDS = {agent["id"] for agent in DEFAULT_AGENTS}
 
 
 def init_db() -> None:
@@ -291,6 +395,30 @@ def init_db() -> None:
                 conversation_id TEXT NOT NULL,
                 agent_id TEXT NOT NULL,
                 PRIMARY KEY (conversation_id, agent_id),
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS conversation_agent_overrides (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                name TEXT,
+                avatar TEXT,
+                description TEXT,
+                tags_json TEXT,
+                status TEXT,
+                category TEXT,
+                provider TEXT,
+                enabled INTEGER,
+                last_used_at TEXT,
+                system_prompt TEXT,
+                model_config_json TEXT,
+                tools_json TEXT,
+                permissions_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(conversation_id, agent_id),
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
                 FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
             );
@@ -400,6 +528,113 @@ def init_db() -> None:
                 UNIQUE (conversation_id, message_id)
             );
 
+            CREATE TABLE IF NOT EXISTS sandboxes (
+                id TEXT PRIMARY KEY,
+                owner_user_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                run_id TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                container_id TEXT,
+                image TEXT NOT NULL,
+                network TEXT NOT NULL DEFAULT 'none',
+                workspace_path TEXT NOT NULL,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_runs (
+                id TEXT PRIMARY KEY,
+                sandbox_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                owner_user_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                prompt TEXT NOT NULL DEFAULT '',
+                dag_json TEXT NOT NULL DEFAULT '{}',
+                summary TEXT NOT NULL DEFAULT '',
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                FOREIGN KEY (sandbox_id) REFERENCES sandboxes(id) ON DELETE CASCADE,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_run_steps (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                agent_name TEXT NOT NULL DEFAULT '',
+                task TEXT NOT NULL DEFAULT '',
+                depends_on_json TEXT NOT NULL DEFAULT '[]',
+                expected_outputs_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'pending',
+                claimed_by TEXT,
+                output_json TEXT NOT NULL DEFAULT '{}',
+                logs TEXT NOT NULL DEFAULT '',
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS sandbox_files (
+                id TEXT PRIMARY KEY,
+                sandbox_id TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                content_hash TEXT NOT NULL DEFAULT '',
+                current_version INTEGER NOT NULL DEFAULT 0,
+                artifact_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (sandbox_id) REFERENCES sandboxes(id) ON DELETE CASCADE,
+                FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE,
+                FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE SET NULL,
+                UNIQUE (sandbox_id, path)
+            );
+
+            CREATE TABLE IF NOT EXISTS sandbox_file_versions (
+                id TEXT PRIMARY KEY,
+                file_id TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                content TEXT NOT NULL DEFAULT '',
+                content_hash TEXT NOT NULL DEFAULT '',
+                created_by_step_id TEXT,
+                base_version INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (file_id) REFERENCES sandbox_files(id) ON DELETE CASCADE,
+                FOREIGN KEY (created_by_step_id) REFERENCES agent_run_steps(id) ON DELETE SET NULL,
+                UNIQUE (file_id, version)
+            );
+
+            CREATE TABLE IF NOT EXISTS sandbox_conflicts (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                sandbox_id TEXT NOT NULL,
+                file_id TEXT,
+                file_path TEXT NOT NULL,
+                base_version INTEGER NOT NULL DEFAULT 0,
+                current_version INTEGER NOT NULL DEFAULT 0,
+                incoming_content TEXT NOT NULL DEFAULT '',
+                incoming_hash TEXT NOT NULL DEFAULT '',
+                created_by_step_id TEXT,
+                status TEXT NOT NULL DEFAULT 'open',
+                resolution TEXT,
+                created_at TEXT NOT NULL,
+                resolved_at TEXT,
+                FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE,
+                FOREIGN KEY (sandbox_id) REFERENCES sandboxes(id) ON DELETE CASCADE,
+                FOREIGN KEY (file_id) REFERENCES sandbox_files(id) ON DELETE SET NULL,
+                FOREIGN KEY (created_by_step_id) REFERENCES agent_run_steps(id) ON DELETE SET NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_conversations_updated_at
                 ON conversations(updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash
@@ -414,6 +649,16 @@ def init_db() -> None:
                 ON long_term_memories(conversation_id, active, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_pinned_messages_conversation
                 ON pinned_messages(conversation_id, created_at ASC);
+            CREATE INDEX IF NOT EXISTS idx_conversation_agent_overrides_conversation
+                ON conversation_agent_overrides(conversation_id);
+            CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
+                ON agent_runs(conversation_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_run_steps_run_status
+                ON agent_run_steps(run_id, status);
+            CREATE INDEX IF NOT EXISTS idx_sandbox_files_run_path
+                ON sandbox_files(run_id, path);
+            CREATE INDEX IF NOT EXISTS idx_sandbox_conflicts_run_status
+                ON sandbox_conflicts(run_id, status);
             """
         )
         ensure_column(conn, "artifacts", "tags_json", "TEXT NOT NULL DEFAULT '[]'")
@@ -615,14 +860,24 @@ def migrate_legacy_ownership(conn: sqlite3.Connection) -> None:
         """,
         ("user-admin",),
     )
+    default_agent_ids = tuple(sorted(DEFAULT_AGENT_IDS))
+    default_placeholders = ",".join("?" for _ in default_agent_ids)
     conn.execute(
-        """
+        f"""
         UPDATE agents
         SET owner_user_id = ?
         WHERE (owner_user_id IS NULL OR owner_user_id = '')
-          AND id NOT IN ('agent-orchestrator', 'agent-claude-code', 'agent-codex')
+          AND id NOT IN ({default_placeholders})
         """,
-        ("user-admin",),
+        ("user-admin", *default_agent_ids),
+    )
+    conn.execute(
+        f"""
+        UPDATE agents
+        SET owner_user_id = NULL
+        WHERE id IN ({default_placeholders})
+        """,
+        default_agent_ids,
     )
 
 
@@ -752,14 +1007,11 @@ def ensure_group_orchestrator_memberships(conn: sqlite3.Connection) -> None:
 
 
 def seed_agents(conn: sqlite3.Connection) -> None:
-    existing = conn.execute("SELECT COUNT(*) AS count FROM agents").fetchone()["count"]
-    if existing:
-        return
     timestamp = now_text()
     for agent in DEFAULT_AGENTS:
         conn.execute(
             """
-            INSERT INTO agents (
+            INSERT OR IGNORE INTO agents (
                 id, name, avatar, description, tags_json, status, category, provider,
                 enabled, last_used_at, system_prompt, model_config_json, tools_json,
                 permissions_json, created_at, updated_at
@@ -1021,6 +1273,59 @@ def apply_agent_user_override(agent: Dict[str, Any], owner_user_id: Optional[str
     return overridden
 
 
+def apply_conversation_agent_override(agent: Dict[str, Any], conversation_id: str) -> Dict[str, Any]:
+    if agent.get("id") == ORCHESTRATOR_AGENT_ID:
+        return agent
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM conversation_agent_overrides
+            WHERE conversation_id = ? AND agent_id = ?
+            """,
+            (conversation_id, agent["id"]),
+        ).fetchone()
+    if not row:
+        return agent
+
+    overridden = {
+        **agent,
+        "name": row["name"] if row["name"] is not None else agent["name"],
+        "avatar": row["avatar"] if row["avatar"] is not None else agent["avatar"],
+        "description": row["description"] if row["description"] is not None else agent["description"],
+        "tags": _json_load(row["tags_json"], agent["tags"]) if row["tags_json"] is not None else agent["tags"],
+        "status": row["status"] if row["status"] is not None else agent["status"],
+        "category": row["category"] if row["category"] is not None else agent["category"],
+        "provider": row["provider"] if row["provider"] is not None else agent["provider"],
+        "enabled": bool(row["enabled"]) if row["enabled"] is not None else agent["enabled"],
+        "lastUsedAt": row["last_used_at"] if row["last_used_at"] is not None else agent["lastUsedAt"],
+        "systemPrompt": row["system_prompt"] if row["system_prompt"] is not None else agent["systemPrompt"],
+        "modelConfig": _json_load(row["model_config_json"], agent["modelConfig"]) if row["model_config_json"] is not None else agent["modelConfig"],
+        "tools": _json_load(row["tools_json"], agent["tools"]) if row["tools_json"] is not None else agent["tools"],
+        "permissions": _json_load(row["permissions_json"], agent["permissions"]) if row["permissions_json"] is not None else agent["permissions"],
+        "overrideSource": "conversation",
+        "conversationId": conversation_id,
+        "baseAgentId": agent["id"],
+    }
+    if row["system_prompt"] is not None:
+        overridden["systemPromptSource"] = "conversation_override"
+    if overridden["status"] == "disabled":
+        overridden["enabled"] = False
+    return overridden
+
+
+def get_conversation_agent_config(
+    conversation_id: str,
+    agent_id: str,
+    owner_user_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    agent = get_agent(agent_id, owner_user_id=owner_user_id)
+    if not agent:
+        return None
+    agent = {**agent, "conversationId": conversation_id}
+    return apply_conversation_agent_override(agent, conversation_id)
+
+
 def upsert_agent_user_override(
     owner_user_id: str,
     base_agent_id: str,
@@ -1132,6 +1437,148 @@ def upsert_agent_user_system_prompt(
     )
 
 
+def upsert_conversation_agent_config(
+    conversation_id: str,
+    agent_id: str,
+    payload: Dict[str, Any],
+    owner_user_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    current = get_agent(agent_id, owner_user_id=owner_user_id)
+    if not current or agent_id == ORCHESTRATOR_AGENT_ID:
+        return None
+
+    timestamp = now_text()
+    with get_connection() as conn:
+        existing = conn.execute(
+            """
+            SELECT *
+            FROM conversation_agent_overrides
+            WHERE conversation_id = ? AND agent_id = ?
+            """,
+            (conversation_id, agent_id),
+        ).fetchone()
+
+        values: Dict[str, Any] = {
+            "name": existing["name"] if existing else None,
+            "avatar": existing["avatar"] if existing else None,
+            "description": existing["description"] if existing else None,
+            "tags_json": existing["tags_json"] if existing else None,
+            "status": existing["status"] if existing else None,
+            "category": existing["category"] if existing else None,
+            "provider": existing["provider"] if existing else None,
+            "enabled": existing["enabled"] if existing else None,
+            "last_used_at": existing["last_used_at"] if existing else None,
+            "system_prompt": existing["system_prompt"] if existing else None,
+            "model_config_json": existing["model_config_json"] if existing else None,
+            "tools_json": existing["tools_json"] if existing else None,
+            "permissions_json": existing["permissions_json"] if existing else None,
+        }
+
+        if "name" in payload:
+            values["name"] = str(payload.get("name") or "").strip()
+        if "avatar" in payload:
+            values["avatar"] = str(payload.get("avatar") or "")
+        if "description" in payload:
+            values["description"] = str(payload.get("description") or "")
+        if "tags" in payload:
+            values["tags_json"] = _json_dump(payload.get("tags") or [])
+        if "status" in payload:
+            values["status"] = str(payload.get("status") or "offline")
+        if "category" in payload:
+            values["category"] = str(payload.get("category") or "custom")
+        if "provider" in payload:
+            values["provider"] = str(payload.get("provider") or "mock")
+        if "enabled" in payload:
+            values["enabled"] = 1 if bool(payload.get("enabled")) else 0
+        if "lastUsedAt" in payload:
+            values["last_used_at"] = payload.get("lastUsedAt")
+        if "systemPrompt" in payload:
+            values["system_prompt"] = str(payload.get("systemPrompt") or "")
+        if "modelConfig" in payload:
+            values["model_config_json"] = _json_dump(payload.get("modelConfig") or {})
+        if "tools" in payload:
+            values["tools_json"] = _json_dump(payload.get("tools") or [])
+        if "permissions" in payload:
+            values["permissions_json"] = _json_dump(payload.get("permissions") or DEFAULT_PERMISSIONS)
+
+        if payload.get("enabled") is False:
+            values["status"] = "disabled"
+        elif payload.get("enabled") is True and "status" not in payload:
+            effective_status = values["status"] if values["status"] is not None else current.get("status")
+            if effective_status == "disabled":
+                values["status"] = "online"
+        if values["status"] == "disabled":
+            values["enabled"] = 0
+
+        if existing:
+            conn.execute(
+                """
+                UPDATE conversation_agent_overrides
+                SET name = ?, avatar = ?, description = ?, tags_json = ?,
+                    status = ?, category = ?, provider = ?, enabled = ?, last_used_at = ?,
+                    system_prompt = ?, model_config_json = ?, tools_json = ?,
+                    permissions_json = ?, updated_at = ?
+                WHERE conversation_id = ? AND agent_id = ?
+                """,
+                (
+                    values["name"],
+                    values["avatar"],
+                    values["description"],
+                    values["tags_json"],
+                    values["status"],
+                    values["category"],
+                    values["provider"],
+                    values["enabled"],
+                    values["last_used_at"],
+                    values["system_prompt"],
+                    values["model_config_json"],
+                    values["tools_json"],
+                    values["permissions_json"],
+                    timestamp,
+                    conversation_id,
+                    agent_id,
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO conversation_agent_overrides (
+                    id, conversation_id, agent_id, name, avatar, description,
+                    tags_json, status, category, provider, enabled, last_used_at,
+                    system_prompt, model_config_json, tools_json, permissions_json,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    create_id("convAgentOverride"),
+                    conversation_id,
+                    agent_id,
+                    values["name"],
+                    values["avatar"],
+                    values["description"],
+                    values["tags_json"],
+                    values["status"],
+                    values["category"],
+                    values["provider"],
+                    values["enabled"],
+                    values["last_used_at"],
+                    values["system_prompt"],
+                    values["model_config_json"],
+                    values["tools_json"],
+                    values["permissions_json"],
+                    timestamp,
+                    timestamp,
+                ),
+            )
+
+    return get_conversation_agent_config(
+        conversation_id,
+        agent_id,
+        owner_user_id=owner_user_id,
+    )
+
+
 def attach_agent_contact_conversation(
     agent: Dict[str, Any],
     owner_user_id: Optional[str],
@@ -1185,6 +1632,8 @@ def message_from_row(row: sqlite3.Row) -> Dict[str, Any]:
     metadata = _json_load(row["metadata_json"], {})
     if metadata:
         message["metadata"] = metadata
+        if isinstance(metadata.get("artifactRef"), dict):
+            message["artifactRef"] = metadata["artifactRef"]
     return message
 
 
@@ -1192,6 +1641,7 @@ def artifact_meta_from_row(row: sqlite3.Row) -> Dict[str, Any]:
     artifact = {
         "id": row["id"],
         "conversationId": row["conversation_id"],
+        "runId": row["run_id"],
         "title": row["title"],
         "type": row["type"],
         "tags": _json_load(row["tags_json"], []),
@@ -1272,6 +1722,108 @@ def pin_from_row(row: sqlite3.Row) -> Dict[str, Any]:
     if row["message_row_id"]:
         pin["message"] = message_from_row(row)
     return pin
+
+
+def sandbox_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "ownerUserId": row["owner_user_id"],
+        "conversationId": row["conversation_id"],
+        "runId": row["run_id"],
+        "status": row["status"],
+        "containerId": row["container_id"],
+        "image": row["image"],
+        "network": row["network"],
+        "workspacePath": row["workspace_path"],
+        "error": row["error"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+    }
+
+
+def agent_run_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "sandboxId": row["sandbox_id"],
+        "conversationId": row["conversation_id"],
+        "ownerUserId": row["owner_user_id"],
+        "status": row["status"],
+        "prompt": row["prompt"],
+        "dag": _json_load(row["dag_json"], {}),
+        "summary": row["summary"],
+        "error": row["error"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+        "startedAt": row["started_at"],
+        "finishedAt": row["finished_at"],
+    }
+
+
+def agent_run_step_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "runId": row["run_id"],
+        "agentId": row["agent_id"],
+        "agentName": row["agent_name"],
+        "task": row["task"],
+        "dependsOn": _json_load(row["depends_on_json"], []),
+        "expectedOutputs": _json_load(row["expected_outputs_json"], []),
+        "status": row["status"],
+        "claimedBy": row["claimed_by"],
+        "output": _json_load(row["output_json"], {}),
+        "logs": row["logs"],
+        "error": row["error"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+        "startedAt": row["started_at"],
+        "finishedAt": row["finished_at"],
+    }
+
+
+def sandbox_file_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "sandboxId": row["sandbox_id"],
+        "runId": row["run_id"],
+        "path": row["path"],
+        "contentHash": row["content_hash"],
+        "currentVersion": row["current_version"],
+        "artifactId": row["artifact_id"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+    }
+
+
+def sandbox_file_version_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "fileId": row["file_id"],
+        "version": row["version"],
+        "content": row["content"],
+        "contentHash": row["content_hash"],
+        "createdByStepId": row["created_by_step_id"],
+        "baseVersion": row["base_version"],
+        "createdAt": row["created_at"],
+    }
+
+
+def sandbox_conflict_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "runId": row["run_id"],
+        "sandboxId": row["sandbox_id"],
+        "fileId": row["file_id"],
+        "filePath": row["file_path"],
+        "baseVersion": row["base_version"],
+        "currentVersion": row["current_version"],
+        "incomingContent": row["incoming_content"],
+        "incomingHash": row["incoming_hash"],
+        "createdByStepId": row["created_by_step_id"],
+        "status": row["status"],
+        "resolution": row["resolution"],
+        "createdAt": row["created_at"],
+        "resolvedAt": row["resolved_at"],
+    }
 
 
 def list_agents(
@@ -1634,6 +2186,48 @@ def get_conversation(conversation_id: str, owner_user_id: Optional[str] = None) 
         return conversation_from_row(row, get_conversation_agent_ids(conn, conversation_id))
 
 
+def add_conversation_agent(
+    conversation_id: str,
+    agent_id: str,
+    owner_user_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    current = get_conversation(conversation_id, owner_user_id=owner_user_id)
+    if not current:
+        return None
+    timestamp = now_text()
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO conversation_agents (conversation_id, agent_id) VALUES (?, ?)",
+            (conversation_id, agent_id),
+        )
+        conn.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            (timestamp, conversation_id),
+        )
+    return get_conversation(conversation_id, owner_user_id=owner_user_id)
+
+
+def remove_conversation_agent(
+    conversation_id: str,
+    agent_id: str,
+    owner_user_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    current = get_conversation(conversation_id, owner_user_id=owner_user_id)
+    if not current:
+        return None
+    timestamp = now_text()
+    with get_connection() as conn:
+        conn.execute(
+            "DELETE FROM conversation_agents WHERE conversation_id = ? AND agent_id = ?",
+            (conversation_id, agent_id),
+        )
+        conn.execute(
+            "UPDATE conversations SET updated_at = ? WHERE id = ?",
+            (timestamp, conversation_id),
+        )
+    return get_conversation(conversation_id, owner_user_id=owner_user_id)
+
+
 def update_conversation(conversation_id: str, payload: Dict[str, Any], owner_user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     current = get_conversation(conversation_id, owner_user_id=owner_user_id)
     if not current:
@@ -1897,6 +2491,7 @@ def create_artifact(
     created_by: Optional[str] = None,
     created_by_type: str = "agent",
     change_summary: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     artifact_id = create_id("artifact")
     version_id = create_id("version")
@@ -1934,7 +2529,7 @@ def create_artifact(
                 id, artifact_id, version, content, language, size, change_summary,
                 created_by, created_by_type, parent_version_id, metadata_json, created_at
             )
-            VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, NULL, '{}', ?)
+            VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
             """,
             (
                 version_id,
@@ -1945,6 +2540,7 @@ def create_artifact(
                 change_summary or "Agent 生成初始版本",
                 created_by or message_id or "agent",
                 created_by_type,
+                _json_dump(metadata or {}),
                 timestamp,
             ),
         )
@@ -2004,6 +2600,470 @@ def update_artifact(
         row = conn.execute("SELECT * FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
         new_version = get_current_artifact_version(conn, row)
         return artifact_detail_from_row(row, new_version)
+
+
+def _content_hash(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def create_sandbox(
+    owner_user_id: str,
+    conversation_id: str,
+    image: str,
+    network: str,
+    workspace_path: str,
+) -> Dict[str, Any]:
+    sandbox_id = create_id("sandbox")
+    timestamp = now_text()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO sandboxes (
+                id, owner_user_id, conversation_id, status, image, network,
+                workspace_path, created_at, updated_at
+            )
+            VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+            """,
+            (sandbox_id, owner_user_id, conversation_id, image, network, workspace_path, timestamp, timestamp),
+        )
+        row = conn.execute("SELECT * FROM sandboxes WHERE id = ?", (sandbox_id,)).fetchone()
+    return sandbox_from_row(row)
+
+
+def update_sandbox(
+    sandbox_id: str,
+    status: Optional[str] = None,
+    container_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+    error: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    current = get_sandbox(sandbox_id)
+    if not current:
+        return None
+    updated_status = status if status is not None else current["status"]
+    updated_container_id = container_id if container_id is not None else current.get("containerId")
+    updated_run_id = run_id if run_id is not None else current.get("runId")
+    updated_error = error if error is not None else current.get("error")
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE sandboxes
+            SET status = ?, container_id = ?, run_id = ?, error = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (updated_status, updated_container_id, updated_run_id, updated_error, now_text(), sandbox_id),
+        )
+    return get_sandbox(sandbox_id)
+
+
+def get_sandbox(sandbox_id: str, owner_user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    owner_clause = ""
+    params: List[Any] = [sandbox_id]
+    if owner_user_id:
+        owner_clause = "AND owner_user_id = ?"
+        params.append(owner_user_id)
+    with get_connection() as conn:
+        row = conn.execute(
+            f"SELECT * FROM sandboxes WHERE id = ? {owner_clause}",
+            params,
+        ).fetchone()
+    return sandbox_from_row(row) if row else None
+
+
+def create_agent_run(
+    owner_user_id: str,
+    conversation_id: str,
+    sandbox_id: str,
+    prompt: str,
+    dag: Dict[str, Any],
+    run_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    run_id = run_id or create_id("run")
+    timestamp = now_text()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO agent_runs (
+                id, sandbox_id, conversation_id, owner_user_id, status,
+                prompt, dag_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+            """,
+            (run_id, sandbox_id, conversation_id, owner_user_id, prompt, _json_dump(dag), timestamp, timestamp),
+        )
+    update_sandbox(sandbox_id, run_id=run_id)
+    return get_agent_run(run_id)
+
+
+def get_agent_run(run_id: str, owner_user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    owner_clause = ""
+    params: List[Any] = [run_id]
+    if owner_user_id:
+        owner_clause = "AND owner_user_id = ?"
+        params.append(owner_user_id)
+    with get_connection() as conn:
+        row = conn.execute(
+            f"SELECT * FROM agent_runs WHERE id = ? {owner_clause}",
+            params,
+        ).fetchone()
+    return agent_run_from_row(row) if row else None
+
+
+def update_agent_run(
+    run_id: str,
+    status: Optional[str] = None,
+    summary: Optional[str] = None,
+    error: Optional[str] = None,
+    mark_started: bool = False,
+    mark_finished: bool = False,
+) -> Optional[Dict[str, Any]]:
+    current = get_agent_run(run_id)
+    if not current:
+        return None
+    timestamp = now_text()
+    started_at = timestamp if mark_started and not current.get("startedAt") else current.get("startedAt")
+    finished_at = timestamp if mark_finished else current.get("finishedAt")
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE agent_runs
+            SET status = ?, summary = ?, error = ?, started_at = ?, finished_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                status if status is not None else current["status"],
+                summary if summary is not None else current.get("summary", ""),
+                error if error is not None else current.get("error"),
+                started_at,
+                finished_at,
+                timestamp,
+                run_id,
+            ),
+        )
+    return get_agent_run(run_id)
+
+
+def create_agent_run_steps(run_id: str, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    timestamp = now_text()
+    with get_connection() as conn:
+        for step in steps:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO agent_run_steps (
+                    id, run_id, agent_id, agent_name, task, depends_on_json,
+                    expected_outputs_json, status, output_json, logs,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', '{}', '', ?, ?)
+                """,
+                (
+                    step["id"],
+                    run_id,
+                    step["agentId"],
+                    step.get("agentName", ""),
+                    step.get("task", ""),
+                    _json_dump(step.get("dependsOn", [])),
+                    _json_dump(step.get("expectedOutputs", [])),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+    return list_agent_run_steps(run_id)
+
+
+def list_agent_run_steps(run_id: str) -> List[Dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM agent_run_steps WHERE run_id = ? ORDER BY created_at ASC, rowid ASC",
+            (run_id,),
+        ).fetchall()
+    return [agent_run_step_from_row(row) for row in rows]
+
+
+def get_agent_run_step(step_id: str) -> Optional[Dict[str, Any]]:
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM agent_run_steps WHERE id = ?", (step_id,)).fetchone()
+    return agent_run_step_from_row(row) if row else None
+
+
+def update_agent_run_step(
+    step_id: str,
+    status: Optional[str] = None,
+    claimed_by: Optional[str] = None,
+    output: Optional[Dict[str, Any]] = None,
+    append_log: Optional[str] = None,
+    error: Optional[str] = None,
+    mark_started: bool = False,
+    mark_finished: bool = False,
+) -> Optional[Dict[str, Any]]:
+    current = get_agent_run_step(step_id)
+    if not current:
+        return None
+    timestamp = now_text()
+    logs = current.get("logs") or ""
+    if append_log:
+        logs = (logs + ("\n" if logs else "") + append_log)[-50000:]
+    started_at = timestamp if mark_started and not current.get("startedAt") else current.get("startedAt")
+    finished_at = timestamp if mark_finished else current.get("finishedAt")
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE agent_run_steps
+            SET status = ?, claimed_by = ?, output_json = ?, logs = ?, error = ?,
+                started_at = ?, finished_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                status if status is not None else current["status"],
+                claimed_by if claimed_by is not None else current.get("claimedBy"),
+                _json_dump(output if output is not None else current.get("output", {})),
+                logs,
+                error if error is not None else current.get("error"),
+                started_at,
+                finished_at,
+                timestamp,
+                step_id,
+            ),
+        )
+    return get_agent_run_step(step_id)
+
+
+def get_agent_run_detail(run_id: str, owner_user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    run = get_agent_run(run_id, owner_user_id=owner_user_id)
+    if not run:
+        return None
+    sandbox = get_sandbox(run["sandboxId"], owner_user_id=owner_user_id)
+    return {
+        **run,
+        "sandbox": sandbox,
+        "steps": list_agent_run_steps(run_id),
+        "files": list_sandbox_files(run_id),
+        "conflicts": list_sandbox_conflicts(run_id),
+    }
+
+
+def list_agent_runs_for_conversation(
+    conversation_id: str,
+    owner_user_id: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> Dict[str, Any]:
+    query = """
+        SELECT *
+        FROM agent_runs
+        WHERE conversation_id = ?
+    """
+    params: List[Any] = [conversation_id]
+    if owner_user_id:
+        query += " AND owner_user_id = ?"
+        params.append(owner_user_id)
+    query += " ORDER BY created_at DESC, rowid DESC"
+    with get_connection() as conn:
+        rows = conn.execute(query, params).fetchall()
+    runs = [
+        get_agent_run_detail(row["id"], owner_user_id=owner_user_id)
+        for row in rows
+    ]
+    return paginate(
+        [run for run in runs if run],
+        page,
+        page_size,
+    )
+
+
+def list_sandbox_files(run_id: str) -> List[Dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sandbox_files WHERE run_id = ? ORDER BY path ASC",
+            (run_id,),
+        ).fetchall()
+    return [sandbox_file_from_row(row) for row in rows]
+
+
+def get_sandbox_file(run_id: str, file_path: str) -> Optional[Dict[str, Any]]:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM sandbox_files WHERE run_id = ? AND path = ?",
+            (run_id, file_path),
+        ).fetchone()
+    return sandbox_file_from_row(row) if row else None
+
+
+def get_sandbox_file_version(file_id: str, version: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    with get_connection() as conn:
+        if version is None:
+            row = conn.execute(
+                "SELECT * FROM sandbox_file_versions WHERE file_id = ? ORDER BY version DESC LIMIT 1",
+                (file_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM sandbox_file_versions WHERE file_id = ? AND version = ?",
+                (file_id, version),
+            ).fetchone()
+    return sandbox_file_version_from_row(row) if row else None
+
+
+def create_sandbox_file_version(
+    sandbox_id: str,
+    run_id: str,
+    file_path: str,
+    content: str,
+    base_version: int,
+    created_by_step_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    timestamp = now_text()
+    content_hash = _content_hash(content)
+    with get_connection() as conn:
+        sandbox = conn.execute(
+            "SELECT * FROM sandboxes WHERE id = ? AND run_id = ?",
+            (sandbox_id, run_id),
+        ).fetchone()
+        if not sandbox:
+            raise ValueError("sandbox not found for run")
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO sandbox_files (
+                id, sandbox_id, run_id, path, content_hash, current_version,
+                created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, '', 0, ?, ?)
+            """,
+            (create_id("file"), sandbox_id, run_id, file_path, timestamp, timestamp),
+        )
+        file_row = conn.execute(
+            "SELECT * FROM sandbox_files WHERE sandbox_id = ? AND path = ?",
+            (sandbox_id, file_path),
+        ).fetchone()
+        current_version = int(file_row["current_version"] or 0)
+        if current_version != int(base_version):
+            conflict_id = create_id("conflict")
+            conn.execute(
+                """
+                INSERT INTO sandbox_conflicts (
+                    id, run_id, sandbox_id, file_id, file_path, base_version,
+                    current_version, incoming_content, incoming_hash,
+                    created_by_step_id, status, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+                """,
+                (
+                    conflict_id,
+                    run_id,
+                    sandbox_id,
+                    file_row["id"],
+                    file_path,
+                    int(base_version),
+                    current_version,
+                    content,
+                    content_hash,
+                    created_by_step_id,
+                    timestamp,
+                ),
+            )
+            conflict = conn.execute("SELECT * FROM sandbox_conflicts WHERE id = ?", (conflict_id,)).fetchone()
+            return {"status": "conflict", "conflict": sandbox_conflict_from_row(conflict)}
+
+        next_version = current_version + 1
+        version_id = create_id("fileVersion")
+        conn.execute(
+            """
+            INSERT INTO sandbox_file_versions (
+                id, file_id, version, content, content_hash,
+                created_by_step_id, base_version, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (version_id, file_row["id"], next_version, content, content_hash, created_by_step_id, int(base_version), timestamp),
+        )
+        conn.execute(
+            """
+            UPDATE sandbox_files
+            SET content_hash = ?, current_version = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (content_hash, next_version, timestamp, file_row["id"]),
+        )
+        file_row = conn.execute("SELECT * FROM sandbox_files WHERE id = ?", (file_row["id"],)).fetchone()
+        version_row = conn.execute("SELECT * FROM sandbox_file_versions WHERE id = ?", (version_id,)).fetchone()
+        return {
+            "status": "saved",
+            "file": sandbox_file_from_row(file_row),
+            "version": sandbox_file_version_from_row(version_row),
+        }
+
+
+def set_sandbox_file_artifact(file_id: str, artifact_id: str) -> Optional[Dict[str, Any]]:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE sandbox_files SET artifact_id = ?, updated_at = ? WHERE id = ?",
+            (artifact_id, now_text(), file_id),
+        )
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM sandbox_files WHERE id = ?", (file_id,)).fetchone()
+    return sandbox_file_from_row(row) if row else None
+
+
+def list_sandbox_conflicts(run_id: str) -> List[Dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sandbox_conflicts WHERE run_id = ? ORDER BY created_at ASC",
+            (run_id,),
+        ).fetchall()
+    return [sandbox_conflict_from_row(row) for row in rows]
+
+
+def get_sandbox_conflict(conflict_id: str, run_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    run_clause = ""
+    params: List[Any] = [conflict_id]
+    if run_id:
+        run_clause = "AND run_id = ?"
+        params.append(run_id)
+    with get_connection() as conn:
+        row = conn.execute(
+            f"SELECT * FROM sandbox_conflicts WHERE id = ? {run_clause}",
+            params,
+        ).fetchone()
+    return sandbox_conflict_from_row(row) if row else None
+
+
+def resolve_sandbox_conflict(
+    run_id: str,
+    conflict_id: str,
+    resolution: str,
+    manual_content: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    conflict = get_sandbox_conflict(conflict_id, run_id=run_id)
+    if not conflict or conflict["status"] != "open":
+        return None
+    if resolution == "current":
+        resolved_content = None
+    elif resolution == "incoming":
+        resolved_content = conflict["incomingContent"]
+    elif resolution == "manual":
+        resolved_content = manual_content if manual_content is not None else ""
+    else:
+        raise ValueError("invalid conflict resolution")
+
+    if resolved_content is not None:
+        create_sandbox_file_version(
+            sandbox_id=conflict["sandboxId"],
+            run_id=run_id,
+            file_path=conflict["filePath"],
+            content=resolved_content,
+            base_version=conflict["currentVersion"],
+            created_by_step_id=conflict["createdByStepId"],
+        )
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE sandbox_conflicts
+            SET status = 'resolved', resolution = ?, resolved_at = ?
+            WHERE id = ? AND run_id = ?
+            """,
+            (resolution, now_text(), conflict_id, run_id),
+        )
+    return get_sandbox_conflict(conflict_id, run_id=run_id)
 
 
 ERROR_CONTEXT_PATTERNS = (

@@ -7,7 +7,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 
 class Settings(BaseSettings):
     # ==================== 基础服务配置 ====================
-    PORT: int = 8000
+    PORT: int = 9
     HOST: str = "0.0.0.0"
     
     # ==================== 大模型凭证 (无默认值，必填) ====================
@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     # ==================== 混合数据库配置 (选填，带默认值) ====================
     REDIS_URL: str = "redis://localhost:6379/0"
     DATABASE_URL: str = "sqlite:///./agenthub.db" # 默认先用轻量级 SQLite 跑通，后面可换 PG/MySQL
+
+    # ==================== 沙箱执行配置 ====================
+    SANDBOX_IMAGE: str = "python:3.11-slim"
+    SANDBOX_NETWORK: str = "none"
+    SANDBOX_TIMEOUT_SECONDS: int = 120
+    SANDBOX_MAX_PARALLEL_STEPS: int = 2
+    SANDBOX_WORKSPACE_ROOT: str = "/tmp/agenthub-sandboxes"
+    SANDBOX_MAX_OUTPUT_CHARS: int = 12000
 
     # ==================== Pydantic 配置项 ====================
     # 通过 SettingsConfigDict 声明直接读取根目录下的 .env 文件
