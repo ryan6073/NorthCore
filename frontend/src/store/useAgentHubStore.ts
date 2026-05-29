@@ -107,7 +107,7 @@ interface AgentHubStore {
 
   // Actions
   initStore: () => Promise<void>;
-  setUseMockMode: (mode: boolean) => void;
+  setUseMockMode: (mode: boolean) => Promise<void>;
   setActiveConversationId: (id: string | null) => Promise<void>;
   setSelectedArtifactId: (id: string | null) => void;
   setSelectedArtifactVersion: (version: number | null) => void;
@@ -354,6 +354,16 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       console.warn('Failed to initialize registered users', e);
     }
 
+    // Load mock mode preference from localStorage
+    try {
+      const storedMockMode = localStorage.getItem('ag_use_mock_mode');
+      if (storedMockMode !== null) {
+        set({ useMockMode: storedMockMode === 'true' });
+      }
+    } catch (e) {
+      console.warn('Failed to load mock mode from localStorage', e);
+    }
+
     // Load from LocalStorage
     try {
       const storedConfigs = localStorage.getItem('ag_conversation_agent_configs');
@@ -494,7 +504,48 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     }
   },
 
-  setUseMockMode: (mode) => set({ useMockMode: mode }),
+  setUseMockMode: async (mode) => {
+    set({ useMockMode: mode });
+    localStorage.setItem('ag_use_mock_mode', String(mode));
+    
+    if (mode) {
+      console.log('[Store] 切换到 Mock 演示模式');
+      set({
+        conversations: mergeLocalFlags(mockConversations),
+        agents: initialAgents,
+        messages: mockMessages,
+        artifacts: mockArtifacts,
+        artifactVersions: mockArtifactVersions.reduce((acc, v) => {
+          if (!acc[v.artifactId]) acc[v.artifactId] = [];
+          acc[v.artifactId].push(v);
+          return acc;
+        }, {} as Record<string, ArtifactVersion[]>),
+        activeConversationId: mockConversations[0]?.id || null,
+      });
+      if (mockConversations[0]?.id) {
+        await get().loadConversationData(mockConversations[0].id);
+      }
+    } else {
+      console.log('[Store] 切换到真实 API 模式');
+      try {
+        set({
+          conversations: [],
+          agents: [],
+          messages: [],
+          artifacts: [],
+          artifactVersions: {},
+          pins: [],
+          memories: [],
+          activeConversationId: null,
+        });
+        await get().loadBusinessData();
+      } catch (e) {
+        console.warn('[Store] 真实 API 模式加载失败，自动回退到 Mock 模式', e);
+        set({ useMockMode: true });
+        localStorage.setItem('ag_use_mock_mode', 'true');
+      }
+    }
+  },
 
   setActiveConversationId: async (id) => {
     set({ 

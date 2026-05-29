@@ -892,7 +892,10 @@ export const SettingsModal: React.FC = () => {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setUseMockMode(!useMockMode)}
+                  onClick={async () => {
+                    await setUseMockMode(!useMockMode);
+                    triggerNotice(useMockMode ? '已切换到真实 API 模式' : '已切换到 Mock 演示模式');
+                  }}
                   className={`w-12 h-6.5 rounded-full p-1 transition-colors outline-none flex items-center ${
                     useMockMode ? 'bg-violet-600' : 'bg-slate-350 dark:bg-slate-800'
                   }`}

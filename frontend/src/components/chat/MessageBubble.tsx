@@ -185,9 +185,13 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     return <p className="text-sm leading-relaxed whitespace-pre-wrap">{formatMessageText(message.content)}</p>;
   };
 
+  const isBlockType = message.type === 'code' || message.type === 'task-plan' || message.type === 'artifact';
+  const hasContent = message.content && message.content.trim().length > 0;
+  const hasAttachments = message.attachments && message.attachments.length > 0;
+  const shouldShowBubble = isBlockType || hasContent;
+
   const bubbleLayout = () => {
     const timeText = getPreciseTime(message.createdAt);
-    const isBlockType = message.type === 'code' || message.type === 'task-plan' || message.type === 'artifact';
 
     return (
       <div 
@@ -246,7 +250,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
             {message.quotedMessage && (
               <div 
                 onClick={handleQuoteClick}
-                className="w-full self-stretch p-2 bg-slate-50 dark:bg-slate-900 border-l-2 border-slate-300 dark:border-slate-700 rounded-r-lg text-[10px] text-slate-500 dark:text-slate-400 mb-1 flex flex-col gap-0.5 select-none shadow-sm cursor-pointer hover:bg-slate-100/80 dark:hover:bg-slate-850 hover:border-slate-400 dark:hover:border-slate-650 transition-all"
+                className={`${isUser ? 'w-auto self-end max-w-[90%]' : 'w-full self-stretch'} p-2 bg-slate-50 dark:bg-slate-900 border-l-2 border-slate-300 dark:border-slate-700 rounded-r-lg text-[10px] text-slate-500 dark:text-slate-400 mb-1 flex flex-col gap-0.5 select-none shadow-sm cursor-pointer hover:bg-slate-100/80 dark:hover:bg-slate-850 hover:border-slate-400 dark:hover:border-slate-650 transition-all`}
                 title="点击跳转到被引用的原始消息"
               >
                 <div className="flex items-center justify-between">
@@ -261,7 +265,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
             {message.artifactRef && (
               <div 
                 onClick={handleRefClick}
-                className="w-full self-stretch p-2 bg-slate-900 border border-slate-800 text-slate-300 rounded-xl mb-1 cursor-pointer hover:bg-slate-800 hover:border-slate-700 transition-all select-none shadow-md flex flex-col gap-1.5"
+                className={`${isUser ? 'w-auto self-end max-w-[90%]' : 'w-full self-stretch'} p-2 bg-slate-900 border border-slate-800 text-slate-300 rounded-xl mb-1 cursor-pointer hover:bg-slate-800 hover:border-slate-700 transition-all select-none shadow-md flex flex-col gap-1.5`}
                 title="点击在右侧定位此行代码"
               >
                 <div className="flex items-center justify-between text-[10px] text-slate-400 font-semibold border-b border-slate-800 pb-1">
@@ -286,109 +290,111 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
               </div>
             )}
 
-            {/* 3. Main Message bubble content */}
-            <div 
-              onMouseMove={handleMouseMove}
-              onMouseLeave={handleMouseLeave}
-              onClick={handleBubbleClick}
-              className={`relative group/bubble-content max-w-full cursor-pointer lg:cursor-default ${
-                isBlockType 
-                  ? 'w-full self-stretch' 
-                  : isUser 
-                    ? 'self-end w-fit' 
-                    : 'self-start w-fit'
-              }`}
-            >
-              {/* Golden Pin Badge (Clickable to Unpin) */}
-              {message.isPinned && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handlePin(e);
-                  }}
-                  className={`absolute -top-2 ${isUser ? '-left-2' : '-right-2'} bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-650 border border-amber-500 text-white rounded-full p-1 shadow-[0_0_8px_rgba(245,158,11,0.45)] z-20 flex items-center justify-center transition-all hover:scale-110 active:scale-95 animate-bounce-subtle`}
-                  title="点击取消 Pin"
-                >
-                  <Pin className="w-3 h-3 fill-white text-white" />
-                </button>
-              )}
-
+            {/* 3. Main Message bubble content - only show if has content */}
+            {shouldShowBubble && (
               <div 
-                onMouseEnter={() => setIsHoveringBar(true)}
-                onMouseLeave={() => setIsHoveringBar(false)}
-                style={{ top: mouseY !== null ? `${mouseY}px` : '8px' }}
-                className={`absolute opacity-0 group-hover/bubble-content:opacity-100 transition-opacity duration-150 flex items-center gap-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 shadow-md rounded-lg p-1 z-30 transition-colors
-                  ${isUser 
-                    ? 'right-full mr-3 after:absolute after:-right-4 after:top-0 after:bottom-0 after:w-4 after:content-[\'\']' 
-                    : 'left-full ml-3 before:absolute before:-left-4 before:top-0 before:bottom-0 before:w-4 before:content-[\'\']'}
-                  max-lg:!-top-9 max-lg:left-1/2 max-lg:-translate-x-1/2 max-lg:right-auto max-lg:mr-0 max-lg:ml-0 max-lg:before:hidden max-lg:after:hidden
-                  ${showTouchActions ? 'opacity-100 pointer-events-auto' : ''}`}
-              >
-                <button
-                  onClick={handleReply}
-                  className="p-1 rounded text-slate-400 hover:text-lark-primary hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-                  title="回复此消息"
-                >
-                  <CornerUpLeft className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={handlePin}
-                  className={`p-1 rounded transition-colors ${
-                    message.isPinned 
-                      ? 'text-amber-600 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/40' 
-                      : 'text-slate-400 hover:text-amber-600 hover:bg-slate-50/50 dark:hover:bg-slate-800/50'
-                  }`}
-                  title={message.isPinned ? "取消 Pin 长期记忆" : "Pin 为长期记忆"}
-                >
-                  <Pin className={`w-3.5 h-3.5 ${message.isPinned ? 'fill-amber-500 text-amber-600' : ''}`} />
-                </button>
-                <button
-                  onClick={handleCopy}
-                  className="p-1 rounded text-slate-400 hover:text-lark-primary hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-                  title="复制消息内容"
-                >
-                  {copied ? (
-                    <Check className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
-                  ) : (
-                    <Copy className="w-3.5 h-3.5" />
-                  )}
-                </button>
-              </div>
-
-              {/* Main Content Box */}
-              {isBlockType ? (
-                <div className={`w-full self-stretch transition-all duration-300 ${
-                  message.isPinned 
-                    ? 'shadow-[0_0_12px_rgba(245,158,11,0.15)] ring-1 ring-amber-400/25 rounded-xl border border-amber-300 p-1 bg-amber-50/20' 
-                    : ''
-                }`}>
-                  {renderContent()}
-                </div>
-              ) : (
-                <div className={`px-4 py-2.5 rounded-xl text-sm leading-relaxed shadow-sm transition-all duration-300 ${
-                  message.isPinned
-                    ? `bg-amber-50/60 dark:bg-amber-950/15 border border-amber-300 dark:border-amber-900 text-lark-text-primary dark:text-amber-200 shadow-[0_0_12px_rgba(245,158,11,0.15)] ring-1 ring-amber-400/20 ${
-                        isUser ? 'rounded-tr-none' : 'rounded-tl-none'
-                      }`
+                onMouseMove={handleMouseMove}
+                onMouseLeave={handleMouseLeave}
+                onClick={handleBubbleClick}
+                className={`relative group/bubble-content max-w-full cursor-pointer lg:cursor-default ${
+                  isBlockType 
+                    ? 'w-full self-stretch' 
                     : isUser 
-                      ? 'bg-[#deebff] dark:bg-violet-950/40 text-lark-text-primary dark:text-violet-300 rounded-tr-none border border-[#c3dbff] dark:border-violet-900/50' 
-                      : isOrchestrator
-                        ? 'bg-[#f5f5fc] dark:bg-slate-900 border border-indigo-100 dark:border-indigo-950/60 text-lark-text-primary dark:text-slate-100 rounded-tl-none shadow-[0_0_12px_rgba(99,102,241,0.05)]'
-                        : 'bg-white dark:bg-slate-950 border border-lark-border dark:border-slate-800 text-lark-text-primary dark:text-slate-100 rounded-tl-none'
-                }`}>
-                  {renderContent()}
-                </div>
-              )}
-            </div>
+                      ? 'self-end w-fit' 
+                      : 'self-start w-fit'
+                }`}
+              >
+                {/* Golden Pin Badge (Clickable to Unpin) */}
+                {message.isPinned && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handlePin(e);
+                    }}
+                    className={`absolute -top-2 ${isUser ? '-left-2' : '-right-2'} bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-500 hover:to-yellow-650 border border-amber-500 text-white rounded-full p-1 shadow-[0_0_8px_rgba(245,158,11,0.45)] z-20 flex items-center justify-center transition-all hover:scale-110 active:scale-95 animate-bounce-subtle`}
+                    title="点击取消 Pin"
+                  >
+                    <Pin className="w-3 h-3 fill-white text-white" />
+                  </button>
+                )}
 
-            {/* 4. Attachment Cards if exists */}
-            {message.attachments && message.attachments.length > 0 && (
-              <div className="flex flex-col gap-1.5 mt-1 w-full self-stretch">
-                {message.attachments.map((attach) => (
-                  <AttachmentCard key={attach.id} attachment={attach} />
-                ))}
+                <div 
+                  onMouseEnter={() => setIsHoveringBar(true)}
+                  onMouseLeave={() => setIsHoveringBar(false)}
+                  style={{ top: mouseY !== null ? `${mouseY}px` : '8px' }}
+                  className={`absolute opacity-0 group-hover/bubble-content:opacity-100 transition-opacity duration-150 flex items-center gap-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 shadow-md rounded-lg p-1 z-30 transition-colors
+                    ${isUser 
+                      ? 'right-full mr-3 after:absolute after:-right-4 after:top-0 after:bottom-0 after:w-4 after:content-[\'\']' 
+                      : 'left-full ml-3 before:absolute before:-left-4 before:top-0 before:bottom-0 before:w-4 before:content-[\'\']'}
+                    max-lg:!-top-9 max-lg:left-1/2 max-lg:-translate-x-1/2 max-lg:right-auto max-lg:mr-0 max-lg:ml-0 max-lg:before:hidden max-lg:after:hidden
+                    ${showTouchActions ? 'opacity-100 pointer-events-auto' : ''}`}
+                >
+                  <button
+                    onClick={handleReply}
+                    className="p-1 rounded text-slate-400 hover:text-lark-primary hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                    title="回复此消息"
+                  >
+                    <CornerUpLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={handlePin}
+                    className={`p-1 rounded transition-colors ${
+                      message.isPinned 
+                        ? 'text-amber-600 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/40' 
+                        : 'text-slate-400 hover:text-amber-600 hover:bg-slate-50/50 dark:hover:bg-slate-800/50'
+                    }`}
+                    title={message.isPinned ? "取消 Pin 长期记忆" : "Pin 为长期记忆"}
+                  >
+                    <Pin className={`w-3.5 h-3.5 ${message.isPinned ? 'fill-amber-500 text-amber-600' : ''}`} />
+                  </button>
+                  <button
+                    onClick={handleCopy}
+                    className="p-1 rounded text-slate-400 hover:text-lark-primary hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                    title="复制消息内容"
+                  >
+                    {copied ? (
+                      <Check className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
+
+                {/* Main Content Box */}
+                {isBlockType ? (
+                  <div className={`w-full self-stretch transition-all duration-300 ${
+                    message.isPinned 
+                      ? 'shadow-[0_0_12px_rgba(245,158,11,0.15)] ring-1 ring-amber-400/25 rounded-xl border border-amber-300 p-1 bg-amber-50/20' 
+                      : ''
+                  }`}>
+                    {renderContent()}
+                  </div>
+                ) : (
+                  <div className={`px-4 py-2.5 rounded-xl text-sm leading-relaxed shadow-sm transition-all duration-300 ${
+                    message.isPinned
+                      ? `bg-amber-50/60 dark:bg-amber-950/15 border border-amber-300 dark:border-amber-900 text-lark-text-primary dark:text-amber-200 shadow-[0_0_12px_rgba(245,158,11,0.15)] ring-1 ring-amber-400/20 ${
+                          isUser ? 'rounded-tr-none' : 'rounded-tl-none'
+                        }`
+                      : isUser 
+                        ? 'bg-[#deebff] dark:bg-violet-950/40 text-lark-text-primary dark:text-violet-300 rounded-tr-none border border-[#c3dbff] dark:border-violet-900/50' 
+                        : isOrchestrator
+                          ? 'bg-[#f5f5fc] dark:bg-slate-900 border border-indigo-100 dark:border-indigo-950/60 text-lark-text-primary dark:text-slate-100 rounded-tl-none shadow-[0_0_12px_rgba(99,102,241,0.05)]'
+                          : 'bg-white dark:bg-slate-950 border border-lark-border dark:border-slate-800 text-lark-text-primary dark:text-slate-100 rounded-tl-none'
+                  }`}>
+                    {renderContent()}
+                  </div>
+                )}
               </div>
             )}
+
+            {/* 4. Attachment Cards if exists - user attachments should be right-aligned */}
+              {hasAttachments && message.attachments && (
+                <div className={`flex flex-col gap-1.5 mt-1 ${isUser ? 'self-end' : 'self-start'}`}>
+                  {message.attachments.map((attach) => (
+                    <AttachmentCard key={attach.id} attachment={attach} isUser={isUser} />
+                  ))}
+                </div>
+              )}
           </div>
         </div>
       </div>
