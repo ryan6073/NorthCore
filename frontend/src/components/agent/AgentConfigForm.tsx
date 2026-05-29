@@ -1,14 +1,33 @@
 import React, { useState } from 'react';
 import { Agent, AgentProvider, AgentPermission } from '@/types';
-import { Save, X, Bot, FileText, Settings, Wrench, Shield, Check, Image, HelpCircle, AlertCircle } from 'lucide-react';
+import { Save, X, Bot, FileText, Settings, Wrench, Shield, Check, Image, HelpCircle, AlertCircle, Globe } from 'lucide-react';
 
 interface AgentConfigFormProps {
   agent: Agent;
   onSave: (updated: Agent) => void;
   onClose: () => void;
+  isSessionLevel?: boolean;
+  onSyncToGlobal?: (updated: Agent) => void;
 }
 
-const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClose }) => {
+const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClose, isSessionLevel = false, onSyncToGlobal }) => {
+  const [syncing, setSyncing] = useState(false);
+  const [synced, setSynced] = useState(false);
+
+  const handleSyncToGlobal = async () => {
+    if (!onSyncToGlobal) return;
+    setSyncing(true);
+    try {
+      await onSyncToGlobal(form);
+      setSynced(true);
+      setTimeout(() => setSynced(false), 2000);
+    } catch (e) {
+      console.error('Failed to sync config to global', e);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const [form, setForm] = useState<Agent>(() => ({
     ...agent,
     modelConfig: agent.modelConfig ? { ...agent.modelConfig } : {
@@ -68,10 +87,15 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
           </div>
           <div>
             <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
-              <span>配置智能体</span>
+              <span>{isSessionLevel ? '配置会话专属智能体' : '配置智能体'}</span>
               <span className="text-xs px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-500 rounded font-mono font-medium">{form.name}</span>
+              {isSessionLevel && (
+                <span className="text-[9px] px-1.5 py-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 rounded font-medium">会话专属</span>
+              )}
             </h3>
-            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">设定行为模式、运行模型、权限授权和可操作工具集。</p>
+            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
+              {isSessionLevel ? '当前修改仅在此会话生效。您可以同步此配置到全局。' : '设定行为模式、运行模型、权限授权和可操作工具集。'}
+            </p>
           </div>
         </div>
         <button 
@@ -430,6 +454,17 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
 
           {/* Persistent Floating Save action footer */}
           <div className="pt-2 border-t border-slate-200/60 dark:border-slate-800 flex items-center justify-end gap-3 flex-shrink-0 bg-transparent">
+            {isSessionLevel && onSyncToGlobal && (
+              <button
+                type="button"
+                onClick={handleSyncToGlobal}
+                disabled={syncing}
+                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-550 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-md shadow-emerald-600/10 active:scale-95 disabled:opacity-50"
+              >
+                {synced ? <Check className="w-3.5 h-3.5" /> : <Globe className="w-3.5 h-3.5" />}
+                <span>{synced ? '已同步到全局' : '同步为全局配置'}</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={onClose}

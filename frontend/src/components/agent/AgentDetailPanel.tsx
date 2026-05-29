@@ -10,9 +10,11 @@ interface AgentDetailPanelProps {
   onBack: () => void;
   isNew?: boolean;
   onDelete?: (id: string) => void;
+  isSessionLevel?: boolean;
+  onSyncToGlobal?: (updated: Agent) => void;
 }
 
-const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBack, isNew = false, onDelete }) => {
+const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBack, isNew = false, onDelete, isSessionLevel = false, onSyncToGlobal }) => {
   const [isEditing, setIsEditing] = useState(isNew);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
@@ -48,6 +50,8 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
     return (
       <AgentConfigForm 
         agent={agent} 
+        isSessionLevel={isSessionLevel}
+        onSyncToGlobal={onSyncToGlobal}
         onSave={(updated) => { 
           onSave(updated); 
           setIsEditing(false); 
@@ -77,8 +81,12 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div>
-            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">智能体详情面板</h3>
-            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">查看基本信息、模型配置、工具集以及授权的安全权限。</p>
+            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">
+              {isSessionLevel ? '智能体会话专属配置' : '智能体详情面板'}
+            </h3>
+            <p className="text-[10px] text-slate-400 dark:text-slate-550 mt-0.5">
+              {isSessionLevel ? '修改此配置仅在当前聊天会话中生效，不会影响全局默认配置。' : '查看基本信息、模型配置、工具集以及授权的安全权限。'}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -118,6 +126,11 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
             <div className="flex items-center gap-3 flex-wrap">
               <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100">{agent.name}</h2>
               {getStatusBadge()}
+              {isSessionLevel && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shadow-sm animate-fade-in">
+                  会话专属配置
+                </span>
+              )}
               <span className="text-[10px] px-2 py-0.5 bg-slate-100 dark:bg-slate-850 text-slate-500 rounded font-mono font-semibold uppercase">{agent.category}</span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed font-medium max-w-2xl">{agent.description}</p>

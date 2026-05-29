@@ -114,6 +114,7 @@ export interface Conversation {
   contextUsage?: ContextUsage;
   isPinned?: boolean;
   isArchived?: boolean;
+  visible?: boolean;
 }
 
 export interface Message {

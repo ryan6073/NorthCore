@@ -78,13 +78,24 @@ function App() {
   const deleteAgent = useAgentHubStore(state => state.deleteAgent);
   const deleteConversation = useAgentHubStore(state => state.deleteConversation);
 
+  const conversationAgentConfigs = useAgentHubStore(state => state.conversationAgentConfigs) || {};
+  const saveConversationAgentConfig = useAgentHubStore(state => state.saveConversationAgentConfig);
+
   const activeConversation = conversations.find(
     item => item.id === activeConversationId
   );
 
   const activeAgents = agents.filter(agent =>
     activeConversation?.agentIds.includes(agent.id)
-  );
+  ).map(agent => {
+    if (activeConversationId && conversationAgentConfigs[activeConversationId]?.[agent.id]) {
+      return {
+        ...agent,
+        ...conversationAgentConfigs[activeConversationId][agent.id]
+      };
+    }
+    return agent;
+  });
 
   const selectedArtifact = artifacts.find(
     item => item.id === selectedArtifactId
@@ -150,7 +161,7 @@ function App() {
     return <LoginView />;
   }
 
-
+  const isSessionLevel = activeConversation && activeConversation.mode !== 'agent';
 
   return (
     <>
@@ -173,17 +184,31 @@ function App() {
         }
         chatPanel={
           configuringAgentId ? (() => {
-            const configAgent = configuringAgentId === 'new' 
+            let configAgent = configuringAgentId === 'new' 
               ? getNewAgentTemplate() 
               : agents.find(a => a.id === configuringAgentId);
             if (!configAgent) return null;
+            if (activeConversationId && isSessionLevel && conversationAgentConfigs[activeConversationId]?.[configAgent.id]) {
+              configAgent = {
+                ...configAgent,
+                ...conversationAgentConfigs[activeConversationId][configAgent.id]
+              };
+            }
             return (
               <AgentDetailPanel
                 agent={configAgent}
                 isNew={configuringAgentId === 'new'}
+                isSessionLevel={isSessionLevel}
                 onSave={async (updated) => {
-                  await handleSaveAgent(updated);
+                  if (isSessionLevel && activeConversationId) {
+                    saveConversationAgentConfig(activeConversationId, updated.id, updated);
+                  } else {
+                    await handleSaveAgent(updated);
+                  }
                   setConfiguringAgentId(null);
+                }}
+                onSyncToGlobal={async (updated: Agent) => {
+                  await handleSaveAgent(updated);
                 }}
                 onDelete={async (id) => {
                   await handleDeleteAgent(id);

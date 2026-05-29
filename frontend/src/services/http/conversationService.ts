@@ -11,6 +11,7 @@ import type {
   MemoryCategory,
   PinItem,
   ContextUsage,
+  Agent,
 } from '@/types';
 
 interface GetConversationListParams {
@@ -118,6 +119,21 @@ export async function archiveConversation(
   return await http.put(`/conversations/${conversationId}/archive`, { isArchived });
 }
 
+export async function getConversationAgentConfig(
+  conversationId: string,
+  agentId: string
+): Promise<BaseApiResponse<Agent>> {
+  return await http.get(`/conversations/${conversationId}/agents/${agentId}/config`);
+}
+
+export async function updateConversationAgentConfig(
+  conversationId: string,
+  agentId: string,
+  payload: Partial<Agent>
+): Promise<BaseApiResponse<Agent>> {
+  return await http.put(`/conversations/${conversationId}/agents/${agentId}/config`, payload);
+}
+
 const conversationService = {
   getConversationList,
   createConversation,
@@ -134,6 +150,8 @@ const conversationService = {
   getContextUsage,
   pinConversation,
   archiveConversation,
+  getConversationAgentConfig,
+  updateConversationAgentConfig,
 };
 
 export default conversationService;

@@ -2118,6 +2118,7 @@ ws://localhost:8000/ws
 | v2.0.0 | 2026-05-25 | 新增 mention、compress 上下文、长期记忆、Pin 消息 等接口 |
 | v3.0.0 | 2026-05-26 | 完全重构完整文档，所有接口补充使用场景、完整示例、字段说明，对齐前端全部实际使用代码 |
 | v4.0.0 | 2026-05-27 | 接入用户登录/注册系统，支持多用户资源隔离，引入预置 Agent 安全管理策略 |
+| v4.2.0 | 2026-05-29 | [新增] 补充群聊和单聊的会话级 Agent 配置管理接口 |
 
 ---
 
@@ -2198,3 +2199,115 @@ ws://localhost:8000/ws
        }
        ```
      - **响应体**：`BaseApiResponse<MemoryItem>`（包含更新后的完整记忆条目）
+8. **获取/修改会话级别的智能体专属配置接口 [v4.2.0 新增需求]**：
+   - **现状**：前端增加了群聊和单聊的会话级别 Agent 配置界面，目前支持 localStorage 存储 overriding 配置，并支持一键同步至全局。
+   - **前端诉求**：后端提供保存和拉取会话级别智能体专属配置的 API，以保持多端同步并支持持久化。
+     - **获取会话级别配置**：
+       - **请求方法**：`GET`
+       - **请求路径**：`/conversations/{conversationId}/agents/{agentId}/config`
+       - **响应体**：`BaseApiResponse<Agent>`
+     - **修改会话级别配置**：
+       - **请求方法**：`PUT`
+       - **请求路径**：`/conversations/{conversationId}/agents/{agentId}/config`
+       - **请求体**：`Partial<Agent>`
+       - **响应体**：`BaseApiResponse<Agent>`
+
+---
+
+### 8.3 会话级别 Agent 配置接口规格详情
+
+#### GET /conversations/{conversationId}/agents/{agentId}/config
+
+**接口名称**: 获取会话级 Agent 配置
+
+**接口用途**: 获取某个特定群聊或单聊会话中，针对指定 Agent 的个性化（Override）配置。
+
+**使用场景**:
+1. 用户在群聊或单聊中，点击 Agent 的设置按钮打开配置面板时，拉取该会话下的 Override 配置（若不存在则前端降级读取该 Agent 的全局配置）。
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| conversationId | string | 是 | 会话唯一标识 ID |
+| agentId | string | 是 | Agent 唯一标识 ID |
+
+**请求示例**:
+```
+GET /api/v1/conversations/conv-group-1/agents/agent-claude-code/config
+```
+
+**响应体示例**:
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "agent-claude-code",
+    "name": "Claude Code (会话专属)",
+    "avatar": "https://...",
+    "description": "专业代码生成与工程理解",
+    "tags": ["代码生成", "代码修改"],
+    "status": "online",
+    "category": "coding",
+    "provider": "claude-code",
+    "enabled": true,
+    "systemPrompt": "在此会话中，请使用简洁的中文回答...",
+    "modelConfig": {
+      "provider": "claude-code",
+      "modelName": "claude-3-5-sonnet-20241022",
+      "temperature": 0.1,
+      "maxTokens": 100000
+    },
+    "tools": [],
+    "permissions": {
+      "canReadFiles": true,
+      "canWriteFiles": false,
+      "canRunCommands": false,
+      "canGenerateArtifacts": true,
+      "canDeploy": false
+    }
+  }
+}
+```
+
+**错误情况**:
+- 40001: 会话或 Agent 不存在
+
+**优先级**: P1
+
+---
+
+#### PUT /conversations/{conversationId}/agents/{agentId}/config
+
+**接口名称**: 保存会话级 Agent 配置
+
+**接口用途**: 更新或保存某个特定群聊或单聊会话中，针对指定 Agent 的个性化（Override）配置。
+
+**使用场景**:
+1. 用户在群聊或单聊的 Agent 配置面板中修改了参数（如系统提示词、温度等）并保存时调用此接口。
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| conversationId | string | 是 | 会话唯一标识 ID |
+| agentId | string | 是 | Agent 唯一标识 ID |
+
+**请求体示例**:
+```json
+{
+  "systemPrompt": "在此会话中，请使用简洁的中文回答...",
+  "modelConfig": {
+    "temperature": 0.1
+  }
+}
+```
+
+**响应体示例**: 返回更新后的完整会话级 Agent 配置对象，结构同 GET 请求。
+
+**错误情况**:
+- 40001: 会话或 Agent 不存在
+
+**优先级**: P1
+

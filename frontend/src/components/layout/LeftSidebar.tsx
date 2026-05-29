@@ -174,7 +174,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
   );
 
   const agentConversations = sortConversations(
-    activeConversations.filter(conv => conv.mode === 'agent')
+    activeConversations.filter(conv => conv.mode === 'agent' && conv.visible !== false)
   );
 
   const renderConversationItem = (conv: Conversation) => {

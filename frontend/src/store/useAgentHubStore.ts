@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem, MemoryCategory, SendMessageRequest, ContextUsage, AgentChat, AgentChatMessage } from '@/types';
 import { getAgentList, updateAgentDetail, createAgent as createAgentApi, deleteAgent as deleteAgentApi, getAgentContact } from '@/services/http/agentService';
-import { getConversationList, createConversation as createConversationApi, updateConversation, compressContext, pinMessage, unpinMessage, getPins, getMemories, deleteMemory, updateMemory, deleteConversation, getContextUsage as getContextUsageApi, pinConversation, archiveConversation } from '@/services/http/conversationService';
+import { getConversationList, createConversation as createConversationApi, updateConversation, compressContext, pinMessage, unpinMessage, getPins, getMemories, deleteMemory, updateMemory, deleteConversation, getContextUsage as getContextUsageApi, pinConversation, archiveConversation, getConversationAgentConfig, updateConversationAgentConfig } from '@/services/http/conversationService';
 import { getMessageList, sendMessageNonStreaming } from '@/services/http/messageService';
 import { getArtifactMetaList, getArtifactDetail, getArtifactVersions, updateArtifactContent } from '@/services/http/artifactService';
 import wsClient from '@/services/ws/wsClient';
@@ -79,6 +79,8 @@ interface AgentHubStore {
     maxTokens: number;
   };
   isSettingsOpen: boolean;
+  conversationAgentConfigs: Record<string, Record<string, Agent>>;
+  saveConversationAgentConfig: (conversationId: string, agentId: string, updatedAgent: Agent) => Promise<void>;
 
   login: (email: string, password?: string) => Promise<{ success: boolean; message: string }>;
   register: (name: string, email: string, password: string, avatar: string) => Promise<{ success: boolean; message: string }>;
@@ -172,6 +174,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     maxTokens: 4096,
   },
   isSettingsOpen: false,
+  conversationAgentConfigs: {},
 
   loadBusinessData: async () => {
     try {
@@ -215,6 +218,15 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     }
 
     // Load from LocalStorage
+    try {
+      const storedConfigs = localStorage.getItem('ag_conversation_agent_configs');
+      if (storedConfigs) {
+        set({ conversationAgentConfigs: JSON.parse(storedConfigs) });
+      }
+    } catch (e) {
+      console.warn('Failed to load conversation agent configs', e);
+    }
+
     try {
       const storedSettings = localStorage.getItem('ag_settings');
       if (storedSettings) {
@@ -416,6 +428,41 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         getArtifactMetaList(convId)
       ]);
 
+      // Load conversation-level agent configurations in parallel
+      const activeConv = get().conversations.find(c => c.id === convId);
+      if (activeConv && activeConv.mode !== 'agent') {
+        const agentIds = activeConv.agentIds || [];
+        const configPromises = agentIds.map(async (agentId) => {
+          try {
+            const res = await getConversationAgentConfig(convId, agentId);
+            if (res.code === 0 && res.data) {
+              return { agentId, config: res.data };
+            }
+          } catch (e) {
+            // fail-safe ignore
+          }
+          return null;
+        });
+        const configs = await Promise.all(configPromises);
+        const newConfigs: Record<string, Agent> = {};
+        configs.forEach(c => {
+          if (c) {
+            newConfigs[c.agentId] = c.config;
+          }
+        });
+        if (Object.keys(newConfigs).length > 0) {
+          set(state => ({
+            conversationAgentConfigs: {
+              ...state.conversationAgentConfigs,
+              [convId]: {
+                ...(state.conversationAgentConfigs[convId] || {}),
+                ...newConfigs
+              }
+            }
+          }));
+        }
+      }
+
       let pinsData: PinItem[] = [];
       if (pinsRes.code === 0 && pinsRes.data) {
         pinsData = pinsRes.data;
@@ -512,7 +559,24 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     const { activeConversationId, useMockMode, messages } = get();
     if (!activeConversationId) return;
 
+    const tempId = `temp-compress-${Date.now()}`;
+    const tempMsg: Message = {
+      id: tempId,
+      conversationId: activeConversationId,
+      senderId: 'system',
+      senderName: '系统',
+      role: 'system',
+      type: 'status',
+      content: '压缩上下文中...',
+      createdAt: getCurrentFullTime(),
+    };
+
+    set(state => ({
+      messages: [...state.messages, tempMsg],
+    }));
+
     let result;
+    let errorMessage = '';
 
     if (!useMockMode) {
       try {
@@ -523,29 +587,11 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             get().setContextUsage(result.contextUsage);
           }
         } else {
-          throw new Error('压缩接口返回失败');
+          errorMessage = res.message || '压缩接口返回失败';
         }
-      } catch (e) {
-        console.warn('[Store] compressContext API 调用失败，使用 Mock 压缩结果演示', e);
-        const originalMessageCount = messages.length;
-        result = {
-          summary: {
-            id: 'summary-mock',
-            conversationId: activeConversationId,
-            summary: `系统已自动压缩 ${originalMessageCount} 条历史消息，保留关键上下文信息，Token 占用已显著减少。`,
-            coveredUntilMessageId: messages[messages.length - 1]?.id || '',
-            coveredMessageCount: originalMessageCount,
-            version: 1,
-            createdAt: getCurrentFullTime(),
-            updatedAt: getCurrentFullTime(),
-          },
-          compressed: true,
-          contextUsage: {
-            contextUsagePercent: 5,
-            contextUsageChars: 10000,
-            contextLimitChars: 200000,
-          },
-        };
+      } catch (e: any) {
+        console.warn('[Store] compressContext API 调用失败', e);
+        errorMessage = e.response?.data?.message || e.message || '压缩请求失败';
       }
     } else {
       const originalMessageCount = messages.length;
@@ -569,40 +615,45 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       };
     }
 
-    if (result.contextUsage) {
+    if (result && result.contextUsage) {
       get().setContextUsage(result.contextUsage);
     }
 
-    const systemMsg: Message = {
-      id: createId('msg'),
-      conversationId: activeConversationId,
-      senderId: 'system',
-      senderName: '系统',
-      role: 'system',
-      type: 'status',
-      content: `✅ 上下文已压缩\n\n📊 原始覆盖消息数：${result.summary.coveredMessageCount}\n📝 摘要：${result.summary.summary}`,
-      createdAt: getCurrentFullTime(),
-    };
-
-    set(state => ({
-      messages: [...state.messages, systemMsg],
-    }));
-
-    if (!useMockMode) {
-      try {
-        await sendMessageNonStreaming(activeConversationId, {
-          content: systemMsg.content,
-          role: 'system',
-          senderId: 'system',
-          senderName: '系统',
-          type: 'status',
-        } as any);
-      } catch (e) {
-        console.warn('Failed to save compress system message to backend', e);
-      }
+    if (errorMessage) {
+      const failMsg: Message = {
+        id: createId('msg'),
+        conversationId: activeConversationId,
+        senderId: 'system',
+        senderName: '系统',
+        role: 'system',
+        type: 'status',
+        content: `❌ 压缩失败\n\n原因：${errorMessage}`,
+        createdAt: getCurrentFullTime(),
+      };
+      set(state => ({
+        messages: state.messages.map(m => m.id === tempId ? failMsg : m),
+      }));
+    } else if (result) {
+      const systemMsg: Message = {
+        id: result.summary.id || createId('msg'),
+        conversationId: activeConversationId,
+        senderId: 'system',
+        senderName: '系统',
+        role: 'system',
+        type: 'status',
+        content: `✅ 上下文已压缩\n\n📊 原始覆盖消息数：${result.summary.coveredMessageCount}\n📝 摘要：${result.summary.summary}`,
+        createdAt: getCurrentFullTime(),
+      };
+      set(state => ({
+        messages: state.messages.map(m => m.id === tempId ? systemMsg : m),
+      }));
+    } else {
+      set(state => ({
+        messages: state.messages.filter(m => m.id !== tempId),
+      }));
     }
 
-    console.log('[Store] 上下文压缩完成，已添加系统通知消息');
+    console.log('[Store] 上下文压缩处理完成');
   },
 
   sendMessage: async (content, attachments, targetAgentId) => {
@@ -812,6 +863,33 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           isProcessing: false,
         }));
       }
+    }
+  },
+
+  saveConversationAgentConfig: async (conversationId, agentId, updatedAgent) => {
+    const { useMockMode } = get();
+    if (!useMockMode) {
+      try {
+        const res = await updateConversationAgentConfig(conversationId, agentId, updatedAgent);
+        if (res.code === 0) {
+          updatedAgent = res.data;
+        }
+      } catch (e) {
+        console.error('[Store] 接口更新会话 Agent 配置失败', e);
+      }
+    }
+    const nextConfigs = {
+      ...get().conversationAgentConfigs,
+      [conversationId]: {
+        ...(get().conversationAgentConfigs[conversationId] || {}),
+        [agentId]: updatedAgent
+      }
+    };
+    set({ conversationAgentConfigs: nextConfigs });
+    try {
+      localStorage.setItem('ag_conversation_agent_configs', JSON.stringify(nextConfigs));
+    } catch (e) {
+      console.error('Failed to save conversation agent configs to localStorage', e);
     }
   },
 

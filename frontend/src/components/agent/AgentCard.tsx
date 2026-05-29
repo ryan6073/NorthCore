@@ -1,6 +1,7 @@
 import React from 'react';
 import { Agent } from '@/types';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
+import { Settings2 } from 'lucide-react';
 
 interface AgentCardProps {
   agent: Agent;
@@ -8,9 +9,10 @@ interface AgentCardProps {
 
 const AgentCard: React.FC<AgentCardProps> = ({ agent }) => {
   const openAgentProfile = useAgentHubStore(state => state.openAgentProfile);
+  const setConfiguringAgentId = useAgentHubStore(state => state.setConfiguringAgentId);
 
   return (
-    <div className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-200/50 dark:hover:bg-slate-800/50 transition-all duration-150 cursor-pointer active:scale-[0.99] border border-transparent hover:border-lark-border/50 dark:hover:border-slate-800/40 group">
+    <div className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-200/50 dark:hover:bg-slate-800/50 transition-all duration-150 cursor-pointer active:scale-[0.99] border border-transparent hover:border-lark-border/50 dark:hover:border-slate-800/40 group relative">
       <img
         src={agent.avatar}
         alt={agent.name}
@@ -31,6 +33,16 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent }) => {
           ))}
         </div>
       </div>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setConfiguringAgentId(agent.id);
+        }}
+        className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-slate-300/50 dark:hover:bg-slate-700/50 text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 transition-all active:scale-90 flex items-center justify-center flex-shrink-0"
+        title="配置会话智能体"
+      >
+        <Settings2 className="w-4 h-4" />
+      </button>
     </div>
   );
 };
