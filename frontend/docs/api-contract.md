@@ -431,6 +431,154 @@ interface HealthCheckData {
 }
 ```
 
+### 3.19 AgentRunStepStatus
+沙箱执行步骤状态。
+
+```typescript
+type AgentRunStepStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'conflict'
+  | 'blocked';
+```
+
+### 3.20 AgentRunStep
+沙箱执行步骤详情。
+
+```typescript
+interface AgentRunStep {
+  id: string;
+  runId: string;
+  agentId: string;
+  agentName: string;
+  status: AgentRunStepStatus;
+  description: string;
+  log?: string;
+  error?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+}
+```
+
+### 3.21 RunDag
+沙箱任务步骤的有向无环图 (DAG) 结构。
+
+```typescript
+interface RunDag {
+  nodes: {
+    id: string;
+    label: string;
+    agentId: string;
+    status: AgentRunStepStatus;
+    dependencies: string[];
+  }[];
+}
+```
+
+### 3.22 Sandbox
+沙箱容器环境元数据。
+
+```typescript
+interface Sandbox {
+  id: string;
+  dockerContainerId?: string;
+  status: 'active' | 'terminated';
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+### 3.23 SandboxFile
+沙箱生成/修改的文件。
+
+```typescript
+interface SandboxFile {
+  id: string;
+  sandboxId: string;
+  runId: string;
+  path: string;
+  contentHash: string;
+  currentVersion: number;
+  artifactId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+### 3.24 SandboxFileVersion
+沙箱内文件的具体版本快照。
+
+```typescript
+interface SandboxFileVersion {
+  id: string;
+  fileId: string;
+  version: number;
+  content: string;
+  createdAt: string;
+}
+```
+
+### 3.25 SandboxFileDetail
+沙箱内文件的详细内容（继承自 SandboxFile）。
+
+```typescript
+interface SandboxFileDetail extends SandboxFile {
+  content: string;
+  version?: SandboxFileVersion;
+}
+```
+
+### 3.26 SandboxConflict
+沙箱文件写冲突记录。
+
+```typescript
+interface SandboxConflict {
+  id: string;
+  runId: string;
+  sandboxId: string;
+  fileId?: string | null;
+  filePath: string;
+  baseVersion: number;
+  currentVersion: number;
+  incomingContent: string;
+  incomingHash: string;
+  createdByStepId?: string | null;
+  status: 'open' | 'resolved';
+  resolution?: 'current' | 'incoming' | 'manual' | null;
+  createdAt: string;
+  resolvedAt?: string | null;
+}
+```
+
+### 3.27 AgentRunDetail
+沙箱任务执行 (Run) 的完整详情。
+
+```typescript
+interface AgentRunDetail {
+  id: string;
+  sandboxId: string;
+  conversationId: string;
+  ownerUserId: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'conflict' | 'cancelled';
+  prompt: string;
+  dag: RunDag;
+  summary: string;
+  error?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  sandbox?: Sandbox;
+  steps: AgentRunStep[];
+  files: SandboxFile[];
+  conflicts: SandboxConflict[];
+}
+```
+
 ---
 
 ## 4. HTTP API 详细文档
@@ -1894,6 +2042,364 @@ GET /api/v1/conversations/conv-group-1/agents/agent-claude-code/config
 
 ---
 
+### 4.8 沙箱任务管理接口
+
+---
+
+#### POST /conversations/{conversationId}/runs
+
+**接口名称**: 创建并启动沙箱运行任务 (Run)
+
+**接口用途**: 针对指定会话，在后台启动一个 Docker 容器并初始化任务，返回初始化后的任务详情。
+
+**使用场景**:
+1. 用户在会话中点击“沙箱执行”或发送任务指令。
+2. 前端发起请求，后端在后台异步调度执行，前端拿到任务 ID 后进行 WebSocket 或轮询状态监控。
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| conversationId | string | 是 | 会话唯一标识 ID |
+
+**请求参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| prompt | string | 是 | 沙箱任务需要执行的自然语言指令 |
+
+**请求示例**:
+```json
+{
+  "prompt": "创建一个 README.md，内容说明这是沙箱测试"
+}
+```
+
+**响应体示例**:
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "run-xxxxxx",
+    "sandboxId": "sb-xxxxxx",
+    "conversationId": "conv-xxxxxx",
+    "ownerUserId": "user-xxxxxx",
+    "status": "pending",
+    "prompt": "创建一个 README.md，内容说明这是沙箱测试",
+    "dag": {
+      "nodes": [
+        {
+          "id": "step-1",
+          "label": "编写 README",
+          "agentId": "agent-claude-code",
+          "status": "pending",
+          "dependencies": []
+        }
+      ]
+    },
+    "summary": "创建沙箱测试说明文档",
+    "createdAt": "2026-05-29 15:30:00",
+    "updatedAt": "2026-05-29 15:30:00",
+    "steps": [],
+    "files": [],
+    "conflicts": []
+  }
+}
+```
+
+**优先级**: P0
+
+---
+
+#### GET /runs/{runId}
+
+**接口名称**: 获取沙箱运行任务 (Run) 详情
+
+**接口用途**: 获取指定运行任务的最新状态、执行步骤 (DAG)、输出文件及冲突情况。
+
+**使用场景**:
+1. 打开历史沙箱任务页面时加载任务状态。
+2. 对正在运行的任务进行轮询兜底，确保前端界面状态同步。
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| runId | string | 是 | 运行任务唯一标识 ID |
+
+**响应体示例**:
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "run-xxxxxx",
+    "sandboxId": "sb-xxxxxx",
+    "conversationId": "conv-xxxxxx",
+    "ownerUserId": "user-xxxxxx",
+    "status": "running",
+    "prompt": "创建一个 README.md，内容说明这是沙箱测试",
+    "dag": {
+      "nodes": [
+        {
+          "id": "step-1",
+          "label": "编写 README",
+          "agentId": "agent-claude-code",
+          "status": "running",
+          "dependencies": []
+        }
+      ]
+    },
+    "summary": "创建沙箱测试说明文档",
+    "createdAt": "2026-05-29 15:30:00",
+    "updatedAt": "2026-05-29 15:30:05",
+    "startedAt": "2026-05-29 15:30:02",
+    "steps": [
+      {
+        "id": "step-1",
+        "runId": "run-xxxxxx",
+        "agentId": "agent-claude-code",
+        "agentName": "Claude Code",
+        "status": "running",
+        "description": "正在生成并编写 README.md 文件...",
+        "createdAt": "2026-05-29 15:30:02",
+        "updatedAt": "2026-05-29 15:30:05",
+        "startedAt": "2026-05-29 15:30:02"
+      }
+    ],
+    "files": [],
+    "conflicts": []
+  }
+}
+```
+
+**优先级**: P0
+
+---
+
+#### GET /runs/{runId}/files
+
+**接口名称**: 获取沙箱内输出的文件列表
+
+**接口用途**: 查询沙箱当前已生成的所有文件。
+
+**使用场景**:
+1. 在沙箱任务文件树面板展示生成的所有代码/文档文件。
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| runId | string | 是 | 运行任务唯一标识 ID |
+
+**响应体示例**:
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": [
+    {
+      "id": "file-xxxxxx",
+      "sandboxId": "sb-xxxxxx",
+      "runId": "run-xxxxxx",
+      "path": "README.md",
+      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "currentVersion": 1,
+      "artifactId": null,
+      "createdAt": "2026-05-29 15:30:10",
+      "updatedAt": "2026-05-29 15:30:10"
+    }
+  ]
+}
+```
+
+**优先级**: P0
+
+---
+
+#### GET /runs/{runId}/files/{filePath}
+
+**接口名称**: 读取沙箱内文件内容
+
+**接口用途**: 读取沙箱生成或修改的指定文件的详细内容及版本信息。
+
+**使用场景**:
+1. 用户在沙箱文件树上点击某文件，前端预览具体代码内容。
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| runId | string | 是 | 运行任务唯一标识 ID |
+| filePath | string | 是 | 沙箱内相对文件路径（需 URL 编码，例如 `src%2FApp.tsx`） |
+
+**响应体示例**:
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "file-xxxxxx",
+    "sandboxId": "sb-xxxxxx",
+    "runId": "run-xxxxxx",
+    "path": "README.md",
+    "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "currentVersion": 1,
+    "artifactId": null,
+    "createdAt": "2026-05-29 15:30:10",
+    "updatedAt": "2026-05-29 15:30:10",
+    "content": "# Sandbox Test\n这是沙箱测试说明文件",
+    "version": {
+      "id": "ver-xxxxxx",
+      "fileId": "file-xxxxxx",
+      "version": 1,
+      "content": "# Sandbox Test\n这是沙箱测试说明文件",
+      "createdAt": "2026-05-29 15:30:10"
+    }
+  }
+}
+```
+
+**优先级**: P0
+
+---
+
+#### GET /runs/{runId}/conflicts
+
+**接口名称**: 获取冲突列表
+
+**接口用途**: 查询当前任务在向工作区提交代码时产生的所有未解决冲突。
+
+**使用场景**:
+1. 当任务进入 `conflict` 状态，或 WebSocket 收到 `run.step.conflict` 事件时，拉取冲突列表进行冲突处理。
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| runId | string | 是 | 运行任务唯一标识 ID |
+
+**响应体示例**:
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": [
+    {
+      "id": "conf-xxxxxx",
+      "runId": "run-xxxxxx",
+      "sandboxId": "sb-xxxxxx",
+      "fileId": "file-xxxxxx",
+      "filePath": "README.md",
+      "baseVersion": 1,
+      "currentVersion": 2,
+      "incomingContent": "# Sandbox Test\n这是大模型在沙箱中新增和修改的内容",
+      "incomingHash": "f4c8996fb92427ae41e4649b934ca495991b7852b855e3b0c44298fc1c149afb",
+      "createdByStepId": "step-1",
+      "status": "open",
+      "resolution": null,
+      "createdAt": "2026-05-29 15:30:15"
+    }
+  ]
+}
+```
+
+**优先级**: P0
+
+---
+
+#### POST /runs/{runId}/conflicts/{conflictId}/resolve
+
+**接口名称**: 解决文件冲突
+
+**接口用途**: 对冲突文件提交合并决策（支持保留现有、采用传入、或手动合并编辑后的内容）。
+
+**使用场景**:
+1. 用户在冲突解决面板中，点击“保留当前”、“采用传入”或“手动修改”后提交。
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| runId | string | 是 | 运行任务唯一标识 ID |
+| conflictId | string | 是 | 冲突项唯一标识 ID |
+
+**请求参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| resolution | string | 是 | 冲突解决策略：`current` (保留当前)、`incoming` (采用传入新内容)、`manual` (手动编辑) |
+| content | string | 否 | 当 `resolution` 为 `manual` 时，必填。表示手动合并后的完整文件内容 |
+
+**请求示例**:
+```json
+{
+  "resolution": "incoming"
+}
+```
+
+**响应体示例**:
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "conf-xxxxxx",
+    "runId": "run-xxxxxx",
+    "sandboxId": "sb-xxxxxx",
+    "fileId": "file-xxxxxx",
+    "filePath": "README.md",
+    "baseVersion": 1,
+    "currentVersion": 3,
+    "incomingContent": "# Sandbox Test\n这是大模型在沙箱中新增和修改的内容",
+    "incomingHash": "f4c8996fb92427ae41e4649b934ca495991b7852b855e3b0c44298fc1c149afb",
+    "createdByStepId": "step-1",
+    "status": "resolved",
+    "resolution": "incoming",
+    "createdAt": "2026-05-29 15:30:15",
+    "resolvedAt": "2026-05-29 15:31:00"
+  }
+}
+```
+
+**优先级**: P0
+
+---
+
+#### POST /runs/{runId}/cancel
+
+**接口名称**: 取消运行中的任务
+
+**接口用途**: 强行停止正在运行的沙箱容器，并将任务状态置为 `cancelled`。
+
+**使用场景**:
+1. 任务卡住或用户改变主意时，点击“取消”按钮。
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| runId | string | 是 | 运行任务唯一标识 ID |
+
+**响应体示例**:
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "run-xxxxxx",
+    "status": "cancelled",
+    "updatedAt": "2026-05-29 15:32:00",
+    "finishedAt": "2026-05-29 15:32:00"
+  }
+}
+```
+
+**优先级**: P0
+
+---
+
 ## 5. WebSocket 事件文档
 
 ### 5.1 WebSocket 连接地址
@@ -2302,6 +2808,7 @@ ws://localhost:8000/ws
 | v3.0.0 | 2026-05-26 | 完全重构完整文档，所有接口补充使用场景、完整示例、字段说明，对齐前端全部实际使用代码 |
 | v4.0.0 | 2026-05-27 | 接入用户登录/注册系统，支持多用户资源隔离，引入预置 Agent 安全管理策略 |
 | v4.2.0 | 2026-05-29 | [新增] 补充群聊和单聊的会话级 Agent 配置管理接口；支持多聊中添加/删除成员智能体操作 |
+| v4.3.0 | 2026-05-29 | [新增] 补充沙箱运行任务 (Sandbox Run) 相关类型定义及 HTTP API，并标识其为待后端实现接口 |
 
 ---
 
@@ -2406,6 +2913,57 @@ ws://localhost:8000/ws
         - **请求方法**：`DELETE`
         - **请求路径**：`/conversations/{conversationId}/agents/{agentId}`
         - **响应体**：`BaseApiResponse<Conversation>`
+ 10. **创建并启动沙箱运行任务 [v4.3.0 新增需求] [待实现]**：
+     - **现状**：前端支持启动沙箱任务并展示任务状态/DAG。
+     - **前端诉求**：后端提供启动 Docker 容器并初始化沙箱运行任务的 API。
+       - **请求方法**：`POST`
+       - **请求路径**：`/conversations/{conversationId}/runs`
+       - **请求体**：`{ "prompt": string }`
+       - **响应体**：`BaseApiResponse<AgentRunDetail>`
+ 11. **获取沙箱运行任务详情 [v4.3.0 新增需求] [待实现]**：
+     - **现状**：前端支持查看沙箱任务详细步骤和文件信息。
+     - **前端诉求**：后端提供获取运行任务最新状态、DAG、文件和冲突列表的 API。
+       - **请求方法**：`GET`
+       - **请求路径**：`/runs/{runId}`
+       - **响应体**：`BaseApiResponse<AgentRunDetail>`
+ 12. **获取沙箱内输出的文件列表 [v4.3.0 新增需求] [待实现]**：
+     - **现状**：前端支持渲染沙箱输出的文件树。
+     - **前端诉求**：后端提供查询沙箱当前生成的所有文件元数据的 API。
+       - **请求方法**：`GET`
+       - **请求路径**：`/runs/{runId}/files`
+       - **响应体**：`BaseApiResponse<SandboxFile[]>`
+ 13. **读取沙箱内文件内容 [v4.3.0 新增需求] [待实现]**：
+     - **现状**：前端支持预览沙箱文件的最新代码或文档内容。
+     - **前端诉求**：后端提供读取指定沙箱文件详情及特定版本快照的 API。
+       - **请求方法**：`GET`
+       - **请求路径**：`/runs/{runId}/files/{filePath}` （注：`filePath` 需要 URL 编码）
+       - **响应体**：`BaseApiResponse<SandboxFileDetail>`
+ 14. **获取冲突列表 [v4.3.0 新增需求] [待实现]**：
+     - **现状**：当任务状态为 `conflict` 时，前端支持渲染冲突列表。
+     - **前端诉求**：后端提供查询工作区提交代码时产生的所有未解决冲突的 API。
+       - **请求方法**：`GET`
+       - **请求路径**：`/runs/{runId}/conflicts`
+       - **响应体**：`BaseApiResponse<SandboxConflict[]>`
+ 15. **解决文件冲突 [v4.3.0 新增需求] [待实现]**：
+     - **现状**：前端提供了人工解决冲突并选择 `current`、`incoming` 或 `manual` 策略的面板。
+     - **前端诉求**：后端提供提交决策并写成新文件版本的冲突解决 API。
+       - **请求方法**：`POST`
+       - **请求路径**：`/runs/{runId}/conflicts/{conflictId}/resolve`
+       - **请求体**：
+         ```json
+         {
+           "resolution": "current" | "incoming" | "manual",
+           "content": "string" // 仅在 resolution 为 manual 时必填
+         }
+         ```
+       - **响应体**：`BaseApiResponse<SandboxConflict>`
+ 16. **取消运行中的任务 [v4.3.0 新增需求] [待实现]**：
+     - **现状**：用户在沙箱面板点击取消任务。
+     - **前端诉求**：后端提供停止容器并将任务标记为 `cancelled` 的 API。
+       - **请求方法**：`POST`
+       - **请求路径**：`/runs/{runId}/cancel`
+       - **响应体**：`BaseApiResponse<AgentRunDetail>`
 
 ---
+
 

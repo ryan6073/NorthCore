@@ -426,3 +426,106 @@ export interface AgentChatMessage {
     content: string;
   };
 }
+
+export interface RunDag {
+  nodes: {
+    id: string;
+    label: string;
+    agentId: string;
+    status: AgentRunStepStatus;
+    dependencies: string[];
+  }[];
+}
+
+export interface Sandbox {
+  id: string;
+  dockerContainerId?: string;
+  status: 'active' | 'terminated';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentRunStep {
+  id: string;
+  runId: string;
+  agentId: string;
+  agentName: string;
+  status: AgentRunStepStatus;
+  description: string;
+  log?: string;
+  error?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+}
+
+export interface SandboxFile {
+  id: string;
+  sandboxId: string;
+  runId: string;
+  path: string;
+  contentHash: string;
+  currentVersion: number;
+  artifactId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SandboxFileVersion {
+  id: string;
+  fileId: string;
+  version: number;
+  content: string;
+  createdAt: string;
+}
+
+export interface SandboxFileDetail extends SandboxFile {
+  content: string;
+  version?: SandboxFileVersion;
+}
+
+export interface SandboxConflict {
+  id: string;
+  runId: string;
+  sandboxId: string;
+  fileId?: string | null;
+  filePath: string;
+  baseVersion: number;
+  currentVersion: number;
+  incomingContent: string;
+  incomingHash: string;
+  createdByStepId?: string | null;
+  status: 'open' | 'resolved';
+  resolution?: 'current' | 'incoming' | 'manual' | null;
+  createdAt: string;
+  resolvedAt?: string | null;
+}
+
+export interface AgentRunDetail {
+  id: string;
+  sandboxId: string;
+  conversationId: string;
+  ownerUserId: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'conflict' | 'cancelled';
+  prompt: string;
+  dag: RunDag;
+  summary: string;
+  error?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  sandbox?: Sandbox;
+  steps: AgentRunStep[];
+  files: SandboxFile[];
+  conflicts: SandboxConflict[];
+}
+
+export type AgentRunStepStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'conflict'
+  | 'blocked';

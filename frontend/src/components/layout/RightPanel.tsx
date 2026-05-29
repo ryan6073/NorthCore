@@ -4,6 +4,7 @@ import AgentList from '../agent/AgentList';
 import { AgentMiniConfigPanel } from '../agent/AgentMiniConfigPanel';
 import ArtifactList from '../artifact/ArtifactList';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
+import { SandboxPanel } from '../sandbox/SandboxPanel';
 
 interface RightPanelProps {
   conversation: Conversation | undefined;
@@ -59,6 +60,9 @@ const RightPanel: React.FC<RightPanelProps> = ({
     };
   }, [handleMouseMove, handleMouseUp]);
 
+  const rightPanelTab = useAgentHubStore(state => state.rightPanelTab);
+  const setRightPanelTab = useAgentHubStore(state => state.setRightPanelTab);
+
   // Jump to the message where this artifact was created
   const handleJumpToMessage = useCallback((artifactId: string) => {
     const messages = useAgentHubStore.getState().messages;
@@ -84,7 +88,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
   }, [onSelectArtifact, onOpenFullScreenPreview]);
 
   return (
-    <div className="bg-lark-sidebar-bg dark:bg-slate-950 h-full flex flex-col border-l border-lark-border dark:border-slate-800 w-full min-w-0 transition-colors">
+    <div className="bg-lark-sidebar-bg dark:bg-slate-950 h-full flex flex-col border-l border-lark-border dark:border-slate-800 w-full min-w-0 transition-colors font-sans">
       <div style={{ height: topHeight, minHeight: 150 }} className="border-b border-lark-border/60 dark:border-slate-800/60 overflow-hidden bg-white dark:bg-slate-900 transition-colors">
         {conversation?.mode === 'agent' && agents.length > 0 ? (
           <AgentMiniConfigPanel agent={agents[0]} />
@@ -100,11 +104,40 @@ const RightPanel: React.FC<RightPanelProps> = ({
       />
 
       <div className="flex-grow flex flex-col overflow-hidden min-w-0 bg-white dark:bg-slate-900 transition-colors">
-        <ArtifactList
-          artifacts={artifacts}
-          onJumpToMessage={handleJumpToMessage}
-          onFullScreenPreview={handleFullScreenPreview}
-        />
+        <div className="flex border-b border-lark-border/60 dark:border-slate-800/60 bg-lark-bg dark:bg-slate-950/40 flex-shrink-0">
+          <button
+            onClick={() => setRightPanelTab('artifacts')}
+            className={`flex-1 py-2 text-xs font-semibold border-b-2 transition-all ${
+              rightPanelTab === 'artifacts'
+                ? 'border-lark-primary dark:border-indigo-500 text-lark-primary dark:text-indigo-400 bg-slate-900/10 dark:bg-slate-900/50'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            生成的 Artifacts
+          </button>
+          <button
+            onClick={() => setRightPanelTab('sandbox')}
+            className={`flex-1 py-2 text-xs font-semibold border-b-2 transition-all ${
+              rightPanelTab === 'sandbox'
+                ? 'border-lark-primary dark:border-indigo-500 text-lark-primary dark:text-indigo-400 bg-slate-900/10 dark:bg-slate-900/50'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            沙箱运行
+          </button>
+        </div>
+
+        <div className="flex-grow overflow-hidden min-w-0 flex flex-col">
+          {rightPanelTab === 'sandbox' ? (
+            <SandboxPanel />
+          ) : (
+            <ArtifactList
+              artifacts={artifacts}
+              onJumpToMessage={handleJumpToMessage}
+              onFullScreenPreview={handleFullScreenPreview}
+            />
+          )}
+        </div>
       </div>
     </div>
   );

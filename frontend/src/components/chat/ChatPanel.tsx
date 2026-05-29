@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Conversation, Message, Agent, Artifact, MessageAttachment, AgentMentionItem } from '@/types';
 import MessageBubble from './MessageBubble';
 import ContextUsageRing from '@/components/common/ContextUsageRing';
-import { Send, Paperclip, Smile, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight, Settings, Pencil, Check } from 'lucide-react';
+import { Send, Paperclip, Smile, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight, Settings, Pencil, Check, Terminal, Cpu } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface ChatPanelProps {
@@ -103,6 +103,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const togglePinMessage = useAgentHubStore(state => state.togglePinMessage);
   const setConfiguringAgentId = useAgentHubStore(state => state.setConfiguringAgentId);
   const allAgents = useAgentHubStore(state => state.agents);
+  const createSandboxRun = useAgentHubStore(state => state.createSandboxRun);
+  const [isSandboxMode, setIsSandboxMode] = useState(false);
   const [showMemoryPanel, setShowMemoryPanel] = useState(false);
   const [memoryTab, setMemoryTab] = useState<'pins' | 'memories'>('pins');
 
@@ -290,8 +292,14 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const handleSend = () => {
     const trimmed = inputValue.trim();
     if (!trimmed && pendingAttachments.length === 0) return;
-    const targetAgentId = parseTargetAgentId(trimmed);
-    onSendMessage(trimmed, pendingAttachments, targetAgentId || undefined);
+    
+    if (isSandboxMode) {
+      createSandboxRun(trimmed);
+      setIsSandboxMode(false);
+    } else {
+      const targetAgentId = parseTargetAgentId(trimmed);
+      onSendMessage(trimmed, pendingAttachments, targetAgentId || undefined);
+    }
     setInputValue('');
     setPendingAttachments([]);
     setShowEmojiPicker(false);
@@ -875,7 +883,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         </div>
 
         <div className="flex-1 p-4 pt-1 border-t border-lark-border dark:border-slate-800 bg-white dark:bg-slate-900 h-full flex flex-col min-h-0 z-20 transition-colors">
-          <div className="border border-lark-border dark:border-slate-800 hover:border-lark-border/80 dark:hover:border-slate-700 focus-within:border-lark-primary dark:focus-within:border-violet-650 focus-within:ring-2 focus-within:ring-lark-primary/10 dark:focus-within:ring-violet-600/10 rounded-xl bg-white dark:bg-slate-950 transition-all flex flex-col relative z-30 flex-1 min-h-0 overflow-hidden">
+          <div className={`border rounded-xl bg-white dark:bg-slate-950 transition-all flex flex-col relative z-30 flex-1 min-h-0 overflow-hidden ${
+            isSandboxMode 
+              ? 'border-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.2)] dark:shadow-[0_0_12px_rgba(99,102,241,0.3)] ring-2 ring-indigo-500/10' 
+              : 'border-lark-border dark:border-slate-800 hover:border-lark-border/80 dark:hover:border-slate-700 focus-within:border-lark-primary dark:focus-within:border-violet-650 focus-within:ring-2 focus-within:ring-lark-primary/10 dark:focus-within:ring-violet-600/10'
+          }`}>
             
             {replyContext && (
               <div className="flex items-center justify-between px-3.5 py-1.5 bg-slate-50 dark:bg-slate-900/60 border-b border-lark-border/40 dark:border-slate-800/40 text-[11px] text-slate-500 dark:text-slate-400 animate-slide-up flex-shrink-0 rounded-t-xl">
@@ -963,6 +975,21 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
               
               <div className="w-[1px] h-3 bg-lark-border/60 dark:bg-slate-800 mx-1" />
               <span className="text-[10px] text-lark-text-tertiary dark:text-slate-500">Shift + Enter 换行</span>
+
+              <div className="w-[1px] h-3 bg-lark-border/60 dark:bg-slate-800 mx-1" />
+              <button
+                type="button"
+                onClick={() => setIsSandboxMode(!isSandboxMode)}
+                className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-bold transition-all border ${
+                  isSandboxMode
+                    ? 'bg-indigo-500/15 text-indigo-400 border-indigo-500/35 ring-1 ring-indigo-500/20'
+                    : 'text-slate-400 dark:text-slate-400 hover:text-indigo-400 hover:bg-indigo-500/5 border-transparent'
+                }`}
+                title="在隔离 Docker 容器中以沙箱方式执行指令"
+              >
+                <Terminal className="w-3.5 h-3.5 mr-0.5" />
+                沙箱运行
+              </button>
             </div>
 
             <div className="flex-1 p-2 bg-transparent flex flex-row items-end gap-2 min-h-0 overflow-hidden">
@@ -987,7 +1014,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                       overlayRef.current.scrollLeft = e.currentTarget.scrollLeft;
                     }
                   }}
-                  placeholder="输入消息，输入 @ 唤起 Agent 选择器..."
+                  placeholder={isSandboxMode ? "输入沙箱任务指令，例如：生成一个 README.md 文件说明这是沙箱测试..." : "输入消息，输入 @ 唤起 Agent 选择器..."}
                   className={`absolute inset-0 w-full h-full px-2 py-1.5 text-sm font-sans leading-normal outline-none resize-none bg-transparent focus:ring-0 border border-transparent caret-slate-850 dark:caret-white ${
                     inputValue ? 'text-transparent' : 'text-lark-text-primary dark:text-slate-150 placeholder:text-lark-text-tertiary dark:placeholder:text-slate-650'
                   }`}
@@ -999,11 +1026,14 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                 disabled={!canSend}
                 className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all flex-shrink-0 active:scale-95 mb-0.5 ${
                   canSend
-                    ? 'bg-lark-primary text-white shadow-sm hover:bg-lark-primary-hover'
+                    ? isSandboxMode
+                      ? 'bg-indigo-600 hover:bg-indigo-550 text-white shadow-sm ring-2 ring-indigo-500/20'
+                      : 'bg-lark-primary text-white shadow-sm hover:bg-lark-primary-hover'
                     : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
                 }`}
+                title={isSandboxMode ? "提交沙箱执行任务" : "发送消息"}
               >
-                <Send className="w-4 h-4" />
+                {isSandboxMode ? <Cpu className="w-4 h-4 text-indigo-200" /> : <Send className="w-4 h-4" />}
               </button>
             </div>
           </div>
