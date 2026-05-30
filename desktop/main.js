@@ -17,6 +17,7 @@ function createWindow () {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    frame: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -42,26 +43,39 @@ function registerAllHandlers() {
   registerSettingsHandlers()
 }
 
-app.whenReady().then(() => {
-  registerAllHandlers()
-  createWindow()
-  createAppMenu()
-  
-  try {
-    const { createTray } = require('./tray')
-    if (mainWindow) {
-      appTray = createTray(mainWindow)
-    }
-  } catch (e) {
-    console.log('Tray creation skipped:', e.message)
-  }
+const gotTheLock = app.requestSingleInstanceLock()
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
+if (!gotTheLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (event, commandLine, workingDirectory) => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
     }
   })
-})
+
+  app.whenReady().then(() => {
+    registerAllHandlers()
+    createWindow()
+    createAppMenu()
+    
+    try {
+      const { createTray } = require('./tray')
+      if (mainWindow) {
+        appTray = createTray(mainWindow)
+      }
+    } catch (e) {
+      console.log('Tray creation skipped:', e.message)
+    }
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow()
+      }
+    })
+  })
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
