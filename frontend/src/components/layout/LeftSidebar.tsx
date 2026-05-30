@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Conversation, Agent } from '@/types';
-import { Plus, Search, MessageSquare, Users, Trash2, MoreVertical, Settings, LogOut, Pin, Archive, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plus, Search, Trash2, MoreVertical, Settings, LogOut, Pin, Archive, ChevronDown, ChevronRight } from 'lucide-react';
 import AgentDirectory from '../agent/AgentDirectory';
 import AgentDetailPanel from '../agent/AgentDetailPanel';
 import ConfirmModal from '../modal/ConfirmModal';
@@ -80,6 +80,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
   const [showArchived, setShowArchived] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
+  const [userMenuAnchorRect, setUserMenuAnchorRect] = useState<DOMRect | null>(null);
 
   useEffect(() => {
     const handleScrollClose = () => {
@@ -87,12 +88,16 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
         setActiveMenuId(null);
         setMenuAnchorRect(null);
       }
+      if (isUserMenuOpen) {
+        setIsUserMenuOpen(false);
+        setUserMenuAnchorRect(null);
+      }
     };
     window.addEventListener('scroll', handleScrollClose, true);
     return () => {
       window.removeEventListener('scroll', handleScrollClose, true);
     };
-  }, [activeMenuId]);
+  }, [activeMenuId, isUserMenuOpen]);
 
   const currentUser = useAgentHubStore(state => state.currentUser);
   const logout = useAgentHubStore(state => state.logout);
@@ -444,6 +449,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
           onSelectAgent={async (agentId) => {
             await getOrCreateAgentChat(agentId);
             setViewMode('conversations');
+            setConfiguringAgentId(null);
           }}
           onAddAgent={() => {
             setConfiguringAgentId('new');
@@ -468,7 +474,11 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
       {currentUser && (
         <div className="p-3 border-t border-lark-border/60 dark:border-slate-800/60 bg-white/50 dark:bg-slate-950/40 backdrop-blur-sm flex-shrink-0 relative">
           <div
-            onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setUserMenuAnchorRect(rect);
+              setIsUserMenuOpen(!isUserMenuOpen);
+            }}
             className="flex items-center justify-between p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/60 cursor-pointer transition-colors group select-none"
           >
             <div className="flex items-center gap-2.5 min-w-0">
@@ -476,30 +486,44 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                 <img src={currentUser.avatar} alt={currentUser.name} className="w-full h-full object-cover" />
               </div>
               <div className="min-w-0">
-                <h4 className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">{currentUser.name}</h4>
+                <h4 className="text-xs font-semibold text-slate-805 dark:text-slate-200 truncate">{currentUser.name}</h4>
                 <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{currentUser.email}</p>
               </div>
             </div>
             <MoreVertical className="w-4 h-4 text-slate-400 group-hover:text-slate-650 dark:group-hover:text-slate-300 transition-colors" />
           </div>
 
-          {/* Floating Dropdown popover */}
-          {isUserMenuOpen && (
+          {/* Floating Dropdown popover using React Portal */}
+          {isUserMenuOpen && userMenuAnchorRect && createPortal(
             <>
               {/* Click outside backdrop overlay */}
               <div
-                className="fixed inset-0 z-30"
-                onClick={() => setIsUserMenuOpen(false)}
+                className="fixed inset-0 z-[9999]"
+                onClick={() => {
+                  setIsUserMenuOpen(false);
+                  setUserMenuAnchorRect(null);
+                }}
               />
 
-              <div className="absolute bottom-16 left-3 right-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl p-1.5 z-40 animate-scale-in flex flex-col gap-0.5">
+              <div 
+                style={{
+                  position: 'fixed',
+                  bottom: `${window.innerHeight - userMenuAnchorRect.top + 8}px`,
+                  left: `${userMenuAnchorRect.left}px`,
+                  width: `${userMenuAnchorRect.width}px`,
+                  zIndex: 10000,
+                }}
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl p-1.5 animate-scale-in flex flex-col gap-0.5"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <button
                   type="button"
                   onClick={() => {
                     setIsSettingsOpen(true);
                     setIsUserMenuOpen(false);
+                    setUserMenuAnchorRect(null);
                   }}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors"
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-xs font-medium text-slate-700 dark:text-slate-350 hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors"
                 >
                   <Settings className="w-3.5 h-3.5 text-slate-400" />
                   <span>个人与系统设置</span>
@@ -510,14 +534,16 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                   onClick={() => {
                     logout();
                     setIsUserMenuOpen(false);
+                    setUserMenuAnchorRect(null);
                   }}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-955/20 transition-colors"
                 >
                   <LogOut className="w-3.5 h-3.5 text-slate-400 hover:text-red-500" />
                   <span>退出登录</span>
                 </button>
               </div>
-            </>
+            </>,
+            document.body
           )}
         </div>
       )}

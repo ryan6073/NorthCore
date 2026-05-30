@@ -13,7 +13,7 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
   const [mode, setMode] = useState<'single' | 'group'>('single');
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
 
-  const enabledAgents = agents.filter(a => a.enabled);
+  const displayAgents = agents;
 
   useEffect(() => {
     if (!open) {
@@ -29,7 +29,7 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
     let finalAgentIds = selectedAgentIds;
     if (mode === 'group') {
       const orchestratorId = 'agent-orchestrator';
-      if (!finalAgentIds.includes(orchestratorId) && enabledAgents.some(a => a.id === orchestratorId)) {
+      if (!finalAgentIds.includes(orchestratorId) && displayAgents.some(a => a.id === orchestratorId)) {
         finalAgentIds = [orchestratorId, ...finalAgentIds];
       }
     }
@@ -115,7 +115,7 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
               {mode === 'single' ? '选择一个 Agent 成员' : '多选 Agent 成员 (群聊将自动包含 Orchestrator 调度员)'}
             </label>
             <div className="max-h-64 overflow-y-auto border border-lark-border dark:border-slate-800 rounded-xl p-1.5 space-y-1 bg-slate-50/30 dark:bg-slate-950/20">
-              {enabledAgents.map((agent) => {
+              {displayAgents.map((agent) => {
                 const isSelected = selectedAgentIds.includes(agent.id);
                 const activeBg = mode === 'single' ? 'bg-lark-primary-light dark:bg-violet-950/30 border-lark-primary/30 dark:border-violet-900/40 text-lark-primary dark:text-white' : 'bg-indigo-50 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-900/40 text-indigo-700 dark:text-white';
                 const checkColor = mode === 'single' ? 'bg-lark-primary' : 'bg-indigo-600';
@@ -138,7 +138,12 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
                       />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h4 className={`text-xs font-semibold truncate ${isSelected ? 'font-bold' : 'text-lark-text-primary dark:text-slate-200'}`}>{agent.name}</h4>
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        <h4 className={`text-xs font-semibold truncate ${isSelected ? 'font-bold' : 'text-lark-text-primary dark:text-slate-200'}`}>{agent.name}</h4>
+                        {!agent.enabled && (
+                          <span className="text-[9px] px-1 py-0.2 rounded bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 scale-90 origin-left flex-shrink-0">已禁用</span>
+                        )}
+                      </div>
                       <p className={`text-[10px] truncate ${isSelected ? 'opacity-85' : 'text-lark-text-secondary dark:text-slate-400'}`}>{agent.description}</p>
                     </div>
                     {isSelected && (
@@ -149,7 +154,7 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
                   </div>
                 );
               })}
-              {enabledAgents.length === 0 && (
+              {displayAgents.length === 0 && (
                 <p className="text-xs text-lark-text-tertiary dark:text-slate-500 text-center py-6">没有可用的 Agent</p>
               )}
             </div>

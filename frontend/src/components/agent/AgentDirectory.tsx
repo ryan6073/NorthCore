@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Agent } from '@/types';
-import { Search, User, Plus } from 'lucide-react';
+import { Search, Plus } from 'lucide-react';
 import AgentContactCard from './AgentContactCard';
 
 interface AgentDirectoryProps {

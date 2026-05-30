@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Conversation, Message, Agent, Artifact, MessageAttachment, AgentMentionItem } from '@/types';
 import MessageBubble from './MessageBubble';
 import ContextUsageRing from '@/components/common/ContextUsageRing';
-import { Send, Paperclip, Smile, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight, Settings, Pencil, Check, Terminal, Cpu, FileText, Folder, Save } from 'lucide-react';
+import { Send, Paperclip, Smile, AtSign, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight, Settings, Pencil, Check, Terminal, Cpu, FileText, Folder, Save } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface ChatPanelProps {
@@ -1012,16 +1012,18 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
             />
 
             <div className={`flex items-center gap-1.5 px-3 py-1.5 bg-slate-50/50 dark:bg-slate-900/20 border-b border-lark-border/30 dark:border-slate-800/20 relative flex-shrink-0 ${hasHeader ? '' : 'rounded-t-xl'}`}>
-              <button 
-                type="button"
-                onClick={handleFileClick}
-                className="p-1 rounded-lg text-lark-text-secondary dark:text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 hover:bg-lark-bg-hover dark:hover:bg-slate-800 transition-colors"
-                title="添加附件"
-              >
-                <Paperclip className="w-3.5 h-3.5" />
-              </button>
+              <div className="relative flex items-center">
+                <button 
+                  type="button"
+                  onClick={handleFileClick}
+                  className="p-1 rounded-lg text-lark-text-secondary dark:text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 hover:bg-lark-bg-hover dark:hover:bg-slate-800 transition-colors"
+                  title="添加附件"
+                >
+                  <Paperclip className="w-3.5 h-3.5" />
+                </button>
+              </div>
               
-              <div className="relative">
+              <div className="relative flex items-center">
                 <button 
                   type="button"
                   onClick={() => setShowEmojiPicker(!showEmojiPicker)}
@@ -1033,14 +1035,16 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
               </div>
 
               {conversation?.mode === 'group' && (
-                <button
-                  type="button"
-                  onClick={handleAtButtonClick}
-                  className="p-1 rounded-lg text-lark-text-secondary dark:text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 hover:bg-lark-bg-hover dark:hover:bg-slate-800 transition-colors text-[13px] font-semibold w-5.5 h-5.5 flex items-center justify-center font-sans select-none"
-                  title="提及 Agent (@)"
-                >
-                  @
-                </button>
+                <div className="relative flex items-center">
+                  <button
+                    type="button"
+                    onClick={handleAtButtonClick}
+                    className="p-1 rounded-lg text-lark-text-secondary dark:text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 hover:bg-lark-bg-hover dark:hover:bg-slate-800 transition-colors"
+                    title="提及 Agent (@)"
+                  >
+                    <AtSign className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               )}
               
               <div className="w-[1px] h-3 bg-lark-border/60 dark:bg-slate-800 mx-1" />

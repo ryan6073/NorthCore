@@ -4,13 +4,14 @@ import { Save, X, Bot, FileText, Settings, Wrench, Shield, Check, Image, HelpCir
 
 interface AgentConfigFormProps {
   agent: Agent;
+  globalAgent?: Agent;
   onSave: (updated: Agent) => void;
   onClose: () => void;
   isSessionLevel?: boolean;
   onSyncToGlobal?: (updated: Agent) => void;
 }
 
-const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClose, isSessionLevel = false, onSyncToGlobal }) => {
+const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, onSave, onClose, isSessionLevel = false, onSyncToGlobal }) => {
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced] = useState(false);
 
@@ -178,6 +179,9 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
                         className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 placeholder:text-slate-400 dark:placeholder:text-slate-600 transition-all font-medium"
                         placeholder="给智能体起个响亮的名字..."
                       />
+                      {isSessionLevel && globalAgent && globalAgent.name !== form.name && (
+                        <span className="text-[10px] text-slate-400 dark:text-slate-550 mt-1 block">全局默认值: <span className="font-semibold">{globalAgent.name}</span></span>
+                      )}
                     </div>
 
                     <div>
@@ -189,6 +193,9 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
                         className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 placeholder:text-slate-400 dark:placeholder:text-slate-600 transition-all resize-none font-medium"
                         placeholder="描述该智能体的主要功能，如：专业前端重构、代码调试..."
                       />
+                      {isSessionLevel && globalAgent && globalAgent.description !== form.description && (
+                        <span className="text-[10px] text-slate-400 dark:text-slate-550 mt-1 block">全局默认值: <span className="font-semibold">{globalAgent.description}</span></span>
+                      )}
                     </div>
                   </div>
 
@@ -312,6 +319,18 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
                     <AlertCircle className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
                     <span>系统指示词代表了智能体的指令核心。合理的系统词能够极大提升回答的质量和稳定性。</span>
                   </div>
+                  {isSessionLevel && globalAgent && (
+                    <div className="mt-2.5 p-3 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-850 rounded-xl">
+                      <details className="outline-none cursor-pointer">
+                        <summary className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-850 dark:hover:text-white select-none">
+                          查看全局默认 Prompt 提示词参考
+                        </summary>
+                        <pre className="mt-2 p-3 bg-slate-50 dark:bg-slate-950/70 rounded-lg text-[10.5px] font-mono whitespace-pre-wrap max-h-48 overflow-y-auto text-slate-500 border border-slate-200/50 dark:border-slate-900 leading-relaxed cursor-text select-text select-all">
+                          {globalAgent.systemPrompt}
+                        </pre>
+                      </details>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -398,6 +417,16 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
                     onChange={e => setForm(prev => ({ ...prev, modelConfig: { ...prev.modelConfig, maxTokens: parseInt(e.target.value) || 4096 } }))}
                     className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all font-semibold"
                   />
+                  {isSessionLevel && globalAgent && globalAgent.modelConfig?.maxTokens !== form.modelConfig.maxTokens && (
+                    <span className="text-[10px] text-slate-400 dark:text-slate-550 mt-1 block">全局默认值: <span className="font-semibold">{globalAgent.modelConfig?.maxTokens}</span></span>
+                  )}
+                  {isSessionLevel && globalAgent && (globalAgent.modelConfig?.provider !== form.modelConfig.provider || globalAgent.modelConfig?.modelName !== form.modelConfig.modelName || globalAgent.modelConfig?.temperature !== form.modelConfig.temperature) && (
+                    <div className="p-3 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-850 rounded-xl text-[10.5px] text-slate-500 space-y-1">
+                      <div className="font-semibold text-slate-700 dark:text-slate-350">全局模型配置参考：</div>
+                      <div>提供商 / 模型名：<span className="font-semibold font-mono">{globalAgent.modelConfig?.provider} / {globalAgent.modelConfig?.modelName}</span></div>
+                      <div>Temperature (多样性)：<span className="font-semibold font-mono">{globalAgent.modelConfig?.temperature}</span></div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -439,9 +468,18 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
                           }`}>
                             {tool.name}
                           </span>
-                          <span className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 block leading-normal">
+                          <span className="text-[10px] text-slate-400 dark:text-slate-550 mt-1 block leading-normal">
                             {tool.description}
                           </span>
+                          {isSessionLevel && globalAgent && (() => {
+                            const globalTool = globalAgent.tools?.find(t => t.id === tool.id);
+                            const isGlobalEnabled = globalTool ? globalTool.enabled : false;
+                            return (
+                              <span className="text-[9px] text-slate-400 dark:text-slate-600 mt-1 block font-medium">
+                                全局默认: {isGlobalEnabled ? '开启' : '关闭'}
+                              </span>
+                            );
+                          })()}
                         </div>
                       </div>
                     ))}
@@ -495,6 +533,14 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, onSave, onClos
                           <span className="text-[10px] text-slate-400 dark:text-slate-550 mt-1 block leading-normal">
                             {p.desc}
                           </span>
+                          {isSessionLevel && globalAgent && (() => {
+                            const isGlobalPermOn = globalAgent.permissions?.[p.key as keyof AgentPermission];
+                            return (
+                              <span className="text-[9px] text-slate-400 dark:text-slate-650 mt-1 block font-medium">
+                                全局默认: {isGlobalPermOn ? '已授权' : '禁用'}
+                              </span>
+                            );
+                          })()}
                         </div>
                       </div>
                     );

@@ -6,6 +6,7 @@ import ConfirmModal from '../modal/ConfirmModal';
 
 interface AgentDetailPanelProps {
   agent: Agent;
+  globalAgent?: Agent;
   onSave: (updated: Agent) => void;
   onBack: () => void;
   isNew?: boolean;
@@ -14,7 +15,7 @@ interface AgentDetailPanelProps {
   onSyncToGlobal?: (updated: Agent) => void;
 }
 
-const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBack, isNew = false, onDelete, isSessionLevel = false, onSyncToGlobal }) => {
+const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, globalAgent, onSave, onBack, isNew = false, onDelete, isSessionLevel = false, onSyncToGlobal }) => {
   const [isEditing, setIsEditing] = useState(isNew);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
@@ -50,6 +51,7 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, onSave, onBa
     return (
       <AgentConfigForm 
         agent={agent} 
+        globalAgent={globalAgent}
         isSessionLevel={isSessionLevel}
         onSyncToGlobal={onSyncToGlobal}
         onSave={(updated) => { 

@@ -1181,7 +1181,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     const { useMockMode } = get();
     if (!useMockMode) {
       try {
-        const res = await updateAgentDetail(updatedAgent.id, updatedAgent);
+        const { id, ownerUserId, owner_user_id, conversationId, lastUsedAt, status, ...updatePayload } = updatedAgent as any;
+        const res = await updateAgentDetail(updatedAgent.id, updatePayload);
         if (res.code === 0) {
           set(state => ({
             agents: state.agents.map(a => a.id === updatedAgent.id ? res.data : a),

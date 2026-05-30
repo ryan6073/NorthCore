@@ -9,7 +9,6 @@ interface AgentMiniConfigPanelProps {
 
 export const AgentMiniConfigPanel: React.FC<AgentMiniConfigPanelProps> = ({ agent }) => {
   const saveAgent = useAgentHubStore(state => state.saveAgent);
-  const setConfiguringAgentId = useAgentHubStore(state => state.setConfiguringAgentId);
 
   const isEditable = false; // Right panel is read-only. Clicking the settings button opens the agent's profile card to edit.
   
@@ -110,14 +109,6 @@ export const AgentMiniConfigPanel: React.FC<AgentMiniConfigPanelProps> = ({ agen
         <div className="space-y-2">
           <div className="flex justify-between items-center">
             <label className="text-xs font-bold text-slate-600 dark:text-slate-400">模型配置</label>
-            <button
-              type="button"
-              onClick={() => setConfiguringAgentId(agent.id)}
-              className="text-[10px] text-violet-600 dark:text-violet-400 hover:text-violet-500 dark:hover:text-violet-300 font-medium flex items-center gap-0.5 hover:underline transition-colors"
-            >
-              <Settings2 className="w-3 h-3" />
-              <span>修改配置</span>
-            </button>
           </div>
           {(() => {
             const config = agent.modelConfig || { provider: 'custom', modelName: 'gpt-4o', temperature: 0.7, maxTokens: 4096 };

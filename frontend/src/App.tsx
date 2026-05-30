@@ -130,10 +130,13 @@ function App() {
       const { id, lastUsedAt, ...agentData } = updatedAgent;
       const newId = await createAgent(agentData);
       setSelectedAgentId(newId);
+      if (activeConversationId && activeConversation?.mode === 'group') {
+        await useAgentHubStore.getState().addAgentToConversation(activeConversationId, newId);
+      }
     } else {
       await saveAgent(updatedAgent);
     }
-  }, [saveAgent, createAgent, setSelectedAgentId]);
+  }, [saveAgent, createAgent, setSelectedAgentId, activeConversationId, activeConversation]);
 
   const handleDeleteAgent = useCallback(async (agentId: string) => {
     await deleteAgent(agentId);
@@ -198,9 +201,10 @@ function App() {
           }
           chatPanel={
             configuringAgentId ? (() => {
+              const globalAgent = agents.find(a => a.id === configuringAgentId);
               let configAgent = configuringAgentId === 'new' 
                 ? getNewAgentTemplate() 
-                : agents.find(a => a.id === configuringAgentId);
+                : globalAgent;
               if (!configAgent) return null;
               if (activeConversationId && isSessionLevel && conversationAgentConfigs[activeConversationId]?.[configAgent.id]) {
                 configAgent = {
@@ -211,10 +215,11 @@ function App() {
               return (
                 <AgentDetailPanel
                   agent={configAgent}
+                  globalAgent={globalAgent}
                   isNew={configuringAgentId === 'new'}
                   isSessionLevel={isSessionLevel}
                   onSave={async (updated) => {
-                    if (isSessionLevel && activeConversationId) {
+                    if (isSessionLevel && activeConversationId && updated.id !== 'new') {
                       saveConversationAgentConfig(activeConversationId, updated.id, updated);
                     } else {
                       await handleSaveAgent(updated);

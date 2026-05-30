@@ -30,7 +30,7 @@ const AgentList: React.FC<AgentListProps> = ({ agents }) => {
 
   // Filter agents that are NOT in the active conversation
   const availableAgents = allAgents.filter(
-    a => a.enabled !== false && !agents.some(active => active.id === a.id)
+    a => !agents.some(active => active.id === a.id)
   );
 
   const handleAdd = async (agentId: string) => {
@@ -123,6 +123,9 @@ const AgentList: React.FC<AgentListProps> = ({ agents }) => {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
                     <h4 className="text-xs font-semibold text-slate-805 dark:text-slate-200 truncate">{agent.name}</h4>
+                    {!agent.enabled && (
+                      <span className="text-[9px] px-1 py-0.2 rounded bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 scale-90 origin-left flex-shrink-0">已禁用</span>
+                    )}
                     {agent.status === 'thinking' && (
                       <span className="flex h-1.5 w-1.5 relative">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
@@ -183,7 +186,12 @@ const AgentList: React.FC<AgentListProps> = ({ agents }) => {
                   className="w-10 h-10 rounded-lg object-cover flex-shrink-0 shadow-sm border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:scale-105 transition-transform cursor-pointer"
                 />
                 <div className="flex-1 min-w-0">
-                  <h4 className="text-xs font-semibold text-slate-805 dark:text-slate-200 truncate">{agent.name}</h4>
+                  <div className="flex items-center gap-1.5">
+                    <h4 className="text-xs font-semibold text-slate-805 dark:text-slate-200 truncate">{agent.name}</h4>
+                    {!agent.enabled && (
+                      <span className="text-[9px] px-1 py-0.2 rounded bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 scale-90 origin-left flex-shrink-0">已禁用</span>
+                    )}
+                  </div>
                   <p className="text-[10px] text-slate-400 dark:text-slate-400 truncate mt-0.5">{agent.description}</p>
                 </div>
                 <button
