@@ -2807,7 +2807,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     const { currentWorkspace } = get();
     if (!currentWorkspace) return '';
     try {
-      const fullPath = platform.isDesktop() ? path : `${currentWorkspace.path}/${path}`;
+      const fullPath = (path.startsWith('/') || path.includes(':')) ? path : `${currentWorkspace.path}/${path}`;
       const res = await platform.file.readText(fullPath);
       if (res.success && res.content !== undefined) {
         set({ selectedWorkspaceFileContent: res.content });

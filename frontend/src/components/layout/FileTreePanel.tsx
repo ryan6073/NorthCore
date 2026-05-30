@@ -26,13 +26,21 @@ export const FileTreePanel: React.FC = () => {
     return textExts.includes(ext.toLowerCase());
   };
 
+  const getFullPath = (nodePath: string) => {
+    if (!currentWorkspace?.path) return nodePath;
+    if (nodePath.startsWith('/') || nodePath.includes(':')) {
+      return nodePath;
+    }
+    return `${currentWorkspace.path}/${nodePath}`;
+  };
+
   const handleFileClick = (node: FileNode) => {
     if (isTextFile(node.extension)) {
       setSelectedWorkspaceFilePath(node.path);
       setRightPanelTab('file-preview' as any);
     } else {
       // Direct open
-      const fullPath = platform.isDesktop() ? node.path : `${currentWorkspace?.path}/${node.path}`;
+      const fullPath = getFullPath(node.path);
       platform.file.openPath(fullPath);
     }
   };
@@ -43,12 +51,12 @@ export const FileTreePanel: React.FC = () => {
   };
 
   const handleOpenPath = (node: FileNode) => {
-    const fullPath = platform.isDesktop() ? node.path : `${currentWorkspace?.path}/${node.path}`;
+    const fullPath = getFullPath(node.path);
     platform.file.openPath(fullPath);
   };
 
   const handleRevealInFolder = (node: FileNode) => {
-    const fullPath = platform.isDesktop() ? node.path : `${currentWorkspace?.path}/${node.path}`;
+    const fullPath = getFullPath(node.path);
     platform.file.revealInFolder(fullPath);
   };
 
