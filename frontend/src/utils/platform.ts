@@ -87,6 +87,23 @@ export interface AgentProcessInfo {
   logs: string[];
 }
 
+// Desktop mock testing modes
+const DESKTOP_MODES = {
+  WEB: 'web',
+  MOCK_DESKTOP: 'mock-desktop',
+  REAL_DESKTOP: 'real-desktop'
+} as const;
+
+let currentDesktopMode = DESKTOP_MODES.WEB;
+try {
+  const storedMode = localStorage.getItem('ag_desktop_mock_mode');
+  if (storedMode && Object.values(DESKTOP_MODES).includes(storedMode as any)) {
+    currentDesktopMode = storedMode as any;
+  }
+} catch (e) {
+  console.warn('Failed to restore desktop mode', e);
+}
+
 // In-memory mock storage for Web environment
 const webState = {
   currentWorkspace: null as WorkspaceInfo | null,
@@ -186,7 +203,8 @@ try {
 
 export const platform = {
   isDesktop(): boolean {
-    return !!(window.northcoreDesktop && window.northcoreDesktop.isDesktop);
+    return !!(window.northcoreDesktop && window.northcoreDesktop.isDesktop) || 
+           currentDesktopMode === DESKTOP_MODES.MOCK_DESKTOP;
   },
 
   getPlatformName(): string {
@@ -486,6 +504,34 @@ export const platform = {
       };
       localStorage.removeItem('ag_web_settings');
       return Promise.resolve({ success: true });
+    }
+  },
+
+  // Desktop Mock Testing Utilities
+  desktopMock: {
+    getMode: () => currentDesktopMode,
+    setMode: (mode: typeof DESKTOP_MODES[keyof typeof DESKTOP_MODES]) => {
+      currentDesktopMode = mode;
+      localStorage.setItem('ag_desktop_mock_mode', mode);
+      console.log(`[Platform] Desktop mock mode set to: ${mode}`);
+    },
+    isMockDesktopMode: () => currentDesktopMode === DESKTOP_MODES.MOCK_DESKTOP,
+    getAvailableModes: () => Object.values(DESKTOP_MODES),
+    getDesktopSystemInfo: () => {
+      return {
+        platformName: platform.getPlatformName(),
+        isMockDesktop: currentDesktopMode === DESKTOP_MODES.MOCK_DESKTOP,
+        mode: currentDesktopMode,
+        mockWorkspacePath: '/mock/workspace/NorthCore',
+        supportedFeatures: [
+          'workspace_scan',
+          'file_read',
+          'file_write',
+          'system_notification',
+          'recent_workspaces',
+          'workspace_boundary_enforcement'
+        ]
+      };
     }
   }
 };

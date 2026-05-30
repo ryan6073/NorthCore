@@ -215,6 +215,61 @@ export const mockAgents: Agent[] = [
       canGenerateArtifacts: true,
       canDeploy: false
     }
+  },
+  {
+    id: 'agent-desktop-native',
+    name: 'DesktopNative',
+    avatar: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=desktop%20native%20agent%20avatar%20dark%20tech%20style&image_size=square',
+    description: '桌面原生文件系统专家，拥有本地工作区完全访问权限',
+    tags: ['本地文件', '文件修改', '工作区管理'],
+    status: 'online',
+    category: 'desktop',
+    provider: 'desktop-native',
+    enabled: true,
+    lastUsedAt: '2026-05-23 10:30',
+    systemPrompt: `你是 DesktopNative，这是一个运行在用户本地桌面端的 AI 助手，拥有完整的文件系统访问和操作系统集成能力。
+
+## 环境特性
+- 运行环境：Electron 桌面应用
+- 工作区路径：/mock/workspace/NorthCore
+- 系统权限：完全读写访问用户指定的工作目录
+- 支持操作：文件读写、目录遍历、命令执行、本地通知、文件资源管理器集成
+
+## 桌面端专属系统提示
+1. **工作区边界控制**：所有文件操作严格限制在用户授权的工作区路径内，绝对不允许访问工作区之外的系统敏感路径（如 /etc、~/.ssh、Windows 系统目录等）
+2. **用户确认机制**：对重要文件覆盖/删除操作前，必须明确提示用户确认，展示文件差异预览
+3. **本地文件实时同步**：所有生成的产物直接写入用户本地磁盘，立即生效，无需额外导出步骤
+4. **通知系统集成**：任务完成、产物生成、Agent 错误等事件通过系统原生通知推送给用户
+5. **智能冲突检测**：检测目标文件已存在时，自动对比文件内容差异，提供保留原文件/覆盖/合并三种选项
+
+## 核心能力
+- 读取、编辑、创建任意工作区内的文件
+- 递归扫描工作区目录结构
+- 执行安全的 shell 命令（在用户明确授权下）
+- 将生成的产物直接应用到本地项目，立即看到代码运行结果`,
+    modelConfig: {
+      provider: 'desktop-native',
+      modelName: 'DesktopNative-v1',
+      temperature: 0.4,
+      maxTokens: 128000
+    },
+    tools: [
+      { id: 'desktop_file_read', name: '桌面读文件', description: '读取本地工作区文件内容', enabled: true },
+      { id: 'desktop_file_write', name: '桌面写文件', description: '写入文件到本地磁盘', enabled: true },
+      { id: 'desktop_file_explore', name: '目录浏览', description: '扫描本地目录结构', enabled: true },
+      { id: 'desktop_notify', name: '系统通知', description: '发送桌面原生通知', enabled: true },
+      { id: 'desktop_shell', name: '本地命令', description: '执行本地 Shell 命令', enabled: false }
+    ],
+    permissions: {
+      canReadFiles: true,
+      canWriteFiles: true,
+      canRunCommands: false,
+      canGenerateArtifacts: true,
+      canDeploy: false,
+      desktopFullAccess: true,
+      workspaceBoundaryEnforced: true,
+      confirmBeforeOverwrite: true
+    }
   }
 ];
 
@@ -236,6 +291,15 @@ export const mockConversations: Conversation[] = [
     lastMessage: '所有产物已生成完毕',
     updatedAt: '2026-05-22 15:20',
     createdAt: '2026-05-22 14:50'
+  },
+  {
+    id: 'conv-desktop-workspace',
+    title: '桌面工作区测试',
+    mode: 'single',
+    agentIds: ['agent-desktop-native'],
+    lastMessage: '已成功扫描本地工作区，发现5个项目文件',
+    updatedAt: '2026-05-23 10:45',
+    createdAt: '2026-05-23 10:30'
   }
 ];
 
@@ -352,6 +416,77 @@ export const mockMessages: Message[] = [
     type: 'status',
     content: '全部任务已完成！',
     createdAt: '2026-05-22 15:20'
+  },
+  {
+    id: 'msg-desktop-1',
+    conversationId: 'conv-desktop-workspace',
+    senderId: 'user',
+    senderName: '用户',
+    role: 'user',
+    type: 'text',
+    content: '请扫描当前本地工作区，列出所有项目文件',
+    createdAt: '2026-05-23 10:32'
+  },
+  {
+    id: 'msg-desktop-2',
+    conversationId: 'conv-desktop-workspace',
+    senderId: 'agent-desktop-native',
+    senderName: 'DesktopNative',
+    role: 'agent',
+    type: 'status',
+    content: '🔍 开始扫描本地工作区 /mock/workspace/NorthCore...',
+    createdAt: '2026-05-23 10:33'
+  },
+  {
+    id: 'msg-desktop-3',
+    conversationId: 'conv-desktop-workspace',
+    senderId: 'agent-desktop-native',
+    senderName: 'DesktopNative',
+    role: 'agent',
+    type: 'text',
+    content: '✅ 本地工作区扫描完成！发现以下项目文件：\n\n📁 src/\n  ├─ App.tsx\n  ├─ index.css\n  └─ main.tsx\n📁 public/\n  ├─ favicon.ico\n  └─ index.html\n📄 package.json\n📄 tsconfig.json\n📄 README.md\n\n所有文件操作严格限制在工作区边界内，已通过安全检查。',
+    createdAt: '2026-05-23 10:35'
+  },
+  {
+    id: 'msg-desktop-4',
+    conversationId: 'conv-desktop-workspace',
+    senderId: 'user',
+    senderName: '用户',
+    role: 'user',
+    type: 'text',
+    content: '帮我读取 package.json 的内容',
+    createdAt: '2026-05-23 10:38'
+  },
+  {
+    id: 'msg-desktop-5',
+    conversationId: 'conv-desktop-workspace',
+    senderId: 'agent-desktop-native',
+    senderName: 'DesktopNative',
+    role: 'agent',
+    type: 'text',
+    content: '📖 已成功读取 package.json 文件内容：\n\n```json\n{\n  "name": "northcore-app",\n  "version": "1.0.0",\n  "dependencies": {\n    "react": "^18.2.0"\n  }\n}\n```\n\n✅ 文件读取操作安全完成，路径验证通过（在授权工作区内）。',
+    createdAt: '2026-05-23 10:40'
+  },
+  {
+    id: 'msg-desktop-6',
+    conversationId: 'conv-desktop-workspace',
+    senderId: 'user',
+    senderName: '用户',
+    role: 'user',
+    type: 'text',
+    content: '在本地生成一个 .gitignore 文件',
+    createdAt: '2026-05-23 10:42'
+  },
+  {
+    id: 'msg-desktop-7',
+    conversationId: 'conv-desktop-workspace',
+    senderId: 'agent-desktop-native',
+    senderName: 'DesktopNative',
+    role: 'agent',
+    type: 'artifact',
+    artifactId: 'art-desktop-gitignore',
+    content: '生成产物 .gitignore 并直接写入本地磁盘',
+    createdAt: '2026-05-23 10:45'
   }
 ];
 
@@ -388,6 +523,17 @@ export const mockArtifacts: Artifact[] = [
     latestVersion: 1,
     createdAt: '2026-05-22 15:20',
     updatedAt: '2026-05-22 15:20'
+  },
+  {
+    id: 'art-desktop-gitignore',
+    conversationId: 'conv-desktop-workspace',
+    title: '.gitignore',
+    type: 'code',
+    description: '桌面端直接写入本地的 Git 忽略文件',
+    currentVersionId: 'ver-desktop-gitignore-1',
+    latestVersion: 1,
+    createdAt: '2026-05-23 10:45',
+    updatedAt: '2026-05-23 10:45'
   }
 ];
 
@@ -623,5 +769,33 @@ export default HomePage;`,
     createdBy: 'agent-doc',
     createdByType: 'agent',
     createdAt: '2026-05-22 15:20'
+  },
+  {
+    id: 'ver-desktop-gitignore-1',
+    artifactId: 'art-desktop-gitignore',
+    version: 1,
+    content: `# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local`,
+    size: 512,
+    createdBy: 'agent-desktop-native',
+    createdByType: 'agent',
+    createdAt: '2026-05-23 10:45'
   }
 ];
