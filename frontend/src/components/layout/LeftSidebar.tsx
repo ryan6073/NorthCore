@@ -337,7 +337,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
       {viewMode === 'files' && <FileTreePanel />}
       {viewMode === 'workspace' && <WorkspacePanel />}
       {viewMode === 'notifications' && <NotificationPanel />}
-      {viewMode !== 'agent-detail' && viewMode !== 'files' && viewMode !== 'workspace' && viewMode !== 'notifications' && viewMode !== 'settings' && (
+      {viewMode === 'conversations' && (
         <div className="p-4 pb-2 bg-transparent flex-shrink-0">
           <div className="flex items-center justify-between mb-3">
             <h1 className="text-lg font-bold font-sans text-lark-text-primary dark:text-slate-100 tracking-tight" style={{ fontFamily: 'Outfit, sans-serif' }}>
@@ -352,43 +352,16 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
             </button>
           </div>
 
-          <div className="flex bg-[#eef0f2] dark:bg-slate-950 rounded-lg p-0.5 mb-3 border border-lark-border/30 dark:border-slate-800/60">
-            <button
-              onClick={() => setViewMode('conversations')}
-              className={`flex-1 py-1.5 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-all ${
-                viewMode === 'conversations'
-                  ? 'bg-white dark:bg-slate-800 text-lark-primary dark:text-violet-400 shadow-sm font-semibold'
-                  : 'text-lark-text-secondary dark:text-slate-400 hover:text-lark-text-primary dark:hover:text-slate-200'
-              }`}
-            >
-              <MessageSquare className="w-3.5 h-3.5" />
-              Chat
-            </button>
-            <button
-              onClick={() => setViewMode('agents')}
-              className={`flex-1 py-1.5 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-all ${
-                viewMode === 'agents'
-                  ? 'bg-white dark:bg-slate-800 text-lark-primary dark:text-violet-400 shadow-sm font-semibold'
-                  : 'text-lark-text-secondary dark:text-slate-400 hover:text-lark-text-primary dark:hover:text-slate-200'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              联系人
-            </button>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-lark-text-tertiary dark:text-slate-500" />
+            <input
+              type="text"
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              placeholder="搜索 Chat..."
+              className="w-full pl-9 pr-4 py-1.5 bg-[#eff0f1] dark:bg-slate-900 rounded-lg text-xs text-lark-text-primary dark:text-slate-100 placeholder:text-lark-text-tertiary dark:placeholder:text-slate-600 border border-transparent outline-none focus:bg-white dark:focus:bg-slate-950 focus:border-lark-primary dark:focus:border-violet-650 focus:ring-1 focus:ring-lark-primary/20 dark:focus:ring-violet-650/20 transition-all"
+            />
           </div>
-
-          {viewMode === 'conversations' && (
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-lark-text-tertiary dark:text-slate-500" />
-              <input
-                type="text"
-                value={keyword}
-                onChange={(e) => setKeyword(e.target.value)}
-                placeholder="搜索 Chat..."
-                className="w-full pl-9 pr-4 py-1.5 bg-[#eff0f1] dark:bg-slate-900 rounded-lg text-xs text-lark-text-primary dark:text-slate-100 placeholder:text-lark-text-tertiary dark:placeholder:text-slate-600 border border-transparent outline-none focus:bg-white dark:focus:bg-slate-950 focus:border-lark-primary dark:focus:border-violet-650 focus:ring-1 focus:ring-lark-primary/20 dark:focus:ring-violet-650/20 transition-all"
-              />
-            </div>
-          )}
         </div>
       )}
 

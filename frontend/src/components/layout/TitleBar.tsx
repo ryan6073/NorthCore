@@ -1,14 +1,12 @@
 import React from 'react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 import { platform } from '@/utils/platform';
-import { Minus, Square, X, Wifi, WifiOff, Cpu, Folder, Settings, Bell } from 'lucide-react';
+import { Minus, Square, X, Wifi, WifiOff, Cpu, Folder } from 'lucide-react';
 
 export const TitleBar: React.FC = () => {
   const currentWorkspace = useAgentHubStore(state => state.currentWorkspace);
   const wsStatus = useAgentHubStore(state => state.wsStatus);
   const localAgentProcesses = useAgentHubStore(state => state.localAgentProcesses);
-  const setIsSettingsOpen = useAgentHubStore(state => state.setIsSettingsOpen);
-  const setLeftSidebarViewMode = useAgentHubStore(state => state.setLeftSidebarViewMode);
 
   const isLocalAgentRunning = localAgentProcesses.some(a => a.status === 'running');
   const runningAgentNames = localAgentProcesses.filter(a => a.status === 'running').map(a => a.name).join(', ');
@@ -86,24 +84,6 @@ export const TitleBar: React.FC = () => {
               <span>STANDBY</span>
             </div>
           )}
-        </div>
-
-        {/* Shortcuts */}
-        <div className="flex items-center gap-1 border-l border-slate-300 dark:border-slate-800 pl-2">
-          <button
-            onClick={() => setLeftSidebarViewMode('notifications')}
-            className="p-1 hover:bg-slate-200 dark:hover:bg-slate-850 rounded text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
-            title="通知中心"
-          >
-            <Bell className="w-3 h-3" />
-          </button>
-          <button
-            onClick={() => setIsSettingsOpen(true)}
-            className="p-1 hover:bg-slate-200 dark:hover:bg-slate-850 rounded text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
-            title="设置"
-          >
-            <Settings className="w-3 h-3" />
-          </button>
         </div>
 
         {/* Window controls */}
