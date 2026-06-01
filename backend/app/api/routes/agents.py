@@ -29,13 +29,19 @@ async def api_list_agents(
 ):
     current_user = current_user_or_default(authorization)
     include_disabled = str(includeDisabled or "").strip().lower() in {"1", "true", "yes", "on"}
+    enabled_filter = parse_enabled(enabled)
+    if enabled_filter is False:
+        return ok(paginate([], page, pageSize))
+    if enabled_filter is None:
+        enabled_filter = True
     return ok(list_agents(
         page=page,
         page_size=pageSize,
         category=category,
         provider=provider,
         keyword=keyword,
-        enabled=None if include_disabled else (True if enabled is None else parse_enabled(enabled)),
+        enabled=enabled_filter,
+        include_disabled=include_disabled,
         owner_user_id=current_user["id"],
     ))
 
@@ -172,15 +178,13 @@ async def api_delete_agent(agent_id: str, authorization: Optional[str] = Header(
     if not existing_agent:
         return fail(40001, "Agent 不存在")
     if existing_agent.get("ownerUserId") is None and current_user.get("role") != "admin":
-        agent = upsert_agent_user_override(
+        upsert_agent_user_override(
             current_user["id"],
             agent_id,
-            {"enabled": False, "status": "disabled"},
+            {"enabled": False},
         )
-        if not agent:
-            return fail(40001, "Agent 不存在")
-        return ok(True, message="Agent 已禁用")
+        return ok(True, message="Agent 已删除")
     disabled = disable_agent(agent_id, owner_user_id=current_user["id"])
     if not disabled:
         return fail(40001, "Agent 不存在")
-    return ok(True, message="Agent 已禁用")
+    return ok(True, message="Agent 已删除")

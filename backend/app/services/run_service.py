@@ -157,6 +157,8 @@ async def create_run_for_conversation(
         raise ValueError("会话不存在")
     if conversation.get("mode") not in {"agent", "single", "group"}:
         raise ValueError("Sandbox Run 仅支持 agent、single 或 group 会话")
+    if conversation.get("mode") in {"agent", "single"} and not choose_agent_for_conversation(conversation):
+        raise ValueError("当前 Agent 已隐藏或删除，无法创建 Sandbox Run")
     clean_prompt = str(prompt or "").strip()
     if not clean_prompt:
         raise ValueError("prompt 不能为空")

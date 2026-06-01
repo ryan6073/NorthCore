@@ -377,6 +377,11 @@ def init_db() -> None:
                 FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS app_migrations (
+                id TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS workspaces (
                 id TEXT PRIMARY KEY,
                 owner_user_id TEXT NOT NULL,
@@ -741,6 +746,7 @@ def init_db() -> None:
         )
         migrate_artifact_versions(conn)
         seed_agents(conn)
+        migrate_legacy_disabled_agents(conn)
         ensure_group_orchestrator_memberships(conn)
         ensure_all_user_contact_conversations(conn)
 
@@ -918,6 +924,41 @@ def migrate_legacy_ownership(conn: sqlite3.Connection) -> None:
     )
 
 
+def migrate_legacy_disabled_agents(conn: sqlite3.Connection) -> None:
+    migration_id = "split_agent_enabled_status_v1"
+    if conn.execute("SELECT id FROM app_migrations WHERE id = ?", (migration_id,)).fetchone():
+        return
+    timestamp = now_text()
+    conn.execute(
+        """
+        UPDATE agents
+        SET enabled = 1, updated_at = ?
+        WHERE enabled = 0 AND status = 'disabled'
+        """,
+        (timestamp,),
+    )
+    conn.execute(
+        """
+        UPDATE agent_user_overrides
+        SET enabled = 1, updated_at = ?
+        WHERE enabled = 0 AND status = 'disabled'
+        """,
+        (timestamp,),
+    )
+    conn.execute(
+        """
+        UPDATE conversation_agent_overrides
+        SET enabled = 1, updated_at = ?
+        WHERE enabled = 0 AND status = 'disabled'
+        """,
+        (timestamp,),
+    )
+    conn.execute(
+        "INSERT INTO app_migrations (id, applied_at) VALUES (?, ?)",
+        (migration_id, timestamp),
+    )
+
+
 def get_enabled_agents_for_user_conn(conn: sqlite3.Connection, owner_user_id: str) -> List[sqlite3.Row]:
     return conn.execute(
         """
@@ -954,6 +995,9 @@ def ensure_contact_conversation_conn(
         (owner_user_id, agent_id),
     ).fetchone()
     if existing:
+        agent = get_agent(agent_id, owner_user_id=owner_user_id)
+        if not agent or not agent.get("enabled") or agent.get("status") == "disabled":
+            raise ValueError("Agent 不存在或已禁用")
         if restore_visible and not existing["visible"]:
             conn.execute(
                 "UPDATE conversations SET visible = 1, updated_at = ? WHERE id = ?",
@@ -1002,13 +1046,16 @@ def ensure_contact_conversation_conn(
 
 def ensure_user_contact_conversations_conn(conn: sqlite3.Connection, owner_user_id: str) -> None:
     for agent in get_enabled_agents_for_user_conn(conn, owner_user_id):
-        ensure_contact_conversation_conn(
-            conn,
-            owner_user_id,
-            agent["id"],
-            agent["name"],
-            restore_visible=False,
-        )
+        try:
+            ensure_contact_conversation_conn(
+                conn,
+                owner_user_id,
+                agent["id"],
+                agent["name"],
+                restore_visible=False,
+            )
+        except ValueError:
+            continue
 
 
 def ensure_all_user_contact_conversations(conn: sqlite3.Connection) -> None:
@@ -1305,8 +1352,6 @@ def apply_agent_user_override(agent: Dict[str, Any], owner_user_id: Optional[str
         "overrideSource": "user",
         "baseAgentId": agent["id"],
     }
-    if overridden["status"] == "disabled":
-        overridden["enabled"] = False
     return overridden
 
 
@@ -1346,8 +1391,6 @@ def apply_conversation_agent_override(agent: Dict[str, Any], conversation_id: st
     }
     if row["system_prompt"] is not None:
         overridden["systemPromptSource"] = "conversation_override"
-    if overridden["status"] == "disabled":
-        overridden["enabled"] = False
     return overridden
 
 
@@ -1384,13 +1427,6 @@ def upsert_agent_user_override(
             return None
         current = apply_agent_user_override(agent_from_row(base_agent), owner_user_id)
         updated = {**current, **payload, "id": base_agent_id, "ownerUserId": None}
-        if payload.get("enabled") is False:
-            updated["status"] = "disabled"
-        elif payload.get("enabled") is True and "status" not in payload and updated.get("status") == "disabled":
-            updated["status"] = "online"
-        if updated.get("status") == "disabled":
-            updated["enabled"] = False
-
         existing = conn.execute(
             """
             SELECT id
@@ -1537,15 +1573,6 @@ def upsert_conversation_agent_config(
             values["tools_json"] = _json_dump(payload.get("tools") or [])
         if "permissions" in payload:
             values["permissions_json"] = _json_dump(payload.get("permissions") or DEFAULT_PERMISSIONS)
-
-        if payload.get("enabled") is False:
-            values["status"] = "disabled"
-        elif payload.get("enabled") is True and "status" not in payload:
-            effective_status = values["status"] if values["status"] is not None else current.get("status")
-            if effective_status == "disabled":
-                values["status"] = "online"
-        if values["status"] == "disabled":
-            values["enabled"] = 0
 
         if existing:
             conn.execute(
@@ -2023,6 +2050,7 @@ def list_agents(
     provider: Optional[str] = None,
     keyword: Optional[str] = None,
     enabled: Optional[bool] = None,
+    include_disabled: bool = False,
     owner_user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     query = "SELECT * FROM agents WHERE 1=1"
@@ -2056,8 +2084,10 @@ def list_agents(
         agents = [
             agent for agent in agents
             if bool(agent.get("enabled")) == enabled
-            and ((agent.get("status") != "disabled") == enabled)
+            or (include_disabled and agent.get("id") == ORCHESTRATOR_AGENT_ID)
         ]
+    if not include_disabled:
+        agents = [agent for agent in agents if agent.get("status") != "disabled"]
     agents.sort(key=lambda agent: (not agent.get("enabled", False), agent.get("name", "")))
     return paginate(agents, page, page_size)
 
@@ -2075,7 +2105,10 @@ def get_agent(agent_id: str, owner_user_id: Optional[str] = None) -> Optional[Di
         ).fetchone()
     if not row:
         return None
-    return attach_agent_contact_conversation(agent_from_row(row), owner_user_id)
+    agent = attach_agent_contact_conversation(agent_from_row(row), owner_user_id)
+    if not agent.get("enabled"):
+        return None
+    return agent
 
 
 def get_contact_conversation(owner_user_id: str, agent_id: str) -> Optional[Dict[str, Any]]:
@@ -2177,12 +2210,6 @@ def update_agent(agent_id: str, payload: Dict[str, Any], owner_user_id: Optional
         return None
 
     updated = {**current, **payload, "id": agent_id}
-    if payload.get("enabled") is False:
-        updated["status"] = "disabled"
-    elif payload.get("enabled") is True and "status" not in payload and updated.get("status") == "disabled":
-        updated["status"] = "online"
-    if updated.get("status") == "disabled":
-        updated["enabled"] = False
     timestamp = now_text()
     with get_connection() as conn:
         conn.execute(
@@ -2226,7 +2253,7 @@ def disable_agent(agent_id: str, owner_user_id: Optional[str] = None) -> bool:
         cur = conn.execute(
             f"""
             UPDATE agents
-            SET enabled = 0, status = 'disabled', updated_at = ?
+            SET enabled = 0, updated_at = ?
             WHERE id = ? {owner_clause}
             """,
             params,

@@ -252,9 +252,14 @@ DELETE /api/v1/agents/{agentId}
 这是软删除：
 
 - `enabled = false`
-- `status = disabled`
 - 不删除历史消息
 - 不删除 contact 会话
+
+隐藏/停用 Agent 使用：
+
+- `status = disabled`
+- `enabled` 保持为 `true`
+- 管理/配置页可通过 `GET /agents?includeDisabled=true` 看到并恢复
 
 禁用后：
 

@@ -356,10 +356,12 @@ Response Data: `PageResult<Agent>`
 规则：
 
 - 默认只返回 `enabled=true`。
+- 默认过滤 `status=disabled` 的隐藏/停用 Agent。
 - 返回系统预置 Agent + 当前用户自建 Agent。
 - Orchestrator 是群聊调度器，作为 `enabled=false` 的展示元数据返回，不带长期联系人 `conversationId`。
 - 每个 enabled 联系人 Agent 返回当前用户对应的长期单聊 `conversationId`。
-- 禁用 Agent 可通过 `enabled=false` 查询；管理/配置页需要 enabled 和 disabled 一起返回时，可传 `enabled=all` 或 `includeDisabled=true`。
+- 隐藏/停用 Agent 使用 `status=disabled`，管理/配置页需要展示时传 `includeDisabled=true`。
+- 软删除 Agent 使用 `enabled=false`，默认不返回；本阶段不提供回收站/恢复入口。
 - 当前系统预置 Agent 包含：默认聊天助手、翻译助手、图表助手、文档助手、Claude Code、Codex、Orchestrator。
 - `tags` 用于能力标签展示和筛选提示，例如翻译、Mermaid、Markdown、PPT、代码生成、代码审查等。
 
@@ -455,7 +457,8 @@ Response Data: `true`
 
 说明：
 
-- 软删除：`enabled=false`，`status=disabled`。
+- 软删除：`enabled=false`。
+- `status=disabled` 仅表示隐藏/停用，不等同于软删除。
 - 历史消息仍可展示。
 - 非 admin 用户禁用系统预置 Agent 时，仅对当前用户生效，不影响公共模板或其他用户。
 

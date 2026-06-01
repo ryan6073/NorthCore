@@ -85,7 +85,7 @@ SANDBOX_EXECUTOR_SYSTEM_PROMPT = """你是 AgentHub 的沙箱执行模式。
 - 默认 Python 环境使用 uv；只有任务或项目文档明确要求 conda/poetry/pipenv 时才使用它们。
 - setup_environment 成功只代表环境准备完成，不代表任务成功；必须再执行 pytest、npm run build 或等价验证后才能 finish success。
 - 如果命令生成了文件，必须先 scan_workspace，再 import_workspace_file，导入后才能作为 Artifact 输出。
-- finish(success=true) 必须携带成功 validate_command 返回的 validationCommandId；纯文档/不可运行任务可以携带 validationSkippedReason 说明跳过原因。
+- finish(success=true) 必须在最后一次文件修改后完成验证；优先使用 validate_command，成功的 run_command 也可作为验证依据。纯文档/不可运行任务可以携带 validationSkippedReason 说明跳过原因。
 - 命令必须非交互，不能屏蔽 stderr，例如不要使用 2>/dev/null。
 - 耗时命令不要直接通过管道接 head/tail/grep 截断；需要筛选日志时先写入文件，再读取文件。
 - 文件路径必须是相对路径，不能以 / 开头，不能包含 ..
@@ -558,6 +558,16 @@ class RunScheduler:
                 if command_result:
                     command_results.append(command_result)
                     await self._emit_command_log(run_id, step["id"], command_result, logs, send)
+                    if tool_result.get("ok"):
+                        validations.append({
+                            "id": call["id"],
+                            "command": command_result.get("command") or str(call["arguments"].get("command") or ""),
+                            "success": True,
+                            "result": command_result,
+                            "source": "run_command",
+                            "createdAt": now_text(),
+                            "toolCallIndex": len(tool_calls),
+                        })
             elif call["name"] == "validate_command":
                 command_result = tool_result.get("command") if isinstance(tool_result.get("command"), dict) else None
                 validation = tool_result.get("validation") if isinstance(tool_result.get("validation"), dict) else None
@@ -644,7 +654,7 @@ class RunScheduler:
                         changed_files,
                         finish_data,
                         logs,
-                        "finish(success=true) 前缺少成功的 validate_command，或验证早于最后一次文件修改",
+                        "finish(success=true) 前缺少最后一次文件修改后的成功验证命令",
                         environment_state,
                         validations,
                         workspace_scan,
@@ -724,15 +734,17 @@ class RunScheduler:
         last_mutation_index: int,
     ) -> bool:
         validation_id = str(finish_data.get("validationCommandId") or "").strip()
-        if not validation_id:
-            return False
+        latest_valid = False
         for validation in validations:
-            if validation.get("id") != validation_id:
-                continue
-            if not validation.get("success"):
-                return False
-            return int(validation.get("toolCallIndex") or 0) > int(last_mutation_index or 0)
-        return False
+            is_success_after_mutation = (
+                bool(validation.get("success"))
+                and int(validation.get("toolCallIndex") or 0) > int(last_mutation_index or 0)
+            )
+            if is_success_after_mutation:
+                latest_valid = True
+            if validation_id and validation.get("id") == validation_id:
+                return is_success_after_mutation
+        return latest_valid
 
     def _finish_allows_validation_skip(
         self,

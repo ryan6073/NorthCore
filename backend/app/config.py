@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     SANDBOX_WORKSPACE_ROOT: str = "/tmp/agenthub-sandboxes"
     SANDBOX_MAX_OUTPUT_CHARS: int = 100000
     SANDBOX_MAX_OUTPUT_BYTES: int = 100000
-    SANDBOX_MAX_TOOL_ITERATIONS: int = 8
+    SANDBOX_MAX_TOOL_ITERATIONS: int = 20
     SANDBOX_KEEP_WORKSPACE_ON_STATUSES: str = "failed,conflict,cancelled"
     SANDBOX_CLEANUP_COMPLETED_WORKSPACE: bool = True
     SANDBOX_WORKSPACE_SCAN_MAX_FILES: int = 500

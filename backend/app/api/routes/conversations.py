@@ -89,6 +89,13 @@ async def api_get_conversation(conversation_id: str, authorization: Optional[str
     conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
     if not conversation:
         return fail(40001, "会话不存在")
+    if conversation.get("mode") == "agent":
+        contact_agent = get_agent(
+            str(conversation.get("contactAgentId") or ""),
+            owner_user_id=current_user["id"],
+        )
+        if not agent_is_callable(contact_agent):
+            return fail(40002, "当前 Agent 已隐藏或删除，无法打开联系人会话")
     return ok({
         **attach_context_usage(conversation),
         "latestActiveRun": latest_active_run_for_conversation(conversation_id, current_user["id"]),
