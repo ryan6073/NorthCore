@@ -683,9 +683,6 @@ def init_db() -> None:
                 ON agent_run_steps(run_id, status);
             CREATE INDEX IF NOT EXISTS idx_sandbox_files_run_path
                 ON sandbox_files(run_id, path);
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_sandbox_files_workspace_path
-                ON sandbox_files(workspace_id, path)
-                WHERE workspace_id IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_sandbox_conflicts_run_status
                 ON sandbox_conflicts(run_id, status);
             """
