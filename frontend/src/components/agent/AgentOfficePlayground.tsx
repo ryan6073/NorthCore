@@ -190,6 +190,80 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
   const workingAgents = displayAgents.filter(a => a.status === 'thinking');
   const leisureAgents = displayAgents.filter(a => a.status !== 'thinking');
 
+  // Dynamic Leisure States: track activity type and duration for each idle agent
+  const [leisureStates, setLeisureStates] = React.useState<Record<string, {
+    type: 'game' | 'gym' | 'sleep';
+    seconds: number;
+  }>>({});
+
+  // Initialize and synchronize leisure states when leisureAgents list changes
+  React.useEffect(() => {
+    setLeisureStates(prev => {
+      const next = { ...prev };
+      let changed = false;
+      const activities: ('game' | 'gym' | 'sleep')[] = ['game', 'gym', 'sleep'];
+      
+      leisureAgents.forEach((agent, index) => {
+        if (!next[agent.id]) {
+          next[agent.id] = {
+            type: activities[index % activities.length],
+            seconds: 0
+          };
+          changed = true;
+        }
+      });
+      
+      // Clean up agents that are no longer at leisure
+      Object.keys(next).forEach(id => {
+        if (!leisureAgents.some(a => a.id === id)) {
+          delete next[id];
+          changed = true;
+        }
+      });
+      
+      return changed ? next : prev;
+    });
+  }, [leisureAgents]);
+
+  // Interval to increment timer and randomly switch activities every 8-15 seconds
+  React.useEffect(() => {
+    const timer = setInterval(() => {
+      setLeisureStates(prev => {
+        const next = { ...prev };
+        let changed = false;
+        const activities: ('game' | 'gym' | 'sleep')[] = ['game', 'gym', 'sleep'];
+        
+        Object.keys(next).forEach(id => {
+          const state = next[id];
+          const newSeconds = state.seconds + 1;
+          
+          // Generate a pseudo-random switch threshold between 8 and 15 seconds per agent
+          const charSum = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+          const threshold = 8 + (charSum % 8);
+          
+          if (newSeconds >= threshold) {
+            const remaining = activities.filter(t => t !== state.type);
+            const newType = remaining[Math.floor(Math.random() * remaining.length)];
+            next[id] = {
+              type: newType,
+              seconds: 0
+            };
+          } else {
+            next[id] = {
+              ...state,
+              seconds: newSeconds
+            };
+          }
+          changed = true;
+        });
+        
+        return changed ? next : prev;
+      });
+    }, 1000);
+    
+    return () => clearInterval(timer);
+  }, []);
+
   // Set up workstation slots matching the active agent count
   const totalDesks = displayAgents.length;
   const deskAssignments: (Agent | null)[] = Array(totalDesks).fill(null);
@@ -200,16 +274,6 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
       deskAssignments[index] = agent;
     }
   });
-
-  // Assign leisure activity to idle agents based on their index
-  const getLeisureActivity = (index: number) => {
-    const activities = [
-      { type: 'game' as const, label: '打游戏', icon: Gamepad2, color: 'text-pink-500 bg-pink-50 dark:bg-pink-950/20' },
-      { type: 'gym' as const, label: '在健身', icon: Dumbbell, color: 'text-amber-500 bg-amber-50 dark:bg-amber-950/20' },
-      { type: 'sleep' as const, label: '睡觉中', icon: BedDouble, color: 'text-purple-500 bg-purple-50 dark:bg-purple-950/20' },
-    ];
-    return activities[index % activities.length];
-  };
 
   return (
     <div className="w-full p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800/80 shadow-sm mb-4 select-none animate-slide-down">
@@ -578,14 +642,20 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
             </p>
           ) : (
             <div className="flex flex-wrap gap-2.5">
-              {leisureAgents.map((agent, index) => {
-                const activity = getLeisureActivity(index);
+              {leisureAgents.map((agent) => {
+                const state = leisureStates[agent.id] || { type: 'game', seconds: 0 };
+                const activityMap = {
+                  game: { type: 'game' as const, label: '工位摸鱼', icon: Gamepad2, color: 'text-pink-500 bg-pink-50 dark:bg-pink-950/20' },
+                  gym: { type: 'gym' as const, label: '在健身', icon: Dumbbell, color: 'text-amber-500 bg-amber-50 dark:bg-amber-950/20' },
+                  sleep: { type: 'sleep' as const, label: '睡觉中', icon: BedDouble, color: 'text-purple-500 bg-purple-50 dark:bg-purple-950/20' },
+                };
+                const activity = activityMap[state.type];
                 const ActivityIcon = activity.icon;
 
                 return (
                   <div 
                     key={agent.id}
-                    className="flex items-center gap-2 p-2 bg-white dark:bg-slate-950/40 border border-slate-200/80 dark:border-slate-850 rounded-xl shadow-xs group relative"
+                    className="flex items-center gap-2 p-2 bg-white dark:bg-slate-950/40 border border-slate-200/80 dark:border-slate-850 rounded-xl shadow-xs group relative animate-office-glow"
                   >
                     {/* Horse-headed Man with specific leisure activity */}
                     <div className="relative">
@@ -597,15 +667,16 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
                     </div>
 
                     <div className="flex flex-col pr-1 justify-center">
-                      <span className={`text-[8px] px-1.5 py-0.5 rounded font-semibold flex items-center gap-1 ${activity.color}`}>
+                      <span className={`text-[8px] px-1.5 py-0.5 rounded font-semibold flex items-center gap-1.5 ${activity.color}`}>
                         <ActivityIcon className="w-2.5 h-2.5" />
-                        {activity.label}
+                        <span>{activity.label}</span>
+                        <span className="text-[7px] opacity-75 font-mono bg-white/50 dark:bg-black/25 px-1 rounded-sm">{state.seconds}s</span>
                       </span>
                     </div>
 
                     {/* Interactive hover status balloon */}
                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-30 bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
-                      {agent.name} {activity.label === '睡觉中' ? '正在呼呼大睡 💤' : activity.label === '在健身' ? '在跑跑步机锻炼 🏃‍♂️' : '正在玩复古街机 🎮'}
+                      {agent.name} {activity.type === 'sleep' ? '正在呼呼大睡 💤' : activity.type === 'gym' ? '在跑跑步机锻炼 🏃‍♂️' : '正在玩复古街机 🎮'} (已持续 {state.seconds}秒)
                     </div>
                   </div>
                 );

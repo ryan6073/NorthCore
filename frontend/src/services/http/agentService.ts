@@ -16,6 +16,7 @@ interface GetAgentListParams {
   provider?: AgentProvider;
   keyword?: string;
   enabled?: boolean;
+  includeDisabled?: boolean;
 }
 
 export async function getAgentList(

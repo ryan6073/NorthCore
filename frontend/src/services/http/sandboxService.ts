@@ -7,7 +7,9 @@ import type {
   SandboxConflict,
   SandboxHtmlPreview,
   CreateSandboxRunRequest,
-  PaginatedData
+  PaginatedData,
+  Workspace,
+  WorkspaceTreeNode
 } from '@/types';
 
 export async function createSandboxRun(
@@ -78,6 +80,18 @@ export async function cancelSandboxRun(
   return await http.post(`/runs/${runId}/cancel`);
 }
 
+export async function getWorkspaces(): Promise<BaseApiResponse<{ list: Workspace[] }>> {
+  return await http.get('/workspaces');
+}
+
+export async function createWorkspace(payload: { name: string }): Promise<BaseApiResponse<Workspace>> {
+  return await http.post('/workspaces', payload);
+}
+
+export async function getSandboxFileTree(runId: string): Promise<BaseApiResponse<WorkspaceTreeNode>> {
+  return await http.get(`/runs/${runId}/files/tree`);
+}
+
 const sandboxService = {
   createSandboxRun,
   getSandboxRunList,
@@ -88,6 +102,9 @@ const sandboxService = {
   getSandboxConflicts,
   resolveSandboxConflict,
   cancelSandboxRun,
+  getWorkspaces,
+  createWorkspace,
+  getSandboxFileTree,
 };
 
 export default sandboxService;

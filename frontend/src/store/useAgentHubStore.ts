@@ -798,6 +798,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         }
       }
       await get().getContextUsage();
+      await get().loadSandboxRunList(convId);
     } catch (e) {
       console.error('[Store] 加载会话数据失败', e);
     }
@@ -2050,20 +2051,29 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       });
 
       const unsubArtifact = wsClient.on('artifact.created', (event: any) => {
-        const { artifact } = event.data;
+        const { artifact, runId } = event.data;
+        const artifactWithRunId = {
+          ...artifact,
+          runId: runId || artifact.runId
+        };
         set(state => {
-          if (state.activeConversationId !== artifact.conversationId) return {};
+          if (state.activeConversationId !== artifactWithRunId.conversationId) return {};
+
+          const exists = state.artifacts.some(a => a.id === artifactWithRunId.id);
+          const updatedArtifacts = exists
+            ? state.artifacts.map(a => a.id === artifactWithRunId.id ? { ...a, ...artifactWithRunId } : a)
+            : [...state.artifacts, artifactWithRunId];
 
           return {
-            artifacts: [...state.artifacts, artifact],
-            selectedArtifactId: artifact.id,
+            artifacts: updatedArtifacts,
+            selectedArtifactId: artifactWithRunId.id,
           };
         });
-        get().loadArtifactContent(artifact.id);
+        get().loadArtifactContent(artifactWithRunId.id);
       });
 
       const unsubAllCompleted = wsClient.on('conversation.all_tasks.completed', (event: any) => {
-        const { conversationId, summary, contextUsage } = event.data;
+        const { conversationId, summary, contextUsage, artifacts, runId } = event.data;
         set(state => {
           if (state.activeConversationId !== conversationId) return {};
 
@@ -2082,9 +2092,23 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             a.status === 'thinking' ? { ...a, status: 'online' as const } : a
           );
 
+          let updatedArtifacts = [...state.artifacts];
+          if (artifacts && artifacts.length > 0) {
+            artifacts.forEach((art: any) => {
+              const artWithRunId = { ...art, runId: runId || art.runId };
+              const idx = updatedArtifacts.findIndex(a => a.id === artWithRunId.id);
+              if (idx > -1) {
+                updatedArtifacts[idx] = { ...updatedArtifacts[idx], ...artWithRunId };
+              } else {
+                updatedArtifacts.push(artWithRunId);
+              }
+            });
+          }
+
           let newState: Partial<AgentHubStore> = {
             messages: [...state.messages, systemMsg],
             agents: updatedAgents,
+            artifacts: updatedArtifacts,
             isProcessing: false,
           };
 
@@ -2143,20 +2167,28 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               description: s.description || s.task || ''
             })) || []
           };
-          set(state => ({
-            runDetailsById: {
-              ...state.runDetailsById,
-              [runId]: runDetail
-            },
-            runFilesByRunId: {
-              ...state.runFilesByRunId,
-              [runId]: runDetail.files || []
-            },
-            runConflictsByRunId: {
-              ...state.runConflictsByRunId,
-              [runId]: runDetail.conflicts || []
-            }
-          }));
+          set(state => {
+            const updatedAgents = state.agents.map(a =>
+              run.dag?.nodes?.some((n: any) => n.agentId === a.id) || run.agentId === a.id
+                ? { ...a, status: 'thinking' as const }
+                : a
+            );
+            return {
+              runDetailsById: {
+                ...state.runDetailsById,
+                [runId]: runDetail
+              },
+              runFilesByRunId: {
+                ...state.runFilesByRunId,
+                [runId]: runDetail.files || []
+              },
+              runConflictsByRunId: {
+                ...state.runConflictsByRunId,
+                [runId]: runDetail.conflicts || []
+              },
+              agents: updatedAgents
+            };
+          });
           get().loadSandboxFileTree(runId);
         } else {
           get().loadSandboxRunDetail(runId);
@@ -2198,11 +2230,18 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             dag: updatedDag || baseRun.dag
           };
 
+          // Link active step's agent to 'thinking' status
+          const agentIdToThink = step?.agentId || baseRun.steps?.find((s: any) => s.id === stepId)?.agentId;
+          const updatedAgents = state.agents.map(a =>
+            a.id === agentIdToThink ? { ...a, status: 'thinking' as const } : a
+          );
+
           return {
             runDetailsById: {
               ...state.runDetailsById,
               [runId]: runDetail
-            }
+            },
+            agents: updatedAgents
           };
         });
       });
@@ -2372,7 +2411,21 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       });
 
       const unsubRunCompleted = wsClient.on('run.completed', (event: any) => {
-        const { runId, run, files } = event.data;
+        const { runId, run, files, artifacts } = event.data;
+        
+        let updatedArtifacts = [...get().artifacts];
+        if (artifacts && artifacts.length > 0) {
+          artifacts.forEach((art: any) => {
+            const artWithRunId = { ...art, runId: runId || art.runId };
+            const idx = updatedArtifacts.findIndex(a => a.id === artWithRunId.id);
+            if (idx > -1) {
+              updatedArtifacts[idx] = { ...updatedArtifacts[idx], ...artWithRunId };
+            } else {
+              updatedArtifacts.push(artWithRunId);
+            }
+          });
+        }
+
         if (run) {
           set(state => {
             const existingRun = state.runDetailsById[runId];
@@ -2381,14 +2434,30 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               ...run,
               steps: mergedSteps
             };
+            const updatedAgents = state.agents.map(a =>
+              a.status === 'thinking' ? { ...a, status: 'online' as const } : a
+            );
             return {
               runDetailsById: {
                 ...state.runDetailsById,
                 [runId]: runDetail
-              }
+              },
+              artifacts: updatedArtifacts,
+              agents: updatedAgents
+            };
+          });
+        } else {
+          set(state => {
+            const updatedAgents = state.agents.map(a =>
+              a.status === 'thinking' ? { ...a, status: 'online' as const } : a
+            );
+            return {
+              artifacts: updatedArtifacts,
+              agents: updatedAgents
             };
           });
         }
+
         if (files) {
           set(state => ({
             runFilesByRunId: {
@@ -2407,7 +2476,21 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       });
 
       const unsubRunFailed = wsClient.on('run.failed', (event: any) => {
-        const { runId, run } = event.data;
+        const { runId, run, artifacts } = event.data;
+
+        let updatedArtifacts = [...get().artifacts];
+        if (artifacts && artifacts.length > 0) {
+          artifacts.forEach((art: any) => {
+            const artWithRunId = { ...art, runId: runId || art.runId };
+            const idx = updatedArtifacts.findIndex(a => a.id === artWithRunId.id);
+            if (idx > -1) {
+              updatedArtifacts[idx] = { ...updatedArtifacts[idx], ...artWithRunId };
+            } else {
+              updatedArtifacts.push(artWithRunId);
+            }
+          });
+        }
+
         if (run) {
           set(state => {
             const existingRun = state.runDetailsById[runId];
@@ -2416,14 +2499,28 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               ...run,
               steps: mergedSteps
             };
+            const updatedAgents = state.agents.map(a =>
+              a.status === 'thinking' ? { ...a, status: 'online' as const } : a
+            );
             return {
               runDetailsById: {
                 ...state.runDetailsById,
                 [runId]: runDetail
-              }
+              },
+              artifacts: updatedArtifacts,
+              agents: updatedAgents
             };
           });
         } else {
+          set(state => {
+            const updatedAgents = state.agents.map(a =>
+              a.status === 'thinking' ? { ...a, status: 'online' as const } : a
+            );
+            return {
+              artifacts: updatedArtifacts,
+              agents: updatedAgents
+            };
+          });
           get().loadSandboxRunDetail(runId);
         }
       });
@@ -3343,19 +3440,35 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         const res = await sandboxService.getSandboxRunList(conversationId);
         if (res.code === 0 && res.data) {
           const list = res.data.list;
-          set(state => {
-            const newRunsById = { ...state.runDetailsById };
-            list.forEach((run: any) => {
-              newRunsById[run.id] = run;
-            });
-            return {
-              runsByConversationId: {
-                ...state.runsByConversationId,
-                [conversationId]: list.map((r: any) => r.id)
-              },
-              runDetailsById: newRunsById
-            };
+          const activeRunAgents = new Set<string>();
+          const newRunsById = { ...get().runDetailsById };
+          list.forEach((run: any) => {
+            newRunsById[run.id] = run;
+            if (run.status === 'pending' || run.status === 'running') {
+              const activeSteps = run.steps || [];
+              const runningStep = activeSteps.find((s: any) => s.status === 'running');
+              if (runningStep) {
+                activeRunAgents.add(runningStep.agentId);
+              } else {
+                const pendingStep = activeSteps.find((s: any) => s.status === 'pending');
+                if (pendingStep) {
+                  activeRunAgents.add(pendingStep.agentId);
+                } else if (activeSteps.length > 0) {
+                  activeRunAgents.add(activeSteps[activeSteps.length - 1].agentId);
+                }
+              }
+            }
           });
+          set(state => ({
+            runsByConversationId: {
+              ...state.runsByConversationId,
+              [conversationId]: list.map((r: any) => r.id)
+            },
+            runDetailsById: newRunsById,
+            agents: state.agents.map(a =>
+              activeRunAgents.has(a.id) ? { ...a, status: 'thinking' as const } : a
+            )
+          }));
         }
       } catch (e) {
         console.error('[Store] 获取沙箱任务列表失败', e);
