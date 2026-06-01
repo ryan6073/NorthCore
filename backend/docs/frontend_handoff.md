@@ -94,6 +94,7 @@ interface Agent {
 - `conversationId`：当前用户与该 Agent 的长期联系人单聊 ID。
 - 系统预置 Agent 和自建 Agent 的编辑能力一致。普通用户修改系统预置 Agent 时，后端保存为用户级配置覆盖，不会影响其他用户或公共模板。
 - Orchestrator 可能作为 `enabled=false` 的调度器元数据返回，不带 `conversationId`，前端不要作为可选联系人处理。
+- `/agents` 默认只返回 enabled Agent；配置/管理页需要展示禁用项时可传 `enabled=all` 或 `includeDisabled=true`。
 
 前端点击某个 Agent 联系人时，优先打开：
 
@@ -236,6 +237,7 @@ Request:
 ## 5.1 修改 Agent 和 Prompt 的两个层级
 
 - 修改 Agent 配置：调用 `PUT /api/v1/agents/{agentId}`。系统预置 Agent 会保存为当前用户自己的配置覆盖；自建 Agent 会直接更新自己的记录。
+- 前端也可以统一使用 `GET/PUT /api/v1/conversations/{conversationId}/agents/{agentId}/config` 打开配置面板：`group` 会话保存群聊成员配置；`agent/single` 会话保存用户级 Agent 配置，返回会带 `configScope = 'conversation' | 'user'`。
 - 修改 single 会话的 `systemPrompt`：调用 `PUT /api/v1/conversations/{conversationId}`，请求体带 `systemPrompt`。这是会话级覆盖，只影响这个会话。
 - 两者互不反写。Agent prompt 不会自动改已有 single 会话；single prompt 也不会改 Agent prompt。
 
@@ -297,9 +299,9 @@ mode = 'single' | 'group'
 
 `single/group` 会话允许用户删除。Orchestrator 只作为群聊调度器由后端默认加入 `group`，不作为 `agent` 长期联系人会话。
 
-### 7.1 群聊 Agent 配置与成员管理
+### 7.1 会话内 Agent 配置与群聊成员管理
 
-群聊内普通 Agent 配置和全局 Agent 隔离；保存后只影响当前群聊。Orchestrator 是系统调度器，不支持配置或删除。
+群聊内普通 Agent 配置和全局 Agent 隔离；保存后只影响当前群聊。`agent/single` 会话也可以使用同一个配置入口，但保存的是用户级 Agent 配置。Orchestrator 是系统调度器，不支持配置或删除。
 
 ```text
 GET /api/v1/conversations/{conversationId}/agents/{agentId}/config
@@ -307,7 +309,7 @@ PUT /api/v1/conversations/{conversationId}/agents/{agentId}/config
 ```
 
 PUT 请求体使用 `Partial<Agent>`，允许保存名称、头像、描述、Prompt、模型参数、工具和权限等安全可编辑字段，不允许提交身份字段或模型密钥。
-GET/PUT 返回的 `Agent.conversationId` 始终指当前群聊 ID，方便前端把它和联系人单聊配置区分开。
+GET/PUT 返回的 `Agent.conversationId` 始终指当前会话 ID，并带 `configScope: 'conversation' | 'user'`，方便前端判断当前保存层级。
 
 ```text
 POST /api/v1/conversations/{conversationId}/agents
@@ -337,10 +339,10 @@ Request:
 
 说明：
 
-- `content` 必填。
+- `content` 必填；如果 `attachments` 非空，允许 `content` 为空，后端会用附件名生成一段兜底文本。
 - `targetAgentId` 用于群聊中指定某个 Agent 回复。
 - `quotedMessageId` 用于引用历史消息。
-- `attachments` 当前阶段只是预留。
+- `attachments` 当前阶段支持元数据入库和消息返回，不上传、不下载、不解析文件内容。`blob:` URL 只对浏览器本地有效，后端仅保存为展示引用。
 
 如果前端做回复/引用，只需要传 `quotedMessageId`。后端会返回：
 
@@ -433,9 +435,9 @@ POST /api/v1/runs/{runId}/cancel
 
 说明：
 
-- 后端会创建空工作区 Docker 沙箱，默认禁网。
+- 后端会创建空工作区 Docker 沙箱；V1 开发阶段默认允许联网以安装依赖，生产模式可通过配置切回禁网。
 - 仅支持 `mode=agent` 和 `mode=group` 会话。
-- Orchestrator 会生成 DAG，后端并行调度无依赖 step。
+- Orchestrator 会生成 DAG，后端当前默认串行调度 step。
 - 文件写入使用 `baseVersion` 乐观锁，冲突会进入 `sandbox_conflicts`。
 - 运行完成后，沙箱输出文件会同步成现有 Artifact。
 - 前端可监听 `run.*` WebSocket 事件展示 DAG 节点、日志、冲突和完成状态。

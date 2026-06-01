@@ -11,7 +11,6 @@ cd backend
 source .venv/bin/activate
 python -m uvicorn app.main:app --host 0.0.0.0 --port 9007 --reload
 ```
-
 健康检查：
 
 ```bash
@@ -30,11 +29,22 @@ ARK_BASE_URL="your_base_url"
 MODEL_EP="your_model_endpoint"
 DATABASE_URL="sqlite:///./agenthub.db"
 SANDBOX_IMAGE="python:3.11-slim"
-SANDBOX_NETWORK="none"
+SANDBOX_NETWORK="bridge"
+SANDBOX_ALLOW_NETWORK=true
+SANDBOX_AUTO_INSTALL_UV=true
 SANDBOX_TIMEOUT_SECONDS=120
-SANDBOX_MAX_PARALLEL_STEPS=2
+SANDBOX_COMMAND_TIMEOUT_SECONDS=120
+SANDBOX_SETUP_TIMEOUT_SECONDS=300
+SANDBOX_MAX_PARALLEL_STEPS=1
 SANDBOX_WORKSPACE_ROOT="/tmp/agenthub-sandboxes"
+SANDBOX_MAX_OUTPUT_BYTES=100000
+SANDBOX_KEEP_WORKSPACE_ON_STATUSES="failed,conflict,cancelled"
+SANDBOX_CLEANUP_COMPLETED_WORKSPACE=true
+SANDBOX_WORKSPACE_SCAN_MAX_FILES=500
+SANDBOX_WORKSPACE_FILE_MAX_BYTES=200000
 ```
+
+Sandbox V1 开发阶段默认允许联网，方便安装依赖和自动安装 `uv`。这不是生产安全默认；生产模式可设置 `SANDBOX_NETWORK=none` 或 `SANDBOX_ALLOW_NETWORK=false`，并配合预构建镜像或依赖缓存完成环境初始化。沙箱不会注入 `.env`、token、SSH key，不挂载项目根目录，也不挂载 `docker.sock`。当前默认串行执行 step，后续恢复并行前需要改成每 step 独立 shell 或容器。
 
 前端真实模式建议：
 
@@ -254,6 +264,7 @@ sandbox_conflicts
 
 ## Docs
 
+- 后端代码架构说明：`docs/backend_architecture.md`
 - 前端完整接口合同：`docs/frontend_api_contract.md`
 - 前端快速交接说明：`docs/frontend_handoff.md`
 - 登录注册接口：`docs/auth_api_contract.md`

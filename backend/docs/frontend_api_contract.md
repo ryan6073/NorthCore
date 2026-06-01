@@ -359,7 +359,7 @@ Response Data: `PageResult<Agent>`
 - 返回系统预置 Agent + 当前用户自建 Agent。
 - Orchestrator 是群聊调度器，作为 `enabled=false` 的展示元数据返回，不带长期联系人 `conversationId`。
 - 每个 enabled 联系人 Agent 返回当前用户对应的长期单聊 `conversationId`。
-- 禁用 Agent 可通过 `enabled=false` 查询。
+- 禁用 Agent 可通过 `enabled=false` 查询；管理/配置页需要 enabled 和 disabled 一起返回时，可传 `enabled=all` 或 `includeDisabled=true`。
 - 当前系统预置 Agent 包含：默认聊天助手、翻译助手、图表助手、文档助手、Claude Code、Codex、Orchestrator。
 - `tags` 用于能力标签展示和筛选提示，例如翻译、Mermaid、Markdown、PPT、代码生成、代码审查等。
 
@@ -531,15 +531,15 @@ Response Data: `Conversation`
 
 说明：`Conversation.systemPrompt` 是旧版会话级覆盖。群聊普通成员如果保存了会话级 Agent 专属 `systemPrompt`，运行时优先使用该专属配置；否则继续回退到 `Conversation.systemPrompt`。修改 single 会话的 `systemPrompt` 不会修改 Agent 的个人 prompt 覆盖；修改 Agent prompt 也不会反写已有 single 会话或群聊专属配置。
 
-### 群聊 Agent 专属配置
+### 会话内 Agent 配置入口
 
-仅 `mode=group` 支持。`agent-orchestrator` 是群聊调度器，不支持读取、修改或删除配置。
+`mode=group` 时表示群聊 Agent 专属配置；`mode=agent/single` 时兼容为用户级 Agent 配置入口，方便前端复用同一个配置面板。`agent-orchestrator` 是群聊调度器，不支持修改配置。
 
 `GET /conversations/{conversationId}/agents/{agentId}/config`
 
 Response Data: `Agent`
 
-说明：无群聊专属覆盖时，返回当前用户可见的全局/用户级 Agent 配置；有覆盖时返回合并后的群聊内有效配置。该接口返回的 `conversationId` 始终是当前群聊 ID，不是 Agent 联系人会话 ID。
+说明：无群聊专属覆盖时，返回当前用户可见的全局/用户级 Agent 配置；有覆盖时返回合并后的群聊内有效配置。该接口返回的 `conversationId` 始终是当前会话 ID，并会带 `configScope: 'conversation' | 'user'`。
 
 `PUT /conversations/{conversationId}/agents/{agentId}/config`
 
@@ -663,10 +663,10 @@ Request:
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
-| content | 是 | 用户输入文本 |
+| content | 是 | 用户输入文本；如果 `attachments` 非空，允许为空 |
 | targetAgentId | 否 | 群聊中手动指定某个 Agent 回复 |
 | quotedMessageId | 否 | 当前消息引用的历史消息 ID |
-| attachments | 否 | 当前阶段预留，后端暂不处理上传 |
+| attachments | 否 | 附件元数据数组；后端保存并返回，不上传、不下载、不解析 `blob:` 文件内容 |
 
 Response Data:
 

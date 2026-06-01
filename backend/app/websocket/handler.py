@@ -1,13 +1,11 @@
 import asyncio
 import json
 from fastapi import WebSocket
-from openai import OpenAI
 
 from app.config import settings
+from app.core.llm_client import client
 from app.core.orchestrator import AGENT_CONFIGS, generate_pipeline_plan
 from app.database import get_chat_history, save_message
-
-client = OpenAI(api_key=settings.ARK_API_KEY, base_url=settings.ARK_BASE_URL)
 
 async def call_agent_stream(websocket: WebSocket, session_id: str, agent_name: str, system_prompt: str, user_prompt: str) -> str:
     """流式调用大模型，实时推送 Chunk，并追加入上下文"""

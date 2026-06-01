@@ -485,6 +485,7 @@ def init_db() -> None:
                 size INTEGER NOT NULL DEFAULT 0,
                 storage_path TEXT NOT NULL,
                 url TEXT NOT NULL,
+                meta_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
                 FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE SET NULL
@@ -665,6 +666,7 @@ def init_db() -> None:
         ensure_column(conn, "artifacts", "current_version_id", "TEXT")
         ensure_column(conn, "artifacts", "latest_version", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "messages", "metadata_json", "TEXT NOT NULL DEFAULT '{}'")
+        ensure_column(conn, "attachments", "meta_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(conn, "agents", "owner_user_id", "TEXT")
         ensure_column(conn, "agent_user_overrides", "name", "TEXT")
         ensure_column(conn, "agent_user_overrides", "avatar", "TEXT")
@@ -1634,7 +1636,27 @@ def message_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         message["metadata"] = metadata
         if isinstance(metadata.get("artifactRef"), dict):
             message["artifactRef"] = metadata["artifactRef"]
+    attachments = list_message_attachments(row["id"])
+    if attachments:
+        message["attachments"] = attachments
     return message
+
+
+def attachment_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "conversationId": row["conversation_id"],
+        "messageId": row["message_id"],
+        "kind": row["kind"],
+        "type": row["kind"],
+        "name": row["name"],
+        "mimeType": row["mime_type"],
+        "size": row["size"],
+        "storagePath": row["storage_path"],
+        "url": row["url"],
+        "meta": _json_load(row["meta_json"], {}),
+        "createdAt": row["created_at"],
+    }
 
 
 def artifact_meta_from_row(row: sqlite3.Row) -> Dict[str, Any]:
@@ -2372,6 +2394,66 @@ def get_message_in_conversation(conversation_id: str, message_id: str) -> Option
     return message_from_row(row) if row else None
 
 
+def list_message_attachments(message_id: str) -> List[Dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM attachments WHERE message_id = ? ORDER BY created_at ASC, rowid ASC",
+            (message_id,),
+        ).fetchall()
+    return [attachment_from_row(row) for row in rows]
+
+
+def create_message_attachments(
+    conversation_id: str,
+    message_id: str,
+    attachments: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    if not attachments:
+        return []
+    timestamp = now_text()
+    rows: List[Dict[str, Any]] = []
+    with get_connection() as conn:
+        for item in attachments:
+            attachment_id = str(item.get("id") or create_id("attach")).strip() or create_id("attach")
+            kind = str(item.get("kind") or item.get("type") or "file").strip() or "file"
+            name = str(item.get("name") or attachment_id).strip() or attachment_id
+            mime_type = str(item.get("mimeType") or item.get("mime_type") or kind).strip() or "application/octet-stream"
+            try:
+                size = int(item.get("size") or 0)
+            except (TypeError, ValueError):
+                size = 0
+            url = str(item.get("url") or "").strip()
+            storage_path = str(item.get("storagePath") or item.get("storage_path") or url).strip()
+            meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO attachments (
+                    id, conversation_id, message_id, kind, name, mime_type,
+                    size, storage_path, url, meta_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    attachment_id,
+                    conversation_id,
+                    message_id,
+                    kind,
+                    name,
+                    mime_type,
+                    max(size, 0),
+                    storage_path,
+                    url,
+                    _json_dump(meta),
+                    timestamp,
+                ),
+            )
+        rows = conn.execute(
+            "SELECT * FROM attachments WHERE message_id = ? ORDER BY created_at ASC, rowid ASC",
+            (message_id,),
+        ).fetchall()
+    return [attachment_from_row(row) for row in rows]
+
+
 def create_message(
     conversation_id: str,
     sender_id: str,
@@ -2914,7 +2996,37 @@ def create_sandbox_file_version(
 ) -> Dict[str, Any]:
     timestamp = now_text()
     content_hash = _content_hash(content)
+
+    def create_conflict(conn: sqlite3.Connection, file_row: sqlite3.Row, current_version: int) -> Dict[str, Any]:
+        conflict_id = create_id("conflict")
+        conn.execute(
+            """
+            INSERT INTO sandbox_conflicts (
+                id, run_id, sandbox_id, file_id, file_path, base_version,
+                current_version, incoming_content, incoming_hash,
+                created_by_step_id, status, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+            """,
+            (
+                conflict_id,
+                run_id,
+                sandbox_id,
+                file_row["id"],
+                file_path,
+                int(base_version),
+                current_version,
+                content,
+                content_hash,
+                created_by_step_id,
+                timestamp,
+            ),
+        )
+        conflict = conn.execute("SELECT * FROM sandbox_conflicts WHERE id = ?", (conflict_id,)).fetchone()
+        return {"status": "conflict", "conflict": sandbox_conflict_from_row(conflict)}
+
     with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         sandbox = conn.execute(
             "SELECT * FROM sandboxes WHERE id = ? AND run_id = ?",
             (sandbox_id, run_id),
@@ -2937,45 +3049,25 @@ def create_sandbox_file_version(
         ).fetchone()
         current_version = int(file_row["current_version"] or 0)
         if current_version != int(base_version):
-            conflict_id = create_id("conflict")
-            conn.execute(
-                """
-                INSERT INTO sandbox_conflicts (
-                    id, run_id, sandbox_id, file_id, file_path, base_version,
-                    current_version, incoming_content, incoming_hash,
-                    created_by_step_id, status, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
-                """,
-                (
-                    conflict_id,
-                    run_id,
-                    sandbox_id,
-                    file_row["id"],
-                    file_path,
-                    int(base_version),
-                    current_version,
-                    content,
-                    content_hash,
-                    created_by_step_id,
-                    timestamp,
-                ),
-            )
-            conflict = conn.execute("SELECT * FROM sandbox_conflicts WHERE id = ?", (conflict_id,)).fetchone()
-            return {"status": "conflict", "conflict": sandbox_conflict_from_row(conflict)}
+            return create_conflict(conn, file_row, current_version)
 
         next_version = current_version + 1
         version_id = create_id("fileVersion")
-        conn.execute(
-            """
-            INSERT INTO sandbox_file_versions (
-                id, file_id, version, content, content_hash,
-                created_by_step_id, base_version, created_at
+        try:
+            conn.execute(
+                """
+                INSERT INTO sandbox_file_versions (
+                    id, file_id, version, content, content_hash,
+                    created_by_step_id, base_version, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (version_id, file_row["id"], next_version, content, content_hash, created_by_step_id, int(base_version), timestamp),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (version_id, file_row["id"], next_version, content, content_hash, created_by_step_id, int(base_version), timestamp),
-        )
+        except sqlite3.IntegrityError:
+            latest = conn.execute("SELECT * FROM sandbox_files WHERE id = ?", (file_row["id"],)).fetchone()
+            latest_version = int(latest["current_version"] or current_version or 0)
+            return create_conflict(conn, latest, latest_version)
         conn.execute(
             """
             UPDATE sandbox_files

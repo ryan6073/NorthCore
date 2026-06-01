@@ -243,7 +243,7 @@ messages 0..n attachments
 
 ## sandboxes
 
-保存可运行任务工作区。第一版使用本机 Docker，容器默认禁网，只挂载该 run 的空工作区目录。
+保存可运行任务工作区。第一版使用本机 Docker；V1 开发阶段默认允许联网以安装依赖，生产模式可通过配置切回禁网。容器只挂载该 run 的空工作区目录。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -313,7 +313,7 @@ messages 0..n attachments
 
 ## attachments
 
-预留用户图片/文件输入能力。当前阶段只建表，不做完整上传流程。
+保存用户图片/文件输入的元数据。当前阶段不做完整上传、下载或文件内容解析流程。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -326,6 +326,7 @@ messages 0..n attachments
 | size | INTEGER | 文件大小 |
 | storage_path | TEXT | 服务端存储路径 |
 | url | TEXT | 前端访问 URL |
+| meta_json | TEXT | 前端传入的附件扩展元数据 |
 | created_at | TEXT | 创建时间 |
 
 ## conversation_summaries

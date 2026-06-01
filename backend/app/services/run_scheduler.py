@@ -4,12 +4,12 @@ import re
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from openai import OpenAI
-
 from app.config import settings
+from app.core.llm_client import client
 from app.core.orchestrator import AGENT_NAME_TO_ID
 from app.database import (
     create_artifact,
+    create_id,
     get_agent,
     get_agent_run,
     get_agent_run_detail,
@@ -18,6 +18,7 @@ from app.database import (
     list_agent_run_steps,
     list_sandbox_files,
     list_sandbox_conflicts,
+    now_text,
     set_sandbox_file_artifact,
     update_agent_run,
     update_agent_run_step,
@@ -25,10 +26,9 @@ from app.database import (
 )
 from app.services.file_version_service import FileVersionService
 from app.services.sandbox_service import SandboxService
+from app.services.sandbox_tools import SANDBOX_TOOL_SPECS, SandboxToolExecutor
 
 EventEmitter = Callable[[str, Dict[str, Any]], Awaitable[None]]
-
-client = OpenAI(api_key=settings.ARK_API_KEY, base_url=settings.ARK_BASE_URL)
 
 DAG_SYSTEM_PROMPT = """你是 AgentHub 的任务调度器。
 请把用户需求拆成一个可执行 DAG。只输出 JSON，不要 Markdown。
@@ -60,29 +60,38 @@ DAG_SYSTEM_PROMPT = """你是 AgentHub 的任务调度器。
 - 如果审查依赖生成，审查 step 依赖生成 step。
 """
 
-STEP_OUTPUT_SYSTEM_PROMPT = """你是 AgentHub 沙箱里的执行 Agent。
-你需要根据任务在空工作区中产出文件，或修改已有文件。
-你不能访问网络。你可以声明需要在容器里运行的验证命令。
+SANDBOX_EXECUTOR_SYSTEM_PROMPT = """你是 AgentHub 的沙箱执行模式。
+你不是独立新 Agent，而是当前 Agent 在隔离 Docker workspace 中执行这个 step。
 
-必须只输出 JSON：
-{
-  "summary": "本步骤完成了什么",
-  "files": [
-    {
-      "path": "README.md",
-      "baseVersion": 0,
-      "content": "完整文件内容"
-    }
-  ],
-  "commands": [
-    "python --version"
-  ]
-}
-规则：
-- path 必须是相对路径，不能以 / 开头，不能包含 ..
-- 修改已有文件时 baseVersion 必须等于当前文件版本。
-- 新建文件 baseVersion 使用 0。
-- commands 可为空数组，只放安全、短时的验证命令。
+你只能使用后端提供的工具：
+- inspect_environment：检测 OS/CPU 架构、cwd、Python/Node/uv/npm/conda 和网络策略。
+- read_dependency_manifest：读取 requirements.txt、pyproject.toml、package.json、lockfile 等依赖入口。
+- setup_environment：创建/激活环境并安装依赖。
+- list_files：查看当前 workspace 文件树。
+- scan_workspace：扫描 /workspace 实际文件，发现命令生成但尚未入库的文件。
+- read_workspace_file：读取 /workspace 实际文件，包括未 tracked 文件。
+- import_workspace_file：把 /workspace 实际文件导入版本系统，后续才能同步 Artifact。
+- read_file：读取 workspace 内相对路径文件。
+- write_file：写入完整文件内容，必须携带 baseVersion。
+- run_command：执行普通非交互命令。
+- validate_command：执行显式验证命令并返回 validationId。
+- finish：结束 step，提交 success/failure、summary、changedFiles、nextActions。
+
+核心规则：
+- 工具执行成功不等于任务完成，必须基于文件内容、命令结果和日志判断是否真正达成任务目标。
+- 复杂任务先 inspect_environment，再 read_dependency_manifest；需要依赖时先 setup_environment，再修改/执行/验证。
+- 默认 Python 环境使用 uv；只有任务或项目文档明确要求 conda/poetry/pipenv 时才使用它们。
+- setup_environment 成功只代表环境准备完成，不代表任务成功；必须再执行 pytest、npm run build 或等价验证后才能 finish success。
+- 如果命令生成了文件，必须先 scan_workspace，再 import_workspace_file，导入后才能作为 Artifact 输出。
+- finish(success=true) 必须携带成功 validate_command 返回的 validationCommandId；纯文档/不可运行任务可以携带 validationSkippedReason 说明跳过原因。
+- 命令必须非交互，不能屏蔽 stderr，例如不要使用 2>/dev/null。
+- 耗时命令不要直接通过管道接 head/tail/grep 截断；需要筛选日志时先写入文件，再读取文件。
+- 文件路径必须是相对路径，不能以 / 开头，不能包含 ..
+- 失败后根据日志修复，不能盲目 finish success。
+- 完成时必须调用 finish。
+
+如果当前模型不支持原生 function calling，则输出一个 JSON 对象作为降级工具调用：
+{"tool": "write_file", "arguments": {"path": "README.md", "content": "...", "baseVersion": 0}}
 """
 
 
@@ -146,6 +155,10 @@ def _fallback_step_output(raw_content: str, step: Dict[str, Any], error: Excepti
         "parseWarning": str(error),
         "rawOutputSaved": True,
     }
+
+
+def _json_text(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False)
 
 
 def _run_snapshot_payload(run_id: str, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -284,6 +297,7 @@ class RunScheduler:
                 await emit(event_type, {"runId": run_id, **data})
 
         try:
+            print(f"[SandboxRun] scheduler start run={run_id}", flush=True)
             update_agent_run(run_id, status="running", mark_started=True)
             update_sandbox(sandbox["id"], status="starting")
             await send("run.created", _run_snapshot_payload(run_id))
@@ -301,19 +315,27 @@ class RunScheduler:
             if failed_steps:
                 update_agent_run(run_id, status="failed", summary="任务部分步骤失败", mark_finished=True)
                 await self.sandbox_service.stop_container(sandbox["id"], sandbox.get("containerId") or container_id, final_status="failed")
+                self.sandbox_service.maybe_cleanup_workspace(sandbox["workspacePath"], "failed")
+                print(f"[SandboxRun] failed run={run_id} failedSteps={len(failed_steps)}", flush=True)
                 await send("run.failed", _run_snapshot_payload(run_id, {"status": "failed", "failedSteps": failed_steps}))
             elif conflicts:
                 update_agent_run(run_id, status="conflict", summary="任务完成但存在文件冲突", mark_finished=True)
                 await self.sandbox_service.stop_container(sandbox["id"], sandbox.get("containerId") or container_id, final_status="conflict")
+                self.sandbox_service.maybe_cleanup_workspace(sandbox["workspacePath"], "conflict")
+                print(f"[SandboxRun] conflict run={run_id} conflicts={len(conflicts)}", flush=True)
                 await send("run.failed", _run_snapshot_payload(run_id, {"status": "conflict", "conflicts": conflicts}))
             else:
                 update_agent_run(run_id, status="completed", summary="沙箱任务完成", mark_finished=True)
                 await self.sandbox_service.stop_container(sandbox["id"], sandbox.get("containerId") or container_id, final_status="completed")
+                self.sandbox_service.maybe_cleanup_workspace(sandbox["workspacePath"], "completed")
+                print(f"[SandboxRun] completed run={run_id}", flush=True)
                 await send("run.completed", _run_snapshot_payload(run_id))
         except Exception as exc:
             update_agent_run(run_id, status="failed", error=str(exc), mark_finished=True)
             await self.sandbox_service.stop_container(sandbox["id"], sandbox.get("containerId"), final_status="failed")
+            self.sandbox_service.maybe_cleanup_workspace(sandbox["workspacePath"], "failed")
             update_sandbox(sandbox["id"], status="failed", error=str(exc))
+            print(f"[SandboxRun] exception run={run_id} error={exc}", flush=True)
             await send("run.failed", _run_snapshot_payload(run_id, {"error": str(exc)}))
 
     async def _run_dag(self, run_id: str, sandbox: Dict[str, Any], container_id: str, send: EventEmitter) -> None:
@@ -368,65 +390,37 @@ class RunScheduler:
         update_agent_run_step(step["id"], status="running", claimed_by=step["agentId"], mark_started=True)
         await send("run.step.started", _run_snapshot_payload(run_id, {"step": get_agent_run_step_payload(step["id"])}))
         try:
-            output = await self._call_step_agent(run_id, step, agent)
-            logs: List[str] = []
-            conflict_count = 0
-            for file_payload in output.get("files", []):
-                if not isinstance(file_payload, dict):
-                    continue
-                path = str(file_payload.get("path") or "").strip()
-                if not path or path.startswith("/") or ".." in Path(path).parts:
-                    continue
-                content = str(file_payload.get("content") or "")
-                try:
-                    base_version = int(file_payload.get("baseVersion", 0))
-                except (TypeError, ValueError):
-                    base_version = 0
-                result = self.file_service.write_file(
-                    sandbox=sandbox,
-                    run_id=run_id,
-                    path=path,
-                    content=content,
-                    base_version=base_version,
-                    step_id=step["id"],
-                )
-                if result["status"] == "conflict":
-                    conflict_count += 1
-                    await send(
-                        "run.step.conflict",
-                        _run_snapshot_payload(run_id, {"stepId": step["id"], "conflict": result["conflict"]}),
-                    )
-                else:
-                    logs.append(f"saved {path} v{result['version']['version']}")
-
-            command_results = []
-            for command in output.get("commands", []):
-                if not isinstance(command, str) or not command.strip():
-                    continue
-                result = await self.sandbox_service.execute(container_id, command.strip())
-                command_results.append(result)
-                log_text = f"$ {command}\n{result['stdout']}\n{result['stderr']}".strip()
-                await send("run.step.log", _run_snapshot_payload(run_id, {"stepId": step["id"], "log": log_text, "command": result}))
-                if result["exitCode"] != 0:
-                    raise RuntimeError(f"命令执行失败: {command}")
-
-            step_output = {**output, "commandResults": command_results}
-            if conflict_count:
+            result = await self._run_tool_loop(run_id, sandbox, container_id, step, agent, send)
+            if result["status"] == "conflict":
                 update_agent_run_step(
                     step["id"],
                     status="conflict",
-                    output=step_output,
-                    append_log="\n".join(logs),
-                    error=f"{conflict_count} 个文件冲突",
+                    output=result["output"],
+                    append_log=result.get("logs", ""),
+                    error=result.get("error") or "文件冲突",
                     mark_finished=True,
+                )
+                return
+            if result["status"] == "failed":
+                update_agent_run_step(
+                    step["id"],
+                    status="failed",
+                    output=result["output"],
+                    append_log=result.get("logs", ""),
+                    error=result.get("error") or "沙箱工具循环失败",
+                    mark_finished=True,
+                )
+                await send(
+                    "run.step.failed",
+                    _run_snapshot_payload(run_id, {"step": get_agent_run_step_payload(step["id"]), "error": result.get("error")}),
                 )
                 return
 
             update_agent_run_step(
                 step["id"],
                 status="completed",
-                output=step_output,
-                append_log="\n".join(logs),
+                output=result["output"],
+                append_log=result.get("logs", ""),
                 mark_finished=True,
             )
             await send("run.step.completed", _run_snapshot_payload(run_id, {"step": get_agent_run_step_payload(step["id"])}))
@@ -437,18 +431,349 @@ class RunScheduler:
                 _run_snapshot_payload(run_id, {"step": get_agent_run_step_payload(step["id"]), "error": str(exc)}),
             )
 
-    async def _call_step_agent(self, run_id: str, step: Dict[str, Any], agent: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    async def _run_tool_loop(
+        self,
+        run_id: str,
+        sandbox: Dict[str, Any],
+        container_id: str,
+        step: Dict[str, Any],
+        agent: Optional[Dict[str, Any]],
+        send: EventEmitter,
+    ) -> Dict[str, Any]:
+        tool_calls: List[Dict[str, Any]] = []
+        command_results: List[Dict[str, object]] = []
+        changed_files: List[str] = []
+        logs: List[str] = []
+        finish_data: Optional[Dict[str, Any]] = None
+        environment_state: Optional[Dict[str, Any]] = None
+        validations: List[Dict[str, Any]] = []
+        workspace_scan: Optional[Dict[str, Any]] = None
+        last_mutation_index = 0
+        active_tool_name = {"name": ""}
+
+        async def setup_command_logger(command_result: Dict[str, Any]) -> None:
+            if active_tool_name["name"] == "setup_environment":
+                try:
+                    await self._emit_command_log(run_id, step["id"], command_result, logs, send, prefix="[setup]")
+                except Exception:
+                    pass
+
+        executor = SandboxToolExecutor(
+            sandbox_service=self.sandbox_service,
+            file_service=self.file_service,
+            sandbox=sandbox,
+            run_id=run_id,
+            container_id=container_id,
+            step_id=step["id"],
+            environment_profile=(get_agent_run(run_id) or {}).get("dag", {}).get("environmentProfile") or {},
+            command_callback=setup_command_logger,
+        )
+        messages = self._build_tool_loop_messages(run_id, step, agent)
+
+        for iteration in range(settings.SANDBOX_MAX_TOOL_ITERATIONS):
+            call = await self._next_tool_call(messages)
+            if not call:
+                return self._tool_loop_result(
+                    "failed",
+                    tool_calls,
+                    command_results,
+                    changed_files,
+                    finish_data,
+                    logs,
+                    "模型未调用任何沙箱工具",
+                    environment_state,
+                    validations,
+                    workspace_scan,
+                )
+
+            started_at = now_text()
+            started = asyncio.get_running_loop().time()
+            print(
+                f"[SandboxToolLoop] run={run_id} step={step['id']} "
+                f"iteration={iteration + 1} tool={call['name']}",
+                flush=True,
+            )
+            record = {
+                "id": call["id"],
+                "tool": call["name"],
+                "name": call["name"],
+                "arguments": call["arguments"],
+                "args": call["arguments"],
+                "status": "running",
+                "result": None,
+                "error": None,
+                "createdAt": started_at,
+                "startedAt": started_at,
+                "finishedAt": None,
+                "durationMs": None,
+            }
+            await send(
+                "run.step.tool.started",
+                _run_snapshot_payload(run_id, {"stepId": step["id"], "toolCall": record}),
+            )
+            try:
+                active_tool_name["name"] = call["name"]
+                tool_result = await executor.execute(call["name"], call["arguments"])
+            except Exception as exc:
+                tool_result = {"ok": False, "error": str(exc)}
+            finally:
+                active_tool_name["name"] = ""
+            finished_at = now_text()
+            record["status"] = "success" if tool_result.get("ok") else "failed"
+            record["finishedAt"] = finished_at
+            record["durationMs"] = int((asyncio.get_running_loop().time() - started) * 1000)
+            record["error"] = tool_result.get("error")
+            record["result"] = tool_result
+            tool_calls.append(record)
+
+            command_result_items = tool_result.get("commandResults")
+            if isinstance(command_result_items, list):
+                command_results.extend([item for item in command_result_items if isinstance(item, dict)])
+            if isinstance(tool_result.get("environmentState"), dict):
+                environment_state = tool_result["environmentState"]
+            if isinstance(tool_result.get("workspaceScan"), dict):
+                workspace_scan = tool_result["workspaceScan"]
+
+            output_snapshot = self._tool_loop_output(
+                tool_calls,
+                command_results,
+                changed_files,
+                finish_data,
+                environment_state,
+                validations,
+                workspace_scan,
+            )
+            update_agent_run_step(step["id"], status="running", output=output_snapshot)
+
+            event_type = "run.step.tool.completed" if tool_result.get("ok") else "run.step.tool.failed"
+            await send(
+                event_type,
+                _run_snapshot_payload(run_id, {"stepId": step["id"], "toolCall": record}),
+            )
+
+            self._append_tool_result_message(messages, call, tool_result)
+
+            if call["name"] == "run_command":
+                command_result = tool_result.get("command") if isinstance(tool_result.get("command"), dict) else None
+                if command_result:
+                    command_results.append(command_result)
+                    await self._emit_command_log(run_id, step["id"], command_result, logs, send)
+            elif call["name"] == "validate_command":
+                command_result = tool_result.get("command") if isinstance(tool_result.get("command"), dict) else None
+                validation = tool_result.get("validation") if isinstance(tool_result.get("validation"), dict) else None
+                if command_result:
+                    command_results.append(command_result)
+                    await self._emit_command_log(run_id, step["id"], command_result, logs, send, prefix="[validate]")
+                if validation:
+                    validations.append({**validation, "toolCallIndex": len(tool_calls)})
+            elif call["name"] == "write_file":
+                if tool_result.get("status") == "conflict":
+                    await send(
+                        "run.step.conflict",
+                        _run_snapshot_payload(run_id, {"stepId": step["id"], "conflict": tool_result.get("conflict")}),
+                    )
+                    return self._tool_loop_result(
+                        "conflict",
+                        tool_calls,
+                        command_results,
+                        changed_files,
+                        finish_data,
+                        logs,
+                        "文件冲突",
+                        environment_state,
+                        validations,
+                        workspace_scan,
+                    )
+                saved_file = tool_result.get("file") if isinstance(tool_result.get("file"), dict) else None
+                if saved_file and saved_file.get("path") not in changed_files:
+                    changed_files.append(saved_file["path"])
+                if tool_result.get("status") == "saved":
+                    last_mutation_index = len(tool_calls)
+            elif call["name"] == "import_workspace_file":
+                if tool_result.get("status") == "conflict":
+                    await send(
+                        "run.step.conflict",
+                        _run_snapshot_payload(run_id, {"stepId": step["id"], "conflict": tool_result.get("conflict")}),
+                    )
+                    return self._tool_loop_result(
+                        "conflict",
+                        tool_calls,
+                        command_results,
+                        changed_files,
+                        finish_data,
+                        logs,
+                        "文件冲突",
+                        environment_state,
+                        validations,
+                        workspace_scan,
+                    )
+                saved_file = tool_result.get("file") if isinstance(tool_result.get("file"), dict) else None
+                if saved_file and saved_file.get("path") not in changed_files:
+                    changed_files.append(saved_file["path"])
+                if tool_result.get("status") == "saved":
+                    last_mutation_index = len(tool_calls)
+            elif call["name"] == "finish":
+                finish_data = tool_result.get("finish") if isinstance(tool_result.get("finish"), dict) else None
+                if not finish_data:
+                    return self._tool_loop_result(
+                        "failed",
+                        tool_calls,
+                        command_results,
+                        changed_files,
+                        finish_data,
+                        logs,
+                        tool_result.get("error") or "finish 工具返回无效",
+                        environment_state,
+                        validations,
+                        workspace_scan,
+                    )
+                if (
+                    finish_data.get("success")
+                    and not self._finish_has_valid_validation(finish_data, validations, last_mutation_index)
+                    and not self._finish_allows_validation_skip(step, changed_files, finish_data)
+                ):
+                    finish_data = {
+                        **finish_data,
+                        "success": False,
+                        "validationRequired": True,
+                    }
+                    return self._tool_loop_result(
+                        "failed",
+                        tool_calls,
+                        command_results,
+                        changed_files,
+                        finish_data,
+                        logs,
+                        "finish(success=true) 前缺少成功的 validate_command，或验证早于最后一次文件修改",
+                        environment_state,
+                        validations,
+                        workspace_scan,
+                    )
+                return self._tool_loop_result(
+                    "completed" if finish_data.get("success") else "failed",
+                    tool_calls,
+                    command_results,
+                    changed_files,
+                    finish_data,
+                    logs,
+                    None if finish_data.get("success") else finish_data.get("summary") or "Agent 标记任务失败",
+                    environment_state,
+                    validations,
+                    workspace_scan,
+                )
+
+        return self._tool_loop_result(
+            "failed",
+            tool_calls,
+            command_results,
+            changed_files,
+            finish_data,
+            logs,
+            "超过最大沙箱工具调用次数",
+            environment_state,
+            validations,
+            workspace_scan,
+        )
+
+    def _build_tool_loop_messages(
+        self,
+        run_id: str,
+        step: Dict[str, Any],
+        agent: Optional[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
         files = list_sandbox_files(run_id)
         file_context = "\n".join(f"- {item['path']} v{item['currentVersion']}" for item in files) or "空工作区"
+        run = get_agent_run(run_id)
+        environment_profile = (run or {}).get("dag", {}).get("environmentProfile") if run else None
         user_content = (
             f"任务：{step['task']}\n\n"
             f"期望输出：{', '.join(step.get('expectedOutputs') or []) or '自行判断'}\n\n"
-            f"当前文件：\n{file_context}"
+            f"环境约束：{_json_text(environment_profile or {'packageManager': 'uv'})}\n\n"
+            f"当前文件：\n{file_context}\n\n"
+            "请选择一个工具调用。完成时必须调用 finish。"
         )
-        messages = [
-            {"role": "system", "content": STEP_OUTPUT_SYSTEM_PROMPT + "\n\n" + (agent or {}).get("systemPrompt", "")},
+        return [
+            {"role": "system", "content": SANDBOX_EXECUTOR_SYSTEM_PROMPT + "\n\n" + (agent or {}).get("systemPrompt", "")},
             {"role": "user", "content": user_content},
         ]
+
+    async def _emit_command_log(
+        self,
+        run_id: str,
+        step_id: str,
+        command_result: Dict[str, Any],
+        logs: List[str],
+        send: EventEmitter,
+        prefix: str = "",
+    ) -> None:
+        command = command_result.get("command")
+        stdout = command_result.get("stdout") or command_result.get("stdoutPreview") or ""
+        stderr = command_result.get("stderr") or command_result.get("stderrPreview") or ""
+        prompt = f"{prefix} $ {command}".strip()
+        log_text = f"{prompt}\n{stdout}\n{stderr}".strip()
+        logs.append(log_text)
+        await send(
+            "run.step.log",
+            _run_snapshot_payload(run_id, {"stepId": step_id, "log": log_text, "command": command_result}),
+        )
+
+    def _finish_has_valid_validation(
+        self,
+        finish_data: Dict[str, Any],
+        validations: List[Dict[str, Any]],
+        last_mutation_index: int,
+    ) -> bool:
+        validation_id = str(finish_data.get("validationCommandId") or "").strip()
+        if not validation_id:
+            return False
+        for validation in validations:
+            if validation.get("id") != validation_id:
+                continue
+            if not validation.get("success"):
+                return False
+            return int(validation.get("toolCallIndex") or 0) > int(last_mutation_index or 0)
+        return False
+
+    def _finish_allows_validation_skip(
+        self,
+        step: Dict[str, Any],
+        changed_files: List[str],
+        finish_data: Dict[str, Any],
+    ) -> bool:
+        reason = str(finish_data.get("validationSkippedReason") or "").strip()
+        if not reason:
+            return False
+        paths = [str(path).lower() for path in changed_files]
+        if not paths:
+            paths = [str(path).lower() for path in step.get("expectedOutputs") or []]
+        if not paths:
+            return False
+        doc_suffixes = {".md", ".markdown", ".txt", ".mmd", ".mermaid"}
+        return all(Path(path).suffix in doc_suffixes for path in paths)
+
+    async def _next_tool_call(self, messages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        try:
+            response = await asyncio.to_thread(
+                client.chat.completions.create,
+                model=settings.MODEL_EP,
+                messages=messages,
+                tools=SANDBOX_TOOL_SPECS,
+                tool_choice="auto",
+                stream=False,
+            )
+            message = response.choices[0].message
+            native_call = self._extract_native_tool_call(message)
+            if native_call:
+                messages.append(native_call["assistantMessage"])
+                return {k: native_call[k] for k in ("id", "name", "arguments", "native")}
+            content = getattr(message, "content", "") or ""
+            fallback = self._extract_json_tool_call(content)
+            if fallback:
+                messages.append({"role": "assistant", "content": content})
+                return fallback
+        except Exception:
+            pass
+
         response = await asyncio.to_thread(
             client.chat.completions.create,
             model=settings.MODEL_EP,
@@ -456,15 +781,159 @@ class RunScheduler:
             stream=False,
         )
         content = response.choices[0].message.content or ""
+        fallback = self._extract_json_tool_call(content)
+        if fallback:
+            messages.append({"role": "assistant", "content": content})
+        return fallback
+
+    def _extract_native_tool_call(self, message: Any) -> Optional[Dict[str, Any]]:
+        tool_calls = getattr(message, "tool_calls", None) or []
+        if not tool_calls:
+            return None
+        tool_call = tool_calls[0]
+        function = getattr(tool_call, "function", None)
+        name = getattr(function, "name", "") if function else ""
+        arguments_text = getattr(function, "arguments", "{}") if function else "{}"
         try:
-            return _extract_json_object(content)
-        except json.JSONDecodeError as exc:
-            return _fallback_step_output(content, step, exc)
+            arguments = json.loads(arguments_text or "{}")
+        except json.JSONDecodeError:
+            arguments = {}
+        call_id = getattr(tool_call, "id", None) or create_id("toolCall")
+        assistant_message = {
+            "role": "assistant",
+            "content": getattr(message, "content", None),
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": _json_text(arguments),
+                    },
+                }
+            ],
+        }
+        return {
+            "id": call_id,
+            "name": name,
+            "arguments": arguments,
+            "native": True,
+            "assistantMessage": assistant_message,
+        }
+
+    def _extract_json_tool_call(self, content: str) -> Optional[Dict[str, Any]]:
+        try:
+            payload = _extract_json_object(content)
+        except Exception:
+            return None
+        name = str(payload.get("tool") or payload.get("name") or "").strip()
+        arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
+        if not name:
+            return None
+        return {
+            "id": create_id("toolCall"),
+            "name": name,
+            "arguments": arguments,
+            "native": False,
+        }
+
+    def _append_tool_result_message(
+        self,
+        messages: List[Dict[str, Any]],
+        call: Dict[str, Any],
+        result: Dict[str, Any],
+    ) -> None:
+        content = _json_text(self._prompt_safe_tool_result(result))
+        if call.get("native"):
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call["id"],
+                "name": call["name"],
+                "content": content,
+            })
+        else:
+            messages.append({
+                "role": "user",
+                "content": f"工具 {call['name']} 返回：\n{content}\n请继续选择下一个工具，完成时调用 finish。",
+            })
+
+    def _prompt_safe_tool_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        def compact_command(item: Dict[str, Any]) -> Dict[str, Any]:
+            return {
+                **item,
+                "stdout": item.get("stdoutPreview", str(item.get("stdout") or "")[:4000]),
+                "stderr": item.get("stderrPreview", str(item.get("stderr") or "")[:4000]),
+            }
+
+        safe = dict(result)
+        if isinstance(safe.get("command"), dict):
+            safe["command"] = compact_command(safe["command"])
+        if isinstance(safe.get("commandResults"), list):
+            safe["commandResults"] = [
+                compact_command(item) if isinstance(item, dict) else item
+                for item in safe["commandResults"]
+            ]
+        return safe
+
+    def _tool_loop_output(
+        self,
+        tool_calls: List[Dict[str, Any]],
+        command_results: List[Dict[str, object]],
+        changed_files: List[str],
+        finish_data: Optional[Dict[str, Any]],
+        environment_state: Optional[Dict[str, Any]] = None,
+        validations: Optional[List[Dict[str, Any]]] = None,
+        workspace_scan: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        output: Dict[str, Any] = {
+            "toolCalls": tool_calls,
+            "commandResults": command_results,
+            "changedFiles": changed_files,
+        }
+        if finish_data:
+            output["finish"] = finish_data
+        if environment_state:
+            output["environmentState"] = environment_state
+        if validations:
+            output["validations"] = validations
+        if workspace_scan:
+            output["workspaceScan"] = workspace_scan
+        return output
+
+    def _tool_loop_result(
+        self,
+        status: str,
+        tool_calls: List[Dict[str, Any]],
+        command_results: List[Dict[str, object]],
+        changed_files: List[str],
+        finish_data: Optional[Dict[str, Any]],
+        logs: List[str],
+        error: Optional[str],
+        environment_state: Optional[Dict[str, Any]] = None,
+        validations: Optional[List[Dict[str, Any]]] = None,
+        workspace_scan: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return {
+            "status": status,
+            "output": self._tool_loop_output(
+                tool_calls,
+                command_results,
+                changed_files,
+                finish_data,
+                environment_state,
+                validations,
+                workspace_scan,
+            ),
+            "logs": "\n".join(logs),
+            "error": error,
+        }
 
     async def _sync_artifacts(self, run_id: str, sandbox: Dict[str, Any], send: EventEmitter) -> None:
         run = get_agent_run(run_id)
         if not run:
             return
+        print(f"[SandboxArtifact] sync start run={run_id}", flush=True)
+        synced = 0
         for file_meta in list_sandbox_files(run_id):
             if file_meta.get("artifactId"):
                 continue
@@ -493,6 +962,12 @@ class RunScheduler:
                 },
             )
             set_sandbox_file_artifact(file_meta["id"], artifact["id"])
+            synced += 1
+            print(
+                f"[SandboxArtifact] created run={run_id} path={file_meta['path']} "
+                f"type={artifact_type} artifact={artifact['id']}",
+                flush=True,
+            )
             artifact_meta = {k: v for k, v in artifact.items() if k not in {"content", "currentVersion"}}
             await send(
                 "artifact.created",
@@ -504,6 +979,7 @@ class RunScheduler:
                     },
                 ),
             )
+        print(f"[SandboxArtifact] sync done run={run_id} count={synced}", flush=True)
 
 
 def _artifact_type_for_path(path: str) -> str:
@@ -514,6 +990,16 @@ def _artifact_type_for_path(path: str) -> str:
         return "markdown"
     if suffix in {".mmd", ".mermaid"}:
         return "mermaid"
+    if suffix == ".pdf":
+        return "pdf"
+    if suffix in {".ppt", ".pptx"}:
+        return "ppt"
+    if suffix in {".doc", ".docx"}:
+        return "document"
+    if suffix in {".xls", ".xlsx", ".csv"}:
+        return "spreadsheet"
+    if suffix in {".txt", ".log"}:
+        return "text"
     return "code"
 
 
