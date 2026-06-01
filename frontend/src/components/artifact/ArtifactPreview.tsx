@@ -29,6 +29,10 @@ const MermaidRenderer: React.FC<{ chart: string }> = ({ chart }) => {
   useEffect(() => {
     let isMounted = true;
     const render = async () => {
+      // Proactively clean up any previous stale/orphaned dmermaid elements for this id
+      const oldEl = document.getElementById(`d${elementId.current}`);
+      if (oldEl) oldEl.remove();
+
       try {
         setError(null);
         const cleanChart = chart.trim();
@@ -36,6 +40,10 @@ const MermaidRenderer: React.FC<{ chart: string }> = ({ chart }) => {
         if (isMounted) {
           if (renderedSvg.includes('Syntax error in text') || renderedSvg.includes('class="error-icon"')) {
             setError('图表语法错误');
+            setTimeout(() => {
+              const errEl = document.getElementById(`d${elementId.current}`);
+              if (errEl) errEl.remove();
+            }, 16);
           } else {
             setSvg(renderedSvg);
           }
@@ -45,11 +53,21 @@ const MermaidRenderer: React.FC<{ chart: string }> = ({ chart }) => {
         if (isMounted) {
           setError('图表语法错误');
         }
+        setTimeout(() => {
+          const errEl = document.getElementById(`d${elementId.current}`);
+          if (errEl) errEl.remove();
+          
+          // Also clean up any other orphan element matching elementId
+          const matchingOrphan = document.querySelectorAll(`[id^="d${elementId.current}"]`);
+          matchingOrphan.forEach(el => el.remove());
+        }, 16);
       }
     };
     render();
     return () => {
       isMounted = false;
+      const errEl = document.getElementById(`d${elementId.current}`);
+      if (errEl) errEl.remove();
     };
   }, [chart]);
 
@@ -229,15 +247,23 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   // Render mermaid diagram with error protection
   useEffect(() => {
     if (currentArtifact?.type === 'mermaid' && activeTab === 'preview' && currentVersion?.content) {
+      const id = `mermaid-${currentArtifact.id}-${currentVersion.version}`;
       const renderMermaid = async () => {
+        // Proactively clean up any previous stale/orphaned dmermaid elements for this id
+        const oldEl = document.getElementById(`d${id}`);
+        if (oldEl) oldEl.remove();
+
         try {
           setMermaidError(null);
-          const id = `mermaid-${currentArtifact.id}-${currentVersion.version}`;
           const { svg } = await mermaid.render(id, currentVersion.content);
           // Validate the SVG - check if it contains error text
           if (svg.includes('Syntax error in text') || svg.includes('class="error-icon"')) {
             setMermaidError('图表语法错误，请检查源码');
             setMermaidSvg(null);
+            setTimeout(() => {
+              const errEl = document.getElementById(`d${id}`);
+              if (errEl) errEl.remove();
+            }, 16);
           } else {
             setMermaidSvg(svg);
           }
@@ -245,6 +271,14 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
           console.warn('Mermaid render skipped (protected):', err);
           setMermaidError('图表语法错误，请检查源码');
           setMermaidSvg(null);
+          setTimeout(() => {
+            const errEl = document.getElementById(`d${id}`);
+            if (errEl) errEl.remove();
+            
+            // Clean up any stale elements starting with this ID
+            const matchingStale = document.querySelectorAll(`[id^="d${id}"]`);
+            matchingStale.forEach(el => el.remove());
+          }, 16);
         }
       };
       renderMermaid();
