@@ -1,10 +1,12 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Artifact, ArtifactVersion } from '@/types';
-import { X, Copy, FileCode, FileText, Globe, GitCompare, RefreshCw, Edit3, Save } from 'lucide-react';
+import { X, Copy, FileCode, FileText, Globe, GitCompare, RefreshCw, Edit3, Save, Network } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 import CodeDiffViewer from '../artifact/CodeDiffViewer';
 import CodeEditorContainer from '../artifact/CodeEditorContainer';
+import { getSandboxHtmlPreview } from '@/services/http/sandboxService';
+import mermaid from 'mermaid';
 
 interface ArtifactFullScreenModalProps {
   open: boolean;
@@ -12,10 +14,76 @@ interface ArtifactFullScreenModalProps {
   onClose: () => void;
 }
 
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'dark',
+  securityLevel: 'loose',
+});
+
+const MermaidRenderer: React.FC<{ chart: string }> = ({ chart }) => {
+  const [svg, setSvg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const elementId = useRef(`mermaid-fs-md-${Math.random().toString(36).substr(2, 9)}`);
+
+  useEffect(() => {
+    let isMounted = true;
+    const render = async () => {
+      try {
+        setError(null);
+        const cleanChart = chart.trim();
+        const { svg: renderedSvg } = await mermaid.render(elementId.current, cleanChart);
+        if (isMounted) {
+          if (renderedSvg.includes('Syntax error in text') || renderedSvg.includes('class="error-icon"')) {
+            setError('图表语法错误');
+          } else {
+            setSvg(renderedSvg);
+          }
+        }
+      } catch (err) {
+        console.warn('Mermaid render error inside markdown:', err);
+        if (isMounted) {
+          setError('图表语法错误');
+        }
+      }
+    };
+    render();
+    return () => {
+      isMounted = false;
+    };
+  }, [chart]);
+
+  if (error) {
+    return (
+      <div className="bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-250 dark:border-yellow-800/30 p-3 rounded-lg text-xs my-2">
+        <p className="text-yellow-700 dark:text-yellow-300 font-semibold mb-1">⚠️ Mermaid 渲染失败</p>
+        <pre className="text-[10px] text-slate-500 dark:text-slate-400 overflow-x-auto whitespace-pre-wrap">{chart}</pre>
+      </div>
+    );
+  }
+
+  if (!svg) {
+    return (
+      <div className="flex items-center justify-center p-4 text-slate-400 text-xs gap-2">
+        <RefreshCw className="w-3.5 h-3.5 animate-spin" /> 正在渲染图表...
+      </div>
+    );
+  }
+
+  return (
+    <div 
+      className="w-full flex items-center justify-center my-3 p-4 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-150 dark:border-slate-800 overflow-auto"
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
+};
+
 const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open, artifact, onClose }) => {
   const [activeTab, setActiveTab] = useState<'preview' | 'source' | 'diff'>('preview');
   const [copied, setCopied] = useState(false);
   const [splitView, setSplitView] = useState(true);
+  const [integratedHtml, setIntegratedHtml] = useState<string | undefined>(undefined);
+  const [mermaidSvg, setMermaidSvg] = useState<string | null>(null);
+  const [mermaidError, setMermaidError] = useState<string | null>(null);
 
   // Editing states
   const [isEditing, setIsEditing] = useState(false);
@@ -146,6 +214,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
   };
   const [editedContent, setEditedContent] = useState('');
 
+  const allArtifacts = useAgentHubStore(state => state.artifacts);
   const artifactVersions = useAgentHubStore(state => state.artifactVersions);
   const selectedArtifactVersion = useAgentHubStore(state => state.selectedArtifactVersion);
   const loadArtifactContent = useAgentHubStore(state => state.loadArtifactContent);
@@ -199,6 +268,80 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
     }
   }, [open, artifact, versions.length, loadArtifactContent]);
 
+  // Render mermaid diagram (moved after currentVersion definition)
+  useEffect(() => {
+    if (open && artifact?.type === 'mermaid' && activeTab === 'preview' && currentVersion?.content) {
+      const renderMermaid = async () => {
+        try {
+          setMermaidError(null);
+          const id = `mermaid-fs-${artifact.id}-${currentVersion.version}`;
+          const { svg } = await mermaid.render(id, currentVersion.content);
+          setMermaidSvg(svg);
+        } catch (err) {
+          console.error('Mermaid render error:', err);
+          setMermaidError(String(err));
+          setMermaidSvg(null);
+        }
+      };
+      renderMermaid();
+    } else {
+      setMermaidSvg(null);
+      setMermaidError(null);
+    }
+  }, [open, artifact?.id, artifact?.type, activeTab, currentVersion?.version, currentVersion?.content]);
+
+  // Inline multi-file HTML assets (CSS, JS) in frontend, ensure 100% matches user's latest edits
+  const buildIntegratedHtml = (baseHtml: string): string => {
+    let result = baseHtml;
+    
+    // Inline CSS files: replace <link rel="stylesheet" href="xxx.css"> with <style>...</style>
+    const cssLinkRegex = /<link[^>]*rel=["']?stylesheet["']?[^>]*href=["']([^"']+\.css)["'][^>]*>/gi;
+    let cssMatch;
+    while ((cssMatch = cssLinkRegex.exec(result)) !== null) {
+      const filePath = cssMatch[1];
+      const cssArtifact = allArtifacts?.find((a: any) => 
+        a.title.toLowerCase() === filePath.toLowerCase() || 
+        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase())
+      );
+      const cssVersion = cssArtifact && artifactVersions[cssArtifact.id]?.find(v => v.id === cssArtifact.currentVersionId);
+      if (cssVersion?.content) {
+        result = result.replace(cssMatch[0], `<style>${cssVersion.content}</style>`);
+      }
+    }
+    
+    // Inline JS files: replace <script src="xxx.js"></script> with <script>...</script>
+    const scriptSrcRegex = /<script[^>]*src=["']([^"']+\.js)["'][^>]*>\s*<\/script>/gi;
+    let jsMatch;
+    while ((jsMatch = scriptSrcRegex.exec(result)) !== null) {
+      const filePath = jsMatch[1];
+      const jsArtifact = allArtifacts?.find((a: any) => 
+        a.title.toLowerCase() === filePath.toLowerCase() || 
+        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase())
+      );
+      const jsVersion = jsArtifact && artifactVersions[jsArtifact.id]?.find(v => v.id === jsArtifact.currentVersionId);
+      if (jsVersion?.content) {
+        result = result.replace(jsMatch[0], `<script>${jsVersion.content}</script>`);
+      }
+    }
+    
+    return result;
+  };
+
+  // Process multi-file inline HTML for preview
+  useEffect(() => {
+    if (
+      open &&
+      artifact?.type === 'html' && 
+      activeTab === 'preview' &&
+      currentVersion?.content
+    ) {
+      const fullyIntegrated = buildIntegratedHtml(currentVersion.content);
+      setIntegratedHtml(fullyIntegrated);
+    } else {
+      setIntegratedHtml(undefined);
+    }
+  }, [open, artifact?.id, artifact?.type, activeTab, currentVersion?.version, currentVersion?.content, allArtifacts, artifactVersions]);
+
 
 
   const handleCopy = async () => {
@@ -210,8 +353,8 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
 
   const htmlSrcDoc = useMemo(() => {
     if (!artifact || artifact.type !== 'html' || !currentVersion) return undefined;
-    return currentVersion.content;
-  }, [artifact, currentVersion]);
+    return integratedHtml || currentVersion.content;
+  }, [artifact, currentVersion, integratedHtml]);
 
   if (!open || !artifact) return null;
 
@@ -295,7 +438,40 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
               </div>
             ) : (
               <article className="prose prose-lg dark:prose-invert max-w-none text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-8 rounded-2xl shadow-sm">
-                <ReactMarkdown>{currentVersion.content}</ReactMarkdown>
+                <ReactMarkdown
+                  components={{
+                    code({ node, className, children, ...props }) {
+                      const match = /language-(\w+)/.exec(className || '');
+                      if (match && match[1] === 'mermaid') {
+                        return <MermaidRenderer chart={String(children).replace(/\n$/, '')} />;
+                      }
+                      return (
+                        <code className={className} {...props}>
+                          {children}
+                        </code>
+                      );
+                    },
+                    img({ node, src, alt, ...props }) {
+                      return (
+                        <span className="block my-4 text-center">
+                          <img
+                            src={src}
+                            alt={alt}
+                            className="mx-auto max-w-full max-h-[500px] object-contain rounded-xl shadow-md border border-slate-200 dark:border-slate-800 transition-all hover:shadow-lg cursor-zoom-in"
+                            {...props}
+                          />
+                          {alt && (
+                            <span className="block mt-2 text-xs text-slate-400 dark:text-slate-500 font-sans italic">
+                              {alt}
+                            </span>
+                          )}
+                        </span>
+                      );
+                    }
+                  }}
+                >
+                  {currentVersion.content}
+                </ReactMarkdown>
               </article>
             )}
           </div>
@@ -329,19 +505,79 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
               </div>
             </div>
             <div className="flex-1 min-h-0 border-l border-r border-b border-slate-200 dark:border-slate-800 rounded-b-xl bg-white dark:bg-slate-900 overflow-hidden">
-              {!currentVersion ? (
+              {(!htmlSrcDoc && !currentVersion) ? (
                 <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
                   <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
                 </div>
               ) : (
                 <iframe
+                  key={`html-full-preview-${currentVersion?.version || 1}-${artifact?.id}`}
                   srcDoc={htmlSrcDoc}
                   className="w-full h-full bg-white"
                   title="HTML Full Screen Preview"
-                  sandbox="allow-scripts"
+                  sandbox="allow-scripts allow-same-origin"
                 />
               )}
             </div>
+          </div>
+        );
+      }
+      return (
+        <div className="h-full p-6 overflow-auto bg-slate-950 relative">
+          {!currentVersion ? (
+            <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
+            </div>
+          ) : (
+            renderCodeLines(currentVersion.content)
+          )}
+        </div>
+      );
+    }
+
+    if (artifact.type === 'image') {
+      return (
+        <div className="h-full w-full overflow-auto p-6 bg-[#0a0a0a] flex items-center justify-center">
+          {!currentVersion ? (
+            <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
+            </div>
+          ) : (
+            <img
+              src={currentVersion.content}
+              alt={artifact.title}
+              className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+            />
+          )}
+        </div>
+      );
+    }
+
+    if (artifact.type === 'mermaid') {
+      if (activeTab === 'preview') {
+        return (
+          <div className="h-full w-full overflow-auto p-6 bg-slate-50 dark:bg-slate-950 flex items-center justify-center">
+            {!currentVersion ? (
+              <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
+                <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
+              </div>
+            ) : mermaidError ? (
+              <div className="text-center p-6">
+                <p className="text-red-500 text-xs font-semibold mb-2">图表渲染失败</p>
+                <pre className="text-xs text-red-400 bg-red-950/30 p-3 rounded-lg whitespace-pre-wrap max-w-md">
+                  {mermaidError}
+                </pre>
+              </div>
+            ) : mermaidSvg ? (
+              <div 
+                className="w-full h-full flex items-center justify-center"
+                dangerouslySetInnerHTML={{ __html: mermaidSvg }}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
+                <RefreshCw className="w-4 h-4 animate-spin" /> 渲染中...
+              </div>
+            )}
           </div>
         );
       }
@@ -375,10 +611,13 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
     if (artifact.type === 'code') return <FileCode className="w-5 h-5" />;
     if (artifact.type === 'markdown') return <FileText className="w-5 h-5" />;
     if (artifact.type === 'html') return <Globe className="w-5 h-5" />;
+    if (artifact.type === 'image') return <Globe className="w-5 h-5" />;
+    if (artifact.type === 'mermaid') return <Network className="w-5 h-5" />;
     return <FileText className="w-5 h-5" />;
   };
 
-  const needTabs = artifact.type !== undefined && ['code', 'markdown', 'html'].includes(artifact.type);
+  const needTabs = artifact.type !== undefined && ['code', 'markdown', 'html', 'image', 'mermaid'].includes(artifact.type);
+  const isEditable = artifact.type !== 'image';
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">

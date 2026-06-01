@@ -452,7 +452,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
             setConfiguringAgentId(null);
           }}
           onAddAgent={() => {
-            setConfiguringAgentId('new');
+            setConfiguringAgentId('new', false);
           }}
         />
       )}

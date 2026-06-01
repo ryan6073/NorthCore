@@ -196,7 +196,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const [editedTitle, setEditedTitle] = useState('');
 
   const activeAgents = conversation && conversation.agentIds
-    ? agents.filter(a => conversation.agentIds.includes(a.id))
+    ? agents.filter(a => a.enabled && conversation.agentIds.includes(a.id))
     : [];
 
   const [showMentionPopup, setShowMentionPopup] = useState(false);
@@ -946,6 +946,19 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
           </div>
         </div>
 
+      {/* Input Area — callable guard for single-agent conversations */}
+      {conversation?.mode === 'agent' && agents.length > 0 && !(agents[0].enabled === true && agents[0].status !== 'disabled') ? (
+        <div className="flex-shrink-0 bg-white dark:bg-slate-900 border-t border-lark-border dark:border-slate-800 px-6 py-4 flex items-center gap-3 transition-colors">
+          <div className="flex-1 flex items-center gap-3 px-4 py-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-xl">
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M5.07 19H19a2 2 0 001.73-3L13.73 4a2 2 0 00-3.46 0L3.27 16a2 2 0 001.8 3z" />
+            </svg>
+            <span className="text-sm text-amber-700 dark:text-amber-400 font-medium">
+              {agents[0].status === 'disabled' ? `${agents[0].name} 已被隐藏停用，无法继续发送消息。` : `该智能体当前不可用，无法发送消息。`}
+            </span>
+          </div>
+        </div>
+      ) : (
         <div className="flex-1 p-4 pt-1 border-t border-lark-border dark:border-slate-800 bg-white dark:bg-slate-900 h-full flex flex-col min-h-0 z-20 transition-colors">
           <div className={`border rounded-xl bg-white dark:bg-slate-950 transition-all flex flex-col relative z-30 flex-1 min-h-0 overflow-hidden ${
             isSandboxMode 
@@ -1161,6 +1174,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
             </div>
           </div>
         </div>
+      )}
       </div>
     </div>
   );

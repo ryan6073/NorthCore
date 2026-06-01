@@ -1,23 +1,91 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Artifact, ArtifactVersion } from '@/types';
-import { Copy, FileCode, FileText, Globe, Maximize2, GitCompare, RefreshCw, Edit3, Save, X, FolderOpen, ArrowDownToLine, History, Folder } from 'lucide-react';
+import { Copy, FileCode, FileText, Globe, Maximize2, GitCompare, RefreshCw, Edit3, Save, X, FolderOpen, ArrowDownToLine, History, Folder, Network } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 import CodeDiffViewer from './CodeDiffViewer';
 import CodeEditorContainer from './CodeEditorContainer';
 import { platform } from '@/utils/platform';
 import ConflictResolveModal from '../modal/ConflictResolveModal';
+import mermaid from 'mermaid';
 
 interface ArtifactPreviewProps {
   artifact: Artifact | null;
   onOpenFullScreen?: (artifactId: string) => void;
 }
 
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'dark',
+  securityLevel: 'loose',
+  logLevel: 2,
+});
+
+const MermaidRenderer: React.FC<{ chart: string }> = ({ chart }) => {
+  const [svg, setSvg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const elementId = useRef(`mermaid-md-${Math.random().toString(36).substr(2, 9)}`);
+
+  useEffect(() => {
+    let isMounted = true;
+    const render = async () => {
+      try {
+        setError(null);
+        const cleanChart = chart.trim();
+        const { svg: renderedSvg } = await mermaid.render(elementId.current, cleanChart);
+        if (isMounted) {
+          if (renderedSvg.includes('Syntax error in text') || renderedSvg.includes('class="error-icon"')) {
+            setError('图表语法错误');
+          } else {
+            setSvg(renderedSvg);
+          }
+        }
+      } catch (err) {
+        console.warn('Mermaid render error inside markdown:', err);
+        if (isMounted) {
+          setError('图表语法错误');
+        }
+      }
+    };
+    render();
+    return () => {
+      isMounted = false;
+    };
+  }, [chart]);
+
+  if (error) {
+    return (
+      <div className="bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-250 dark:border-yellow-800/30 p-3 rounded-lg text-xs my-2">
+        <p className="text-yellow-700 dark:text-yellow-300 font-semibold mb-1">⚠️ Mermaid 渲染失败</p>
+        <pre className="text-[10px] text-slate-500 dark:text-slate-400 overflow-x-auto whitespace-pre-wrap">{chart}</pre>
+      </div>
+    );
+  }
+
+  if (!svg) {
+    return (
+      <div className="flex items-center justify-center p-4 text-slate-400 text-xs gap-2">
+        <RefreshCw className="w-3.5 h-3.5 animate-spin" /> 正在渲染图表...
+      </div>
+    );
+  }
+
+  return (
+    <div 
+      className="w-full flex items-center justify-center my-3 p-4 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-150 dark:border-slate-800 overflow-auto"
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
+};
+
 const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullScreen }) => {
   const [activeTab, setActiveTab] = useState<'preview' | 'source' | 'diff'>('preview');
   const [copied, setCopied] = useState(false);
   const [splitView, setSplitView] = useState(true);
   const [localArtifactId, setLocalArtifactId] = useState<string | null>(null);
+  const [integratedHtml, setIntegratedHtml] = useState<string | undefined>(undefined);
+  const [mermaidSvg, setMermaidSvg] = useState<string | null>(null);
+  const [mermaidError, setMermaidError] = useState<string | null>(null);
 
   // Desktop integration states
   const [showHistory, setShowHistory] = useState(false);
@@ -157,6 +225,85 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       loadArtifactContent(currentArtifact.id);
     }
   }, [currentArtifact, versions.length, loadArtifactContent]);
+
+  // Render mermaid diagram with error protection
+  useEffect(() => {
+    if (currentArtifact?.type === 'mermaid' && activeTab === 'preview' && currentVersion?.content) {
+      const renderMermaid = async () => {
+        try {
+          setMermaidError(null);
+          const id = `mermaid-${currentArtifact.id}-${currentVersion.version}`;
+          const { svg } = await mermaid.render(id, currentVersion.content);
+          // Validate the SVG - check if it contains error text
+          if (svg.includes('Syntax error in text') || svg.includes('class="error-icon"')) {
+            setMermaidError('图表语法错误，请检查源码');
+            setMermaidSvg(null);
+          } else {
+            setMermaidSvg(svg);
+          }
+        } catch (err) {
+          console.warn('Mermaid render skipped (protected):', err);
+          setMermaidError('图表语法错误，请检查源码');
+          setMermaidSvg(null);
+        }
+      };
+      renderMermaid();
+    } else {
+      setMermaidSvg(null);
+      setMermaidError(null);
+    }
+  }, [currentArtifact?.id, currentArtifact?.type, activeTab, currentVersion?.version, currentVersion?.content]);
+
+  // Inline multi-file HTML assets (CSS, JS) in frontend, ensure 100% matches user's latest edits
+  const buildIntegratedHtml = (baseHtml: string): string => {
+    let result = baseHtml;
+    
+    // Inline CSS files: replace <link rel="stylesheet" href="xxx.css"> with <style>...</style>
+    const cssLinkRegex = /<link[^>]*rel=["']?stylesheet["']?[^>]*href=["']([^"']+\.css)["'][^>]*>/gi;
+    let cssMatch;
+    while ((cssMatch = cssLinkRegex.exec(result)) !== null) {
+      const filePath = cssMatch[1];
+      const cssArtifact = allArtifacts?.find((a: any) => 
+        a.title.toLowerCase() === filePath.toLowerCase() || 
+        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase())
+      );
+      const cssVersion = cssArtifact && artifactVersions[cssArtifact.id]?.find(v => v.id === cssArtifact.currentVersionId);
+      if (cssVersion?.content) {
+        result = result.replace(cssMatch[0], `<style>${cssVersion.content}</style>`);
+      }
+    }
+    
+    // Inline JS files: replace <script src="xxx.js"></script> with <script>...</script>
+    const scriptSrcRegex = /<script[^>]*src=["']([^"']+\.js)["'][^>]*>\s*<\/script>/gi;
+    let jsMatch;
+    while ((jsMatch = scriptSrcRegex.exec(result)) !== null) {
+      const filePath = jsMatch[1];
+      const jsArtifact = allArtifacts?.find((a: any) => 
+        a.title.toLowerCase() === filePath.toLowerCase() || 
+        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase())
+      );
+      const jsVersion = jsArtifact && artifactVersions[jsArtifact.id]?.find(v => v.id === jsArtifact.currentVersionId);
+      if (jsVersion?.content) {
+        result = result.replace(jsMatch[0], `<script>${jsVersion.content}</script>`);
+      }
+    }
+    
+    return result;
+  };
+
+  // Process multi-file inline HTML for preview
+  useEffect(() => {
+    if (
+      currentArtifact?.type === 'html' && 
+      activeTab === 'preview' &&
+      currentVersion?.content
+    ) {
+      const fullyIntegrated = buildIntegratedHtml(currentVersion.content);
+      setIntegratedHtml(fullyIntegrated);
+    } else {
+      setIntegratedHtml(undefined);
+    }
+  }, [currentArtifact?.id, currentArtifact?.type, activeTab, currentVersion?.version, currentVersion?.content, allArtifacts, artifactVersions]);
 
 
 
@@ -399,7 +546,40 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
               </div>
             ) : (
               <article className="prose prose-sm dark:prose-invert max-w-none text-lark-text-primary dark:text-slate-200 bg-white dark:bg-slate-900 border border-lark-border dark:border-slate-800 p-6 rounded-2xl shadow-sm leading-relaxed">
-                <ReactMarkdown>{currentVersion.content}</ReactMarkdown>
+                <ReactMarkdown
+                  components={{
+                    code({ node, className, children, ...props }) {
+                      const match = /language-(\w+)/.exec(className || '');
+                      if (match && match[1] === 'mermaid') {
+                        return <MermaidRenderer chart={String(children).replace(/\n$/, '')} />;
+                      }
+                      return (
+                        <code className={className} {...props}>
+                          {children}
+                        </code>
+                      );
+                    },
+                    img({ node, src, alt, ...props }) {
+                      return (
+                        <span className="block my-4 text-center">
+                          <img
+                            src={src}
+                            alt={alt}
+                            className="mx-auto max-w-full max-h-[350px] object-contain rounded-xl shadow-md border border-slate-200 dark:border-slate-800 transition-all hover:shadow-lg cursor-zoom-in"
+                            {...props}
+                          />
+                          {alt && (
+                            <span className="block mt-2 text-xs text-slate-400 dark:text-slate-500 font-sans italic">
+                              {alt}
+                            </span>
+                          )}
+                        </span>
+                      );
+                    }
+                  }}
+                >
+                  {currentVersion.content}
+                </ReactMarkdown>
               </article>
             )}
           </div>
@@ -422,6 +602,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
     if (currentArtifact.type === 'html') {
       if (activeTab === 'preview') {
+        const previewHtml = integratedHtml || htmlSrcDoc;
         return (
           <div className="h-full w-full p-4 overflow-hidden flex flex-col bg-[#fafbfb] dark:bg-slate-950">
             {/* Browser Header Bar */}
@@ -437,19 +618,88 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
             </div>
             {/* Browser Content */}
             <div className="flex-1 min-h-0 border-l border-r border-b border-slate-200 dark:border-slate-800 rounded-b-xl bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
-              {!currentVersion ? (
+              {(!previewHtml && !currentVersion) ? (
                 <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
                   <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
                 </div>
               ) : (
                 <iframe
-                  srcDoc={htmlSrcDoc}
+                  key={`html-preview-${currentVersion?.version || 1}-${currentArtifact?.id}`}
+                  srcDoc={previewHtml}
                   className="w-full h-full bg-white"
                   title="HTML Preview"
-                  sandbox="allow-scripts"
+                  sandbox="allow-scripts allow-same-origin"
                 />
               )}
             </div>
+          </div>
+        );
+      }
+      return (
+        <div 
+          className="h-full w-full overflow-y-auto p-4 bg-slate-950 relative"
+        >
+          {!currentVersion ? (
+            <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
+            </div>
+          ) : (
+            renderCodeLines(currentVersion.content)
+          )}
+        </div>
+      );
+    }
+
+    if (currentArtifact.type === 'image') {
+      return (
+        <div className="h-full w-full overflow-auto p-6 bg-[#0a0a0a] flex items-center justify-center">
+          {!currentVersion ? (
+            <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
+            </div>
+          ) : (
+            <img
+              src={currentVersion.content}
+              alt={currentArtifact.title}
+              className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+            />
+          )}
+        </div>
+      );
+    }
+
+    if (currentArtifact.type === 'mermaid') {
+      if (activeTab === 'preview') {
+        return (
+          <div className="h-full w-full overflow-auto p-6 bg-slate-50 dark:bg-slate-950 flex items-center justify-center">
+            {!currentVersion ? (
+              <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
+                <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
+              </div>
+            ) : mermaidError ? (
+              <div className="text-center p-6 max-w-md">
+                <div className="bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800/30 p-4 rounded-xl">
+                  <p className="text-yellow-700 dark:text-yellow-300 text-xs font-semibold mb-2">
+                    ⚠️ 图表语法提示
+                  </p>
+                  <p className="text-yellow-600 dark:text-yellow-400 text-[11px]">
+                    {mermaidError}
+                  </p>
+                  <p className="text-yellow-500 dark:text-yellow-500 text-[10px] mt-2">
+                    请切换到「源码」标签页检查和修改 mermaid 代码
+                  </p>
+                </div>
+              </div>
+            ) : mermaidSvg ? (
+              <div 
+                className="w-full h-full flex items-center justify-center"
+                dangerouslySetInnerHTML={{ __html: mermaidSvg }}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
+                <RefreshCw className="w-4 h-4 animate-spin" /> 渲染中...
+              </div>
+            )}
           </div>
         );
       }
@@ -485,11 +735,13 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     if (currentArtifact.type === 'code') return <FileCode className="w-4 h-4 text-green-500" />;
     if (currentArtifact.type === 'markdown') return <FileText className="w-4 h-4 text-blue-500" />;
     if (currentArtifact.type === 'html') return <Globe className="w-4 h-4 text-orange-500" />;
+    if (currentArtifact.type === 'image') return <Globe className="w-4 h-4 text-purple-500" />;
+    if (currentArtifact.type === 'mermaid') return <Network className="w-4 h-4 text-cyan-500" />;
     return <FileText className="w-4 h-4 text-slate-500" />;
   };
 
-  const needTabs = currentArtifact.type !== undefined && ['code', 'markdown', 'html'].includes(currentArtifact.type);
-  const isEditable = true;
+  const needTabs = currentArtifact.type !== undefined && ['code', 'markdown', 'html', 'image', 'mermaid'].includes(currentArtifact.type);
+  const isEditable = currentArtifact.type !== 'image';
 
   return (
     <div className="h-full w-full flex flex-col overflow-hidden text-lark-text-primary dark:text-slate-100 bg-white dark:bg-slate-900 relative">
@@ -656,7 +908,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
               className="px-2 py-1 text-[10px] rounded-lg border border-lark-border dark:border-slate-700 hover:bg-lark-bg-hover dark:hover:bg-slate-800 text-lark-text-secondary dark:text-slate-350 transition-all shadow-sm bg-white dark:bg-slate-900 flex items-center gap-1 active:scale-95"
               title="另存为其他文件名"
             >
-              <Save className="w-3 h-3 text-slate-450" />
+              <ArrowDownToLine className="w-3 h-3 text-slate-450" />
               另存为
             </button>
             <button

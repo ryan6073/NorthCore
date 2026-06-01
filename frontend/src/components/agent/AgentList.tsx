@@ -28,9 +28,11 @@ const AgentList: React.FC<AgentListProps> = ({ agents }) => {
   const [showConfirm, setShowConfirm] = useState(false);
   const [agentToRemove, setAgentToRemove] = useState<string | null>(null);
 
-  // Filter agents that are NOT in the active conversation
+  // Filter agents that are NOT in the active conversation, and only include callable agents
   const availableAgents = allAgents.filter(
     a => !agents.some(active => active.id === a.id)
+      && a.enabled === true
+      && a.status !== 'disabled'
   );
 
   const handleAdd = async (agentId: string) => {
@@ -141,7 +143,7 @@ const AgentList: React.FC<AgentListProps> = ({ agents }) => {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      setConfiguringAgentId(agent.id);
+                      setConfiguringAgentId(agent.id, true);
                     }}
                     className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-violet-550 dark:hover:text-violet-400 transition-colors"
                     title="配置智能体"

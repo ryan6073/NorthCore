@@ -33,7 +33,7 @@ export interface ArtifactReference {
   endLine?: number;
 }
 
-export type ArtifactType = 'code' | 'html' | 'markdown' | 'diff' | 'deploy';
+export type ArtifactType = 'code' | 'html' | 'markdown' | 'diff' | 'deploy' | 'image' | 'mermaid';
 
 export type AgentProvider =
   | 'mock'

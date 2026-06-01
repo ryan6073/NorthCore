@@ -310,13 +310,14 @@ interface Artifact {
   id: string;
   conversationId: string;
   title: string;
-  type: 'code' | 'html' | 'markdown' | 'diff' | 'deploy';
+  type: 'code' | 'html' | 'markdown' | 'diff' | 'deploy' | 'image' | 'mermaid';
   description?: string;
   tags?: string[];
   currentVersionId: string;
   latestVersion: number;
   createdAt: string;
   updatedAt: string;
+  runId?: string;
 }
 ```
 
@@ -653,10 +654,11 @@ interface AgentRunDetail {
 | provider | string | 否 | 按模型服务商筛选 |
 | keyword | string | 否 | 名称/描述关键词模糊搜索 |
 | enabled | boolean | 否 | 只返回启用的 Agent |
+| includeDisabled | boolean | 否 | 传 true 时返回所有 Agent（包括已禁用的） |
 
 **请求示例**:
 ```
-GET /api/v1/agents?page=1&pageSize=20&category=coding&enabled=true
+GET /api/v1/agents?includeDisabled=true
 ```
 
 **响应体示例**:

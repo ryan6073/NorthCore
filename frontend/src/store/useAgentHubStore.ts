@@ -98,7 +98,10 @@ const mergeRunSteps = (
 
 interface AgentHubStore {
   conversations: Conversation[];
+  /** 可用 Agent 列表（enabled=true && status!="disabled"），用于联系人列表/群聊选择等普通场景 */
   agents: Agent[];
+  /** 管理用全量 Agent 列表（enabled=true，含 status="disabled"），用于管理/配置弹窗 */
+  allAgents: Agent[];
   messages: Message[];
   artifacts: Artifact[];
   artifactVersions: Record<string, ArtifactVersion[]>;
@@ -112,6 +115,7 @@ interface AgentHubStore {
   isFullScreenOpen: boolean;
   selectedAgentId: string | null;
   configuringAgentId: string | null;
+  configuringAgentIsSessionLevel: boolean;
   leftSidebarViewMode: 'conversations' | 'agents' | 'agent-detail' | 'files' | 'workspace' | 'notifications' | 'settings';
   useMockMode: boolean;
   wsStatus: 'connecting' | 'connected' | 'disconnected';
@@ -145,7 +149,7 @@ interface AgentHubStore {
 
   setShowAgentChatView: (show: boolean) => void;
 
-  openAgentProfile: (agentId: string) => void;
+  openAgentProfile: (agentId: string, isSessionLevel?: boolean) => void;
   closeAgentProfile: () => void;
   getOrCreateAgentChat: (agentId: string) => Promise<Conversation>;
   sendAgentChatMessage: (agentChatId: string, content: string) => Promise<void>;
@@ -159,7 +163,7 @@ interface AgentHubStore {
   setIsNewConversationOpen: (open: boolean) => void;
   setIsFullScreenOpen: (open: boolean) => void;
   setSelectedAgentId: (id: string | null) => void;
-  setConfiguringAgentId: (id: string | null) => void;
+  setConfiguringAgentId: (id: string | null, isSessionLevel?: boolean) => void;
   setLeftSidebarViewMode: (mode: 'conversations' | 'agents' | 'agent-detail' | 'files' | 'workspace' | 'notifications' | 'settings') => void;
   
   // Phase 3 Actions
@@ -212,6 +216,12 @@ interface AgentHubStore {
   saveAgent: (agent: Agent) => Promise<void>;
   createAgent: (agent: Omit<Agent, 'id' | 'lastUsedAt'>) => Promise<string>;
   deleteAgent: (agentId: string) => Promise<void>;
+  /** 隐藏/停用 Agent（PUT status: "disabled"），从普通列表移除但管理弹窗仍可见 */
+  disableAgent: (agentId: string) => Promise<void>;
+  /** 恢复已隐藏 Agent（PUT status: "online"），加回普通列表 */
+  restoreAgent: (agentId: string) => Promise<void>;
+  /** 加载管理用全量列表（含 status="disabled" 的 Agent） */
+  loadAllAgents: () => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   renameConversation: (id: string, newTitle: string) => Promise<void>;
   togglePinConversation: (id: string) => Promise<void>;
@@ -296,6 +306,7 @@ const mergeLocalFlags = (list: Conversation[]): Conversation[] => {
 export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   conversations: [],
   agents: [],
+  allAgents: [],
   messages: [],
   artifacts: [],
   artifactVersions: {},
@@ -309,6 +320,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   isFullScreenOpen: false,
   selectedAgentId: null,
   configuringAgentId: null,
+  configuringAgentIsSessionLevel: false,
   leftSidebarViewMode: 'conversations',
   useMockMode: USE_MOCK,
   wsStatus: 'disconnected',
@@ -377,7 +389,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
   loadBusinessData: async () => {
     try {
-      const agentRes = await getAgentList();
+      const agentRes = await getAgentList({ includeDisabled: true });
       if (agentRes.code === 0) {
         set({ agents: agentRes.data.list as Agent[] });
       }
@@ -642,7 +654,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   setIsNewConversationOpen: (open) => set({ isNewConversationOpen: open }),
   setIsFullScreenOpen: (open) => set({ isFullScreenOpen: open }),
   setSelectedAgentId: (id) => set({ selectedAgentId: id }),
-  setConfiguringAgentId: (id) => set({ configuringAgentId: id }),
+  setConfiguringAgentId: (id, isSessionLevel = false) => set({ configuringAgentId: id, configuringAgentIsSessionLevel: isSessionLevel }),
   setLeftSidebarViewMode: (mode) => set({ leftSidebarViewMode: mode }),
 
   loadConversationData: async (convId) => {
@@ -829,7 +841,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     const candidateAgents = agents.filter(a =>
       (conversationAgentIds.length > 0 ? conversationAgentIds.includes(a.id) : true) &&
       !a.category.includes('orchestrator') &&
-      a.enabled
+      a.enabled === true &&
+      a.status !== 'disabled'
     );
 
     const items: AgentMentionItem[] = candidateAgents
@@ -1568,19 +1581,31 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     const { useMockMode } = get();
     if (!useMockMode) {
       try {
-        const { id, ownerUserId, owner_user_id, conversationId, lastUsedAt, status, ...updatePayload } = updatedAgent as any;
+        // 注意：不 strip status，以允许通过 saveAgent 更新 status 字段
+        const { id, ownerUserId, owner_user_id, conversationId, lastUsedAt, ...updatePayload } = updatedAgent as any;
         const res = await updateAgentDetail(updatedAgent.id, updatePayload);
         if (res.code === 0) {
+          const updated = res.data;
+          const callable = updated.enabled === true && updated.status !== 'disabled';
           set(state => ({
-            agents: state.agents.map(a => a.id === updatedAgent.id ? res.data : a),
+            // 若 callable，更新 agents；若已不再 callable（如变 disabled），从 agents 移除
+            agents: callable
+              ? state.agents.map(a => a.id === updated.id ? updated : a)
+              : state.agents.filter(a => a.id !== updated.id),
+            // allAgents 同步更新
+            allAgents: state.allAgents.map(a => a.id === updated.id ? updated : a),
           }));
         }
       } catch (e) {
         console.error('[Store] 更新 Agent 失败', e);
       }
     } else {
+      const callable = updatedAgent.enabled === true && updatedAgent.status !== 'disabled';
       set(state => ({
-        agents: state.agents.map(a => a.id === updatedAgent.id ? updatedAgent : a),
+        agents: callable
+          ? state.agents.map(a => a.id === updatedAgent.id ? updatedAgent : a)
+          : state.agents.filter(a => a.id !== updatedAgent.id),
+        allAgents: state.allAgents.map(a => a.id === updatedAgent.id ? updatedAgent : a),
       }));
     }
   },
@@ -1622,7 +1647,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         const res = await deleteAgentApi(agentId);
         if (res.code === 0) {
           set(state => ({
-            agents: state.agents.filter(a => a.id !== agentId)
+            agents: state.agents.filter(a => a.id !== agentId),
+            allAgents: state.allAgents.filter(a => a.id !== agentId),
           }));
         }
       } catch (e) {
@@ -1630,8 +1656,77 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       }
     } else {
       set(state => ({
-        agents: state.agents.filter(a => a.id !== agentId)
+        agents: state.agents.filter(a => a.id !== agentId),
+        allAgents: state.allAgents.filter(a => a.id !== agentId),
       }));
+    }
+  },
+
+  disableAgent: async (agentId) => {
+    const { useMockMode } = get();
+    try {
+      if (!useMockMode) {
+        const res = await updateAgentDetail(agentId, { status: 'disabled' } as any);
+        if (res.code === 0) {
+          set(state => ({
+            // 从可用列表移除
+            agents: state.agents.filter(a => a.id !== agentId),
+            // allAgents 保留并更新 status
+            allAgents: state.allAgents.map(a => a.id === agentId ? { ...a, status: 'disabled' as const } : a),
+          }));
+        }
+      } else {
+        set(state => ({
+          agents: state.agents.filter(a => a.id !== agentId),
+          allAgents: state.allAgents.map(a => a.id === agentId ? { ...a, status: 'disabled' as const } : a),
+        }));
+      }
+    } catch (e) {
+      console.error('[Store] 停用 Agent 失败', e);
+    }
+  },
+
+  restoreAgent: async (agentId) => {
+    const { useMockMode } = get();
+    try {
+      if (!useMockMode) {
+        const res = await updateAgentDetail(agentId, { status: 'online' } as any);
+        if (res.code === 0) {
+          const restored = res.data;
+          set(state => ({
+            // 若 callable，加回普通列表
+            agents: state.agents.some(a => a.id === agentId)
+              ? state.agents.map(a => a.id === agentId ? restored : a)
+              : [...state.agents, restored],
+            allAgents: state.allAgents.map(a => a.id === agentId ? restored : a),
+          }));
+        }
+      } else {
+        set(state => ({
+          agents: state.agents.some(a => a.id === agentId)
+            ? state.agents.map(a => a.id === agentId ? { ...a, status: 'online' as const } : a)
+            : [...state.agents, { ...state.allAgents.find(a => a.id === agentId)!, status: 'online' as const }],
+          allAgents: state.allAgents.map(a => a.id === agentId ? { ...a, status: 'online' as const } : a),
+        }));
+      }
+    } catch (e) {
+      console.error('[Store] 恢复 Agent 失败', e);
+    }
+  },
+
+  loadAllAgents: async () => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      // Mock 模式下从当前 agents 构造（将所有状态的 agent 都展示）
+      return;
+    }
+    try {
+      const res = await getAgentList({ includeDisabled: true });
+      if (res.code === 0) {
+        set({ allAgents: res.data.list as Agent[] });
+      }
+    } catch (e) {
+      console.error('[Store] 加载全量 Agent 列表失败', e);
     }
   },
 
@@ -2770,10 +2865,11 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
 
   // ============ v4 新增：Agent 一对一专属对话系统 Actions ============
-  openAgentProfile: (agentId) => {
+  openAgentProfile: (agentId, isSessionLevel = false) => {
     set({ 
       showAgentProfile: true, 
-      viewingAgentId: agentId 
+      viewingAgentId: agentId,
+      configuringAgentIsSessionLevel: isSessionLevel
     });
   },
 

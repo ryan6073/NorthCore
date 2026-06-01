@@ -49,34 +49,34 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, globalAgent,
 
   if (isEditing) {
     return (
-      <AgentConfigForm 
-        agent={agent} 
+      <AgentConfigForm
+        agent={agent}
         globalAgent={globalAgent}
         isSessionLevel={isSessionLevel}
         onSyncToGlobal={onSyncToGlobal}
-        onSave={(updated) => { 
-          onSave(updated); 
-          setIsEditing(false); 
-        }} 
-        onClose={() => { 
-          if (isNew) { 
-            onBack(); 
-          } else { 
-            setIsEditing(false); 
-          } 
-        }} 
+        onSave={(updated) => {
+          onSave(updated);
+          setIsEditing(false);
+        }}
+        onClose={() => {
+          if (isNew) {
+            onBack();
+          } else {
+            setIsEditing(false);
+          }
+        }}
       />
     );
   }
 
   return (
     <div className="h-full w-full bg-slate-50/50 dark:bg-slate-950 flex flex-col overflow-hidden text-slate-800 dark:text-slate-100 font-sans transition-colors">
-      
+
       {/* Header bar with controls */}
       <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-200/60 dark:border-slate-850 bg-white dark:bg-slate-900 flex-shrink-0 transition-colors shadow-sm z-10 gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          <button 
-            onClick={onBack} 
+          <button
+            onClick={onBack}
             className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 border border-slate-200/40 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm transition-all active:scale-95 flex-shrink-0"
             title="返回上一级"
           >
@@ -101,8 +101,8 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, globalAgent,
               <Trash2 className="w-4 h-4" />
             </button>
           )}
-          <button 
-            onClick={() => setIsEditing(true)} 
+          <button
+            onClick={() => setIsEditing(true)}
             className="px-3.5 py-2 bg-violet-600 hover:bg-violet-550 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-md shadow-violet-600/10 active:scale-95"
             title="重新配置参数"
           >
@@ -114,12 +114,12 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, globalAgent,
 
       {/* Main Details View Body */}
       <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
-        
+
         {/* Profile Card Banner */}
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-250/50 dark:border-slate-850 p-4 sm:p-6 shadow-sm relative overflow-hidden flex flex-col lg:flex-row gap-5 items-start lg:items-center">
           {/* Subtle design gradient dot background */}
           <div className="absolute top-0 right-0 w-36 h-36 bg-gradient-to-br from-violet-500/5 to-indigo-500/5 rounded-full blur-2xl pointer-events-none" />
-          
+
           <div className="w-12 h-12 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 shadow-md bg-slate-50 dark:bg-slate-950 flex-shrink-0 relative">
             <img src={agent.avatar} alt={agent.name} className="w-full h-full object-cover" />
           </div>
@@ -141,14 +141,14 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, globalAgent,
 
         {/* Core details layout grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          
+
           {/* Column 1: Model Config Card */}
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-850 p-4 sm:p-5 shadow-sm space-y-4">
             <h4 className="text-xs font-bold text-slate-650 dark:text-slate-300 flex items-center gap-1.5 border-b border-slate-100 dark:border-slate-800/80 pb-2">
               <Cpu className="w-4 h-4 text-violet-500" />
               <span>底层模型底座配置</span>
             </h4>
-            
+
             {(() => {
               const config = agent.modelConfig || { provider: 'custom', modelName: 'gpt-4o', temperature: 0.7, maxTokens: 4096 };
               return (
@@ -241,22 +241,20 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, globalAgent,
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
               {agent.tools.map(tool => (
                 <div key={tool.id} className="flex items-start gap-3 p-3.5 rounded-xl border border-slate-150 dark:border-slate-850 bg-slate-50/20 dark:bg-slate-950/20 hover:border-slate-200 dark:hover:border-slate-750 transition-all">
-                  <div className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 text-xs font-bold ${
-                    tool.enabled 
-                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-450' 
+                  <div className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 text-xs font-bold ${tool.enabled
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-450'
                       : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'
-                  }`}>
+                    }`}>
                     {tool.enabled ? <CheckCircle2 className="w-4 h-4" /> : <Wrench className="w-3.5 h-3.5" />}
                   </div>
                   <div className="min-w-0">
                     <span className="text-xs font-bold text-slate-700 dark:text-slate-200 block">{tool.name}</span>
                     <span className="text-[10px] text-slate-450 dark:text-slate-500 leading-relaxed block mt-0.5">{tool.description}</span>
                   </div>
-                  <span className={`text-[9px] px-2 py-0.5 rounded-full ml-auto flex-shrink-0 font-bold ${
-                    tool.enabled 
-                      ? 'bg-emerald-100 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400' 
+                  <span className={`text-[9px] px-2 py-0.5 rounded-full ml-auto flex-shrink-0 font-bold ${tool.enabled
+                      ? 'bg-emerald-100 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400'
                       : 'bg-slate-100 dark:bg-slate-800 text-slate-450'
-                  }`}>
+                    }`}>
                     {tool.enabled ? '启用中' : '未开启'}
                   </span>
                 </div>

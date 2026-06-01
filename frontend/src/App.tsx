@@ -115,8 +115,8 @@ function App() {
     setConfiguringAgentId(null);
   }, [setActiveConversationId, setLeftSidebarViewMode, setConfiguringAgentId]);
 
-  const handleSendMessage = useCallback(async (content: string, attachments?: any[], targetAgentId?: string, useSandbox?: boolean) => {
-    await sendMessage(content, attachments, targetAgentId, useSandbox);
+  const handleSendMessage = useCallback(async (content: string, attachments?: any[], targetAgentId?: string) => {
+    await sendMessage(content, attachments, targetAgentId);
   }, [sendMessage]);
 
   const handleCreateConversation = useCallback(async (payload: CreateConversationPayload) => {
@@ -202,8 +202,8 @@ function App() {
           chatPanel={
             configuringAgentId ? (() => {
               const globalAgent = agents.find(a => a.id === configuringAgentId);
-              let configAgent = configuringAgentId === 'new' 
-                ? getNewAgentTemplate() 
+              let configAgent = configuringAgentId === 'new'
+                ? getNewAgentTemplate()
                 : globalAgent;
               if (!configAgent) return null;
               if (activeConversationId && isSessionLevel && conversationAgentConfigs[activeConversationId]?.[configAgent.id]) {
@@ -285,3 +285,5 @@ function App() {
 }
 
 export default App;
+
+

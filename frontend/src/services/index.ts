@@ -12,7 +12,7 @@ const USE_MOCK = (import.meta as any).env?.VITE_USE_MOCK === 'true';
 
 const http = axios.create({
   baseURL,
-  timeout: 180000,
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },

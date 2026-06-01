@@ -80,8 +80,8 @@ const AgentProfileCard: React.FC<AgentProfileCardProps> = ({ agent, onClose, onG
   const toggleTool = (toolId: string) => {
     setEditForm(p => ({
       ...p,
-      tools: (p.tools || []).map(t => 
-         t.id === toolId ? { ...t, enabled: !t.enabled } : t
+      tools: (p.tools || []).map(t =>
+        t.id === toolId ? { ...t, enabled: !t.enabled } : t
       ),
     }));
   };
@@ -366,7 +366,7 @@ const AgentProfileCard: React.FC<AgentProfileCardProps> = ({ agent, onClose, onG
                       </div>
                       <div className="space-y-2">
                         {editForm.tools.map((tool) => (
-                          <div 
+                          <div
                             key={tool.id}
                             className="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800/50"
                           >
@@ -376,15 +376,13 @@ const AgentProfileCard: React.FC<AgentProfileCardProps> = ({ agent, onClose, onG
                             </div>
                             <button
                               onClick={() => toggleTool(tool.id)}
-                              className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${
-                                tool.enabled 
-                                  ? 'bg-lark-primary' 
+                              className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${tool.enabled
+                                  ? 'bg-lark-primary'
                                   : 'bg-slate-200 dark:bg-slate-700'
-                              }`}
+                                }`}
                             >
-                              <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-all shadow-sm ${
-                                tool.enabled ? 'translate-x-5' : 'translate-x-0'
-                              }`} />
+                              <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-all shadow-sm ${tool.enabled ? 'translate-x-5' : 'translate-x-0'
+                                }`} />
                             </button>
                           </div>
                         ))}

@@ -56,7 +56,7 @@ const AgentContactCard: React.FC<AgentContactCardProps> = ({
         <div 
           onClick={(e) => {
             e.stopPropagation();
-            openAgentProfile(agent.id);
+            openAgentProfile(agent.id, false);
           }}
           className="w-10 h-10 rounded-lg overflow-hidden border border-lark-border/40 dark:border-slate-800 shadow-sm bg-slate-100 dark:bg-slate-900 hover:scale-105 transition-transform cursor-pointer"
         >

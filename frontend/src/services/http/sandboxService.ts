@@ -1,15 +1,13 @@
 import http from '@/services/index';
-import type { 
-  BaseApiResponse, 
-  AgentRunDetail, 
-  SandboxFile, 
-  SandboxFileDetail, 
+import type {
+  BaseApiResponse,
+  AgentRunDetail,
+  SandboxFile,
+  SandboxFileDetail,
   SandboxConflict,
   SandboxHtmlPreview,
   CreateSandboxRunRequest,
-  PaginatedData,
-  Workspace,
-  WorkspaceTreeNode
+  PaginatedData
 } from '@/types';
 
 export async function createSandboxRun(
@@ -80,31 +78,6 @@ export async function cancelSandboxRun(
   return await http.post(`/runs/${runId}/cancel`);
 }
 
-export async function getWorkspaces(
-  page: number = 1,
-  pageSize: number = 20
-): Promise<BaseApiResponse<PaginatedData<Workspace>>> {
-  return await http.get('/workspaces', { params: { page, pageSize } });
-}
-
-export async function createWorkspace(
-  payload: { name: string }
-): Promise<BaseApiResponse<Workspace>> {
-  return await http.post('/workspaces', payload);
-}
-
-export async function getWorkspaceDetail(
-  workspaceId: string
-): Promise<BaseApiResponse<Workspace>> {
-  return await http.get(`/workspaces/${workspaceId}`);
-}
-
-export async function getSandboxFileTree(
-  runId: string
-): Promise<BaseApiResponse<WorkspaceTreeNode>> {
-  return await http.get(`/runs/${runId}/files/tree`);
-}
-
 const sandboxService = {
   createSandboxRun,
   getSandboxRunList,
@@ -115,10 +88,6 @@ const sandboxService = {
   getSandboxConflicts,
   resolveSandboxConflict,
   cancelSandboxRun,
-  getWorkspaces,
-  createWorkspace,
-  getWorkspaceDetail,
-  getSandboxFileTree
 };
 
 export default sandboxService;

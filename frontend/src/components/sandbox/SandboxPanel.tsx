@@ -1,67 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAgentHubStore } from '../../store/useAgentHubStore';
-import { 
-  CheckCircle2, AlertTriangle, Loader2, Terminal, 
+import {
+  CheckCircle2, AlertTriangle, Loader2, Terminal,
   FileText, GitMerge, ArrowLeft, Ban, ShieldAlert,
-  ChevronRight, FileCode, Check, Edit2, Undo, Folder, ChevronDown
+  ChevronRight, FileCode, Check, Edit2, Undo
 } from 'lucide-react';
-import { AgentRunStep, SandboxFile, SandboxConflict, WorkspaceTreeNode } from '../../types';
-
-interface FileTreeNodeProps {
-  node: WorkspaceTreeNode;
-  onFileClick: (path: string) => void;
-  selectedFilePath: string | null;
-}
-
-const FileTreeNodeComponent: React.FC<FileTreeNodeProps> = ({ node, onFileClick, selectedFilePath }) => {
-  const [isOpen, setIsOpen] = useState(true);
-
-  if (node.type === 'file') {
-    const isSelected = selectedFilePath === node.path;
-    return (
-      <div
-        onClick={() => node.path && onFileClick(node.path)}
-        className={`flex items-center space-x-2 px-2 py-1.5 rounded-lg cursor-pointer transition-all select-none text-xs font-mono border ${
-          isSelected
-            ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-350'
-            : 'border-transparent text-slate-300 hover:bg-slate-800/40 hover:text-slate-100'
-        }`}
-      >
-        <FileCode className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-indigo-400' : 'text-slate-450'}`} />
-        <span className="truncate">{node.name}</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-1">
-      <div
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center space-x-2 px-2 py-1.5 rounded-lg cursor-pointer text-xs font-semibold text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 select-none transition-all"
-      >
-        {isOpen ? (
-          <ChevronDown className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
-        ) : (
-          <ChevronRight className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
-        )}
-        <Folder className={`w-3.5 h-3.5 flex-shrink-0 ${isOpen ? 'text-indigo-400/80 fill-indigo-400/10' : 'text-slate-500'}`} />
-        <span className="truncate">{node.name}</span>
-      </div>
-      {isOpen && node.children && (
-        <div className="pl-3 border-l border-slate-800/60 ml-3.5 space-y-1 py-0.5">
-          {node.children.map((child, index) => (
-            <FileTreeNodeComponent
-              key={index}
-              node={child}
-              onFileClick={onFileClick}
-              selectedFilePath={selectedFilePath}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
+import { AgentRunStep, SandboxFile, SandboxConflict } from '../../types';
 
 export const SandboxPanel: React.FC = () => {
   const {
@@ -71,15 +15,14 @@ export const SandboxPanel: React.FC = () => {
     runFilesByRunId,
     runConflictsByRunId,
     selectedSandboxFilePathByRunId,
+    runFileContentsByRunId,
     loadSandboxFiles,
     loadSandboxFileContent,
     loadSandboxConflicts,
     resolveSandboxConflict,
     cancelSandboxRun,
     setSelectedSandboxFilePath,
-    getSelectedSandboxFilePath,
-    fileTreeByRunId,
-    loadSandboxFileTree
+    getSelectedSandboxFilePath
   } = useAgentHubStore();
 
   const activeRunId = getActiveRunId(activeConversationId);
@@ -87,11 +30,10 @@ export const SandboxPanel: React.FC = () => {
   const runFiles = activeRunId ? (runFilesByRunId[activeRunId] || []) : [];
   const runConflicts = activeRunId ? (runConflictsByRunId[activeRunId] || []) : [];
   const selectedSandboxFilePath = getSelectedSandboxFilePath(activeRunId);
-  const fileTree = activeRunId ? (fileTreeByRunId[activeRunId] || null) : null;
 
   const [activeTab, setActiveTab] = useState<'workflow' | 'files' | 'conflicts'>('workflow');
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
-  
+
   const [editingConflict, setEditingConflict] = useState<SandboxConflict | null>(null);
   const [manualContent, setManualContent] = useState<string>('');
   const [isResolving, setIsResolving] = useState(false);
@@ -105,7 +47,6 @@ export const SandboxPanel: React.FC = () => {
     if (!activeRunId || !activeRun) return;
 
     loadSandboxFiles(activeRunId);
-    loadSandboxFileTree(activeRunId);
     loadSandboxConflicts(activeRunId);
 
     if (activeRun.steps && activeRun.steps.length > 0) {
@@ -132,7 +73,7 @@ export const SandboxPanel: React.FC = () => {
       setSelectedFileContent('');
       return;
     }
-    
+
     const fetchContent = async () => {
       setIsFileLoading(true);
       try {
@@ -152,8 +93,8 @@ export const SandboxPanel: React.FC = () => {
       <div className="flex flex-col items-center justify-center h-full text-slate-400 p-6 space-y-4">
         <ShieldAlert className="w-12 h-12 text-slate-500 animate-pulse" />
         <p className="text-center font-medium">当前无正在执行的沙箱任务</p>
-        <p className="text-xs text-slate-555 text-center max-w-[240px]">
-          在聊天界面输入开发指令或点击 “沙箱运行” 面板开启安全隔离的 Docker 运行沙箱。
+        <p className="text-xs text-slate-500 text-center max-w-[240px]">
+          在聊天界面点击 “沙箱执行” 按钮即可开启安全隔离的 Docker 运行沙箱。
         </p>
       </div>
     );
@@ -213,9 +154,9 @@ export const SandboxPanel: React.FC = () => {
     setIsResolving(true);
     try {
       await resolveSandboxConflict(
-        activeRunId, 
-        editingConflict.id, 
-        resolution, 
+        activeRunId,
+        editingConflict.id,
+        resolution,
         resolution === 'manual' ? manualContent : undefined
       );
       setEditingConflict(null);
@@ -237,7 +178,7 @@ export const SandboxPanel: React.FC = () => {
         <div className="flex items-start justify-between">
           <div>
             <div className="flex items-center space-x-2">
-              <span className="text-xs uppercase tracking-wider font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded">Docker Sandbox V2</span>
+              <span className="text-xs uppercase tracking-wider font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded">Docker Sandbox V1</span>
               {getStatusBadge(activeRun.status)}
             </div>
             <h3 className="text-sm font-semibold mt-2 line-clamp-1 text-slate-100" title={activeRun.prompt}>
@@ -252,7 +193,7 @@ export const SandboxPanel: React.FC = () => {
           {(activeRun.status === 'running' || activeRun.status === 'pending' || activeRun.status === 'conflict') && (
             <button
               onClick={() => activeRunId && cancelSandboxRun(activeRunId)}
-              className="text-xs flex items-center space-x-1 px-2.5 py-1.5 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-all font-medium animate-pulse"
+              className="text-xs flex items-center space-x-1 px-2.5 py-1.5 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-all font-medium"
             >
               <Ban className="w-3.5 h-3.5 mr-1" />
               终止
@@ -263,22 +204,20 @@ export const SandboxPanel: React.FC = () => {
         <div className="flex space-x-1 mt-4 p-0.5 bg-slate-900/80 rounded-lg border border-slate-800/80">
           <button
             onClick={() => setActiveTab('workflow')}
-            className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all ${
-              activeTab === 'workflow'
+            className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === 'workflow'
                 ? 'bg-slate-800 text-indigo-400 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
-            }`}
+              }`}
           >
             <Terminal className="w-3.5 h-3.5 mr-1" />
             步骤 & 日志
           </button>
           <button
             onClick={() => setActiveTab('files')}
-            className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all ${
-              activeTab === 'files'
+            className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === 'files'
                 ? 'bg-slate-800 text-indigo-400 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
-            }`}
+              }`}
           >
             <FileText className="w-3.5 h-3.5 mr-1" />
             生成文件
@@ -290,11 +229,10 @@ export const SandboxPanel: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('conflicts')}
-            className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all relative ${
-              activeTab === 'conflicts'
+            className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all relative ${activeTab === 'conflicts'
                 ? 'bg-slate-800 text-indigo-400 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
-            }`}
+              }`}
           >
             <GitMerge className="w-3.5 h-3.5 mr-1" />
             冲突合并
@@ -308,7 +246,7 @@ export const SandboxPanel: React.FC = () => {
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0 bg-slate-900/40">
-        
+
         {activeTab === 'workflow' && (
           <div className="flex flex-col h-full">
             <div className="p-4 border-b border-slate-800/60 bg-slate-950/20">
@@ -318,7 +256,7 @@ export const SandboxPanel: React.FC = () => {
                   const isSelected = step.id === selectedStepId;
                   let statusColor = 'text-slate-500 bg-slate-800/30';
                   let icon = <div className="w-2 h-2 rounded-full bg-slate-600" />;
-                  
+
                   if (step.status === 'completed') {
                     statusColor = 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5';
                     icon = <CheckCircle2 className="w-4 h-4 text-emerald-400" />;
@@ -340,11 +278,10 @@ export const SandboxPanel: React.FC = () => {
                     <div
                       key={step.id}
                       onClick={() => setSelectedStepId(step.id)}
-                      className={`flex items-start space-x-3 p-2.5 rounded-lg border transition-all cursor-pointer ${
-                        isSelected 
-                          ? 'border-indigo-500 bg-indigo-500/5 text-indigo-200' 
+                      className={`flex items-start space-x-3 p-2.5 rounded-lg border transition-all cursor-pointer ${isSelected
+                          ? 'border-indigo-500 bg-indigo-500/5 text-indigo-200'
                           : 'border-slate-800 bg-slate-900/50 hover:bg-slate-800/40 text-slate-300'
-                      }`}
+                        }`}
                     >
                       <div className="mt-0.5">{icon}</div>
                       <div className="flex-1 min-w-0">
@@ -405,14 +342,14 @@ export const SandboxPanel: React.FC = () => {
                     className="flex items-center space-x-1 text-xs text-slate-400 hover:text-slate-200 transition-colors"
                   >
                     <ArrowLeft className="w-3.5 h-3.5" />
-                    <span>返回文件树</span>
+                    <span>返回文件列表</span>
                   </button>
-                  <span className="text-xs font-mono text-indigo-400 px-2 py-0.5 bg-indigo-500/10 rounded max-w-[200px] truncate" title={selectedSandboxFilePath}>
+                  <span className="text-xs font-mono text-indigo-400 px-2 py-0.5 bg-indigo-500/10 rounded">
                     {selectedSandboxFilePath}
                   </span>
                 </div>
-                
-                <div className="flex-grow overflow-auto p-4 font-mono text-xs text-slate-300">
+
+                <div className="flex-1 overflow-auto p-4 font-mono text-xs text-slate-300">
                   {isFileLoading ? (
                     <div className="flex flex-col items-center justify-center h-full space-y-2 text-slate-500">
                       <Loader2 className="w-6 h-6 animate-spin text-indigo-400" />
@@ -426,20 +363,13 @@ export const SandboxPanel: React.FC = () => {
                 </div>
               </div>
             ) : (
-              <div className="p-4 space-y-2 flex-grow overflow-y-auto">
-                <div className="text-[11px] uppercase text-slate-500 font-bold tracking-wider mb-2">沙箱环境文件目录树</div>
-                {fileTree && fileTree.children && fileTree.children.length > 0 ? (
-                  <div className="space-y-1">
-                    {fileTree.children.map((node, index) => (
-                      <FileTreeNodeComponent
-                        key={index}
-                        node={node}
-                        onFileClick={(path) => activeRunId && setSelectedSandboxFilePath(activeRunId, path)}
-                        selectedFilePath={selectedSandboxFilePath}
-                      />
-                    ))}
+              <div className="p-4 space-y-2">
+                <div className="text-[11px] uppercase text-slate-500 font-bold tracking-wider mb-2">沙箱环境生成的文件</div>
+                {runFiles.length === 0 ? (
+                  <div className="text-center py-8 text-slate-500 text-xs">
+                    当前尚未生成任何文件
                   </div>
-                ) : runFiles.length > 0 ? (
+                ) : (
                   <div className="grid grid-cols-1 gap-2">
                     {runFiles.map((file: SandboxFile) => (
                       <div
@@ -453,15 +383,14 @@ export const SandboxPanel: React.FC = () => {
                             <p className="text-xs font-medium text-slate-200 truncate group-hover:text-indigo-300 transition-colors">
                               {file.path}
                             </p>
+                            <p className="text-[10px] text-slate-500 mt-0.5">
+                              版本: V{file.currentVersion} • Hash: {file.contentHash.substring(0, 8)}
+                            </p>
                           </div>
                         </div>
                         <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-indigo-400 group-hover:translate-x-0.5 transition-all" />
                       </div>
                     ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-slate-500 text-xs">
-                    当前工作区尚未生成任何文件
                   </div>
                 )}
               </div>
@@ -531,7 +460,7 @@ export const SandboxPanel: React.FC = () => {
                         onClick={() => setManualContent(editingConflict.incomingContent || '')}
                         className="text-[10px] text-slate-500 hover:text-slate-300 flex items-center"
                       >
-                        <Undo className="w-3.5 h-3.5 mr-0.5" />
+                        <Undo className="w-3 h-3 mr-0.5" />
                         重置为传入内容
                       </button>
                     </div>
@@ -569,11 +498,10 @@ export const SandboxPanel: React.FC = () => {
                     {runConflicts.map((conflict: SandboxConflict) => (
                       <div
                         key={conflict.id}
-                        className={`flex flex-col p-3 rounded-lg border transition-all ${
-                          conflict.status === 'resolved'
+                        className={`flex flex-col p-3 rounded-lg border transition-all ${conflict.status === 'resolved'
                             ? 'border-slate-800 bg-slate-900/20 opacity-60'
                             : 'border-amber-500/20 bg-amber-500/5'
-                        }`}
+                          }`}
                       >
                         <div className="flex items-start justify-between">
                           <div className="flex items-center space-x-2.5 min-w-0">
@@ -587,11 +515,10 @@ export const SandboxPanel: React.FC = () => {
                               </p>
                             </div>
                           </div>
-                          <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${
-                            conflict.status === 'resolved'
+                          <span className={`text-[10px] px-1.5 py-0.2 rounded font-semibold ${conflict.status === 'resolved'
                               ? 'bg-slate-800 text-slate-400'
                               : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                          }`}>
+                            }`}>
                             {conflict.status === 'resolved' ? '已解决' : '未解决'}
                           </span>
                         </div>
@@ -637,4 +564,3 @@ export const SandboxPanel: React.FC = () => {
     </div>
   );
 };
-

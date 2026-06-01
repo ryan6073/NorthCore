@@ -535,6 +535,50 @@ export const mockArtifacts: Artifact[] = [
     latestVersion: 1,
     createdAt: '2026-05-23 10:45',
     updatedAt: '2026-05-23 10:45'
+  },
+  {
+    id: 'art-demo-image-1',
+    conversationId: 'conv-single-login',
+    title: '设计图-UI原型.png',
+    type: 'image',
+    description: '产品设计UI原型图',
+    currentVersionId: 'ver-demo-image-1',
+    latestVersion: 1,
+    createdAt: '2026-06-01 16:00',
+    updatedAt: '2026-06-01 16:00'
+  },
+  {
+    id: 'art-demo-image-2',
+    conversationId: 'conv-group-website',
+    title: 'Logo设计.svg',
+    type: 'image',
+    description: '官网品牌Logo图片',
+    currentVersionId: 'ver-demo-image-2',
+    latestVersion: 1,
+    createdAt: '2026-06-01 16:05',
+    updatedAt: '2026-06-01 16:05'
+  },
+  {
+    id: 'art-demo-mermaid-1',
+    conversationId: 'conv-single-login',
+    title: '系统架构图.mmd',
+    type: 'mermaid',
+    description: '系统架构流程图',
+    currentVersionId: 'ver-demo-mermaid-1',
+    latestVersion: 1,
+    createdAt: '2026-06-01 16:10',
+    updatedAt: '2026-06-01 16:10'
+  },
+  {
+    id: 'art-demo-mermaid-2',
+    conversationId: 'conv-group-website',
+    title: '用户注册时序图.mmd',
+    type: 'mermaid',
+    description: '用户注册流程时序图',
+    currentVersionId: 'ver-demo-mermaid-2',
+    latestVersion: 1,
+    createdAt: '2026-06-01 16:15',
+    updatedAt: '2026-06-01 16:15'
   }
 ];
 
@@ -798,6 +842,77 @@ Thumbs.db
     createdBy: 'agent-desktop-native',
     createdByType: 'agent',
     createdAt: '2026-05-23 10:45'
+  },
+  {
+    id: 'ver-demo-image-1',
+    artifactId: 'art-demo-image-1',
+    version: 1,
+    content: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=modern%20ui%20design%20prototype%20dashboard%20wireframe%20clean%20professional%20software%20interface%20white%20background&image_size=square_hd',
+    size: 204800,
+    createdBy: 'agent-design',
+    createdByType: 'agent',
+    createdAt: '2026-06-01 16:00'
+  },
+  {
+    id: 'ver-demo-image-2',
+    artifactId: 'art-demo-image-2',
+    version: 1,
+    content: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=minimalist%20modern%20tech%20logo%20geometric%20blue%20gradient%20clean%20professional%20branding%20abstract&image_size=square',
+    size: 102400,
+    createdBy: 'agent-design',
+    createdByType: 'agent',
+    createdAt: '2026-06-01 16:05'
+  },
+  {
+    id: 'ver-demo-mermaid-1',
+    artifactId: 'art-demo-mermaid-1',
+    version: 1,
+    content: `flowchart TD
+    A[用户访问] --> B{登录状态检查}
+    B -->|未登录| C[登录页面]
+    B -->|已登录| D[主应用]
+    C --> E[提交认证]
+    E --> F{认证成功?}
+    F -->|是| D
+    F -->|否| G[错误提示]
+    G --> C
+    D --> H[功能模块]
+    H --> I[聊天面板]
+    H --> J[产物管理]
+    H --> K[Agent设置]`,
+    size: 512,
+    createdBy: 'agent-orchestrator',
+    createdByType: 'agent',
+    createdAt: '2026-06-01 16:10'
+  },
+  {
+    id: 'ver-demo-mermaid-2',
+    artifactId: 'art-demo-mermaid-2',
+    version: 1,
+    content: `sequenceDiagram
+    participant U as 用户
+    participant F as 前端
+    participant A as 认证服务
+    participant D as 数据库
+    
+    U->>F: 输入注册信息
+    F->>A: 发送注册请求
+    A->>D: 检查邮箱是否已存在
+    D-->>A: 返回检查结果
+    alt 邮箱已存在
+        A-->>F: 返回错误提示
+        F-->>U: 显示错误
+    else 邮箱可用
+        A->>A: 密码哈希加密
+        A->>D: 创建新用户记录
+        D-->>A: 返回用户ID
+        A-->>F: 生成JWT令牌
+        F-->>U: 登录成功跳转
+    end`,
+    size: 768,
+    createdBy: 'agent-orchestrator',
+    createdByType: 'agent',
+    createdAt: '2026-06-01 16:15'
   }
 ];
 

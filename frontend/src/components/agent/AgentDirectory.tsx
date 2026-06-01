@@ -18,10 +18,12 @@ const AgentDirectory: React.FC<AgentDirectoryProps> = ({
 }) => {
   const [keyword, setKeyword] = useState('');
 
-  const filteredAgents = agents.filter(agent =>
-    agent.name.toLowerCase().includes(keyword.toLowerCase()) ||
-    agent.description.toLowerCase().includes(keyword.toLowerCase())
-  );
+  const filteredAgents = agents
+    .filter(agent => agent.enabled)
+    .filter(agent =>
+      agent.name.toLowerCase().includes(keyword.toLowerCase()) ||
+      agent.description.toLowerCase().includes(keyword.toLowerCase())
+    );
 
   return (
     <div className="h-full w-full flex flex-col bg-transparent">
