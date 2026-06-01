@@ -1,11 +1,11 @@
 import { create } from 'zustand';
-import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem, MemoryCategory, SendMessageRequest, ContextUsage, AgentChat, AgentChatMessage } from '@/types';
+import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem, MemoryCategory, SendMessageRequest, ContextUsage, AgentChat, AgentChatMessage, Workspace, WorkspaceTreeNode, AgentRunDetail, SandboxFile } from '@/types';
 import { getAgentList, updateAgentDetail, createAgent as createAgentApi, deleteAgent as deleteAgentApi, getAgentContact } from '@/services/http/agentService';
 import { getConversationList, createConversation as createConversationApi, updateConversation, compressContext, pinMessage, unpinMessage, getPins, getMemories, deleteMemory, updateMemory, deleteConversation, getContextUsage as getContextUsageApi, pinConversation, archiveConversation, getConversationAgentConfig, updateConversationAgentConfig, addAgentToConversation, removeAgentFromConversation } from '@/services/http/conversationService';
 import { getMessageList, sendMessageNonStreaming } from '@/services/http/messageService';
 import { getArtifactMetaList, getArtifactDetail, getArtifactVersions, updateArtifactContent } from '@/services/http/artifactService';
 import wsClient from '@/services/ws/wsClient';
-import { mockConversations, mockMessages, mockAgents as initialAgents, mockArtifacts, mockArtifactVersions } from '@/mock';
+import { mockConversations, mockMessages, mockAgents as initialAgents, mockArtifacts, mockArtifactVersions, mockSandboxNormalScenarios } from '@/mock';
 import { createId } from '@/utils/id';
 import { getCurrentFullTime } from '@/utils/time';
 import { generateMockReply } from '@/utils/mockReply';
@@ -48,6 +48,51 @@ const mapMessageMetadata = (m: Message): Message => {
     quotedMessage: m.quotedMessage || metadata?.quotedMessage || undefined,
     artifactRef: artifactRef || undefined,
   };
+};
+
+const mergeRunSteps = (
+  existingSteps: any[] | undefined,
+  incomingSteps: any[] | undefined,
+  freshStepId?: string,
+  freshStep?: any
+): any[] => {
+  const stepsToProcess = incomingSteps || existingSteps || [];
+  return stepsToProcess.map((s: any) => {
+    const existing = existingSteps?.find(x => x.id === s.id);
+
+    // 1. Determine the log: use the longer one
+    const incomingLog = s.log || s.logs || '';
+    const existingLog = existing?.log || existing?.logs || '';
+    let finalLog = incomingLog.length >= existingLog.length ? incomingLog : existingLog;
+
+    // 2. Determine the status:
+    let finalStatus = s.status;
+
+    // If this is the fresh step passed from the event
+    if (freshStepId && s.id === freshStepId) {
+      if (freshStep) {
+        finalStatus = freshStep.status || finalStatus;
+        const freshLog = freshStep.log || freshStep.logs || '';
+        if (freshLog.length > finalLog.length) {
+          finalLog = freshLog;
+        }
+      }
+    }
+
+    // If the existing status is more advanced and incoming is 'pending', keep existing to avoid rollback
+    if (existing && existing.status !== 'pending' && finalStatus === 'pending') {
+      finalStatus = existing.status;
+    }
+
+    return {
+      ...s,
+      ...((freshStepId && s.id === freshStepId && freshStep) ? freshStep : {}),
+      status: finalStatus,
+      log: finalLog,
+      logs: finalLog,
+      description: s.description || s.task || existing?.description || existing?.task || ''
+    };
+  });
 };
 
 
@@ -163,7 +208,7 @@ interface AgentHubStore {
   updateMemory: (memoryId: string, content: string, category?: MemoryCategory) => Promise<void>;
   saveEditedArtifact: (artifactId: string, newContent: string) => Promise<void>;
   
-  sendMessage: (content: string, attachments?: MessageAttachment[], targetAgentId?: string) => Promise<void>;
+  sendMessage: (content: string, attachments?: MessageAttachment[], targetAgentId?: string, useSandbox?: boolean) => Promise<void>;
   saveAgent: (agent: Agent) => Promise<void>;
   createAgent: (agent: Omit<Agent, 'id' | 'lastUsedAt'>) => Promise<string>;
   deleteAgent: (agentId: string) => Promise<void>;
@@ -180,23 +225,36 @@ interface AgentHubStore {
   addAgentToConversation: (conversationId: string, agentId: string) => Promise<void>;
   removeAgentFromConversation: (conversationId: string, agentId: string) => Promise<void>;
 
-  // Sandbox V1 States & Actions
-  activeRun: any; // AgentRunDetail | null
-  runFiles: any[]; // SandboxFile[]
-  runConflicts: any[]; // SandboxConflict[]
-  selectedSandboxFilePath: string | null;
-  runFileContents: Record<string, string>;
+  // Sandbox V1 States - 按会话和 runId 分离状态模型
+  runsByConversationId: Record<string, string[]>;
+  activeRunIdByConversationId: Record<string, string | null>;
+  runDetailsById: Record<string, any>; // AgentRunDetail
+  runFilesByRunId: Record<string, any[]>; // SandboxFile[]
+  runConflictsByRunId: Record<string, any[]>; // SandboxConflict[]
+  runFileContentsByRunId: Record<string, Record<string, string>>;
+  selectedSandboxFilePathByRunId: Record<string, string | null>;
   rightPanelTab: 'artifacts' | 'sandbox';
+  workspaces: Workspace[];
+  fileTreeByRunId: Record<string, WorkspaceTreeNode>;
   
+  // Sandbox V1 Actions
   setRightPanelTab: (tab: 'artifacts' | 'sandbox') => void;
-  setSelectedSandboxFilePath: (path: string | null) => void;
-  createSandboxRun: (prompt: string) => Promise<void>;
+  getActiveRunId: (conversationId: string | null) => string | null;
+  getActiveRun: (conversationId: string | null) => any | null;
+  setSelectedSandboxFilePath: (runId: string | null, path: string | null) => void;
+  getSelectedSandboxFilePath: (runId: string | null) => string | null;
+  createSandboxRun: (prompt: string, environmentProfile?: any) => Promise<void>;
+  loadSandboxRunList: (conversationId: string) => Promise<void>;
   loadSandboxRunDetail: (runId: string) => Promise<void>;
   loadSandboxFiles: (runId: string) => Promise<void>;
   loadSandboxFileContent: (runId: string, path: string) => Promise<string>;
   loadSandboxConflicts: (runId: string) => Promise<void>;
   resolveSandboxConflict: (runId: string, conflictId: string, resolution: 'current' | 'incoming' | 'manual', content?: string) => Promise<void>;
   cancelSandboxRun: (runId: string) => Promise<void>;
+  loadWorkspaces: () => Promise<void>;
+  createWorkspace: (name: string) => Promise<Workspace | null>;
+  loadSandboxFileTree: (runId: string) => Promise<WorkspaceTreeNode | null>;
+  bindConversationWorkspace: (conversationId: string, workspaceId: string | null) => Promise<void>;
   
   // Desktop Actions
   setWorkspaceSearchKeyword: (keyword: string) => void;
@@ -305,13 +363,17 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   isSettingsOpen: false,
   conversationAgentConfigs: {},
 
-  // Sandbox V1 States
-  activeRun: null,
-  runFiles: [],
-  runConflicts: [],
-  selectedSandboxFilePath: null,
-  runFileContents: {},
+  // Sandbox V1 States - 按会话和 runId 分离状态模型
+  runsByConversationId: {},
+  activeRunIdByConversationId: {},
+  runDetailsById: {},
+  runFilesByRunId: {},
+  runConflictsByRunId: {},
+  runFileContentsByRunId: {},
+  selectedSandboxFilePathByRunId: {},
   rightPanelTab: 'artifacts',
+  workspaces: [],
+  fileTreeByRunId: {},
 
   loadBusinessData: async () => {
     try {
@@ -563,6 +625,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     });
     if (id) {
       await get().loadConversationData(id);
+      if (wsClient.isConnected() && !get().useMockMode) {
+        wsClient.send('conversation.subscribe', { conversationId: id });
+      }
     }
   },
 
@@ -917,7 +982,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     console.log('[Store] 上下文压缩处理完成');
   },
 
-  sendMessage: async (content, attachments, targetAgentId) => {
+  sendMessage: async (content, attachments, targetAgentId, useSandbox) => {
     const { activeConversationId, useMockMode, conversations, agents, replyContext, quoteArtifactRef, workspaceContextFiles } = get();
     if (!activeConversationId) return;
 
@@ -966,6 +1031,283 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     get().clearFileContext();
 
     if (useMockMode) {
+      const isSandboxRequest = content.includes('登录') || content.includes('注册') || content.includes('页面') || content.includes('sandbox') || useSandbox;
+
+      if (isSandboxRequest) {
+        (async () => {
+          const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+          // 1. Show system status message
+          const statusMsg: Message = {
+            id: createId('msg'),
+            conversationId: activeConversationId,
+            senderId: 'system',
+            senderName: '系统',
+            role: 'system',
+            type: 'status',
+            content: '已识别为产物型任务，正在创建沙箱运行...',
+            createdAt: getCurrentFullTime()
+          };
+          
+          set(state => ({
+            messages: [...state.messages, statusMsg]
+          }));
+
+          await delay(1200);
+
+          // 2. Open the right panel and focus on sandbox tab
+          const mockRunId = `run-mock-${Date.now()}`;
+          const mockWorkspaceId = activeConv.workspaceId || `ws-mock-${Date.now()}`;
+          
+          set(state => ({
+            rightPanelTab: 'sandbox',
+            runsByConversationId: {
+              ...state.runsByConversationId,
+              [activeConversationId]: [mockRunId, ...(state.runsByConversationId[activeConversationId] || [])]
+            },
+            activeRunIdByConversationId: {
+              ...state.activeRunIdByConversationId,
+              [activeConversationId]: mockRunId
+            },
+            conversations: state.conversations.map(c =>
+              c.id === activeConversationId
+                ? { ...c, workspaceId: mockWorkspaceId }
+                : c
+            )
+          }));
+
+          // 3. Setup running states for steps
+          const steps = [
+            {
+              id: 'step-1',
+              runId: mockRunId,
+              agentId: 'agent-orchestrator',
+              agentName: 'Orchestrator',
+              status: 'running' as const,
+              description: '分析生成登录页面的需求与步骤...',
+              log: '>>> Starting sandbox execution task...\n>>> Analyzing requirements: Login page with username, password, login/register buttons.\n',
+              createdAt: getCurrentFullTime(),
+              updatedAt: getCurrentFullTime()
+            },
+            {
+              id: 'step-2',
+              runId: mockRunId,
+              agentId: 'agent-design',
+              agentName: 'DesignAgent',
+              status: 'pending' as const,
+              description: '设计页面布局与UI规范...',
+              createdAt: getCurrentFullTime(),
+              updatedAt: getCurrentFullTime()
+            },
+            {
+              id: 'step-3',
+              runId: mockRunId,
+              agentId: 'agent-codex',
+              agentName: 'CodeAgent',
+              status: 'pending' as const,
+              description: '生成前端页面及相关的CSS样式...',
+              createdAt: getCurrentFullTime(),
+              updatedAt: getCurrentFullTime()
+            }
+          ];
+
+          const mockRunDetail: AgentRunDetail = {
+            id: mockRunId,
+            sandboxId: `sb-mock-${Date.now()}`,
+            conversationId: activeConversationId,
+            ownerUserId: 'user',
+            status: 'running',
+            prompt: content,
+            dag: {
+              nodes: [
+                { id: 'step-1', label: '分析需求', agentId: 'agent-orchestrator', status: 'running', dependencies: [] },
+                { id: 'step-2', label: 'UI设计', agentId: 'agent-design', status: 'pending', dependencies: ['step-1'] },
+                { id: 'step-3', label: '生成代码', agentId: 'agent-codex', status: 'pending', dependencies: ['step-2'] }
+              ]
+            },
+            summary: '正在生成登录页面...',
+            createdAt: getCurrentFullTime(),
+            updatedAt: getCurrentFullTime(),
+            steps,
+            files: [],
+            conflicts: [],
+            workspaceId: mockWorkspaceId
+          };
+
+          set(state => ({
+            runDetailsById: {
+              ...state.runDetailsById,
+              [mockRunId]: mockRunDetail
+            }
+          }));
+
+          await delay(2000);
+
+          // 4. Progress step-1 to completed, step-2 to running
+          set(state => {
+            const currentRun = state.runDetailsById[mockRunId];
+            if (!currentRun) return {};
+            const updatedSteps = currentRun.steps.map((s: any) => {
+              if (s.id === 'step-1') return { ...s, status: 'completed' as const, log: s.log + '>>> Requirements analyzed successfully.\n', finishedAt: getCurrentFullTime() };
+              if (s.id === 'step-2') return { ...s, status: 'running' as const, log: '>>> Initializing UI specifications...\n>>> Selected Theme: Modern Lark Indigo & Emerald harmonized palette.\n>>> Creating layouts...\n', startedAt: getCurrentFullTime() };
+              return s;
+            });
+            const updatedDag = {
+              nodes: currentRun.dag.nodes.map((n: any) => {
+                if (n.id === 'step-1') return { ...n, status: 'completed' as const };
+                if (n.id === 'step-2') return { ...n, status: 'running' as const };
+                return n;
+              })
+            };
+            return {
+              runDetailsById: {
+                ...state.runDetailsById,
+                [mockRunId]: {
+                  ...currentRun,
+                  steps: updatedSteps,
+                  dag: updatedDag
+                }
+              }
+            };
+          });
+
+          await delay(2000);
+
+          // 5. Progress step-2 to completed, step-3 to running
+          set(state => {
+            const currentRun = state.runDetailsById[mockRunId];
+            if (!currentRun) return {};
+            const updatedSteps = currentRun.steps.map((s: any) => {
+              if (s.id === 'step-2') return { ...s, status: 'completed' as const, log: s.log + '>>> UI Design specifications generated successfully.\n', finishedAt: getCurrentFullTime() };
+              if (s.id === 'step-3') return { ...s, status: 'running' as const, log: '>>> Generating code and styling...\n>>> Writing component `Login.tsx`...\n>>> Writing styles `Login.css`...\n', startedAt: getCurrentFullTime() };
+              return s;
+            });
+            const updatedDag = {
+              nodes: currentRun.dag.nodes.map((n: any) => {
+                if (n.id === 'step-2') return { ...n, status: 'completed' as const };
+                if (n.id === 'step-3') return { ...n, status: 'running' as const };
+                return n;
+              })
+            };
+            return {
+              runDetailsById: {
+                ...state.runDetailsById,
+                [mockRunId]: {
+                  ...currentRun,
+                  steps: updatedSteps,
+                  dag: updatedDag
+                }
+              }
+            };
+          });
+
+          await delay(2000);
+
+          // 6. Complete step-3 and output mock files!
+          const mockFiles: SandboxFile[] = [
+            {
+              id: 'file-1',
+              sandboxId: mockRunDetail.sandboxId,
+              runId: mockRunId,
+              path: 'src/components/Login.tsx',
+              contentHash: 'hash1',
+              currentVersion: 1,
+              createdAt: getCurrentFullTime(),
+              updatedAt: getCurrentFullTime()
+            },
+            {
+              id: 'file-2',
+              sandboxId: mockRunDetail.sandboxId,
+              runId: mockRunId,
+              path: 'src/styles/Login.css',
+              contentHash: 'hash2',
+              currentVersion: 1,
+              createdAt: getCurrentFullTime(),
+              updatedAt: getCurrentFullTime()
+            }
+          ];
+
+          const mockFileContents = {
+            'src/components/Login.tsx': `import React from 'react';\nimport '../styles/Login.css';\n\nexport default function Login() {\n  return (\n    <div className="login-container">\n      <form className="login-form">\n        <h2>Welcome Back</h2>\n        <input type="text" placeholder="Username" required />\n        <input type="password" placeholder="Password" required />\n        <button type="submit">Sign In</button>\n      </form>\n    </div>\n  );\n}`,
+            'src/styles/Login.css': `.login-container {\n  display: flex;\n  justify-content: center;\n  align-items: center;\n  height: 100vh;\n  background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);\n}`
+          };
+
+          const fileTree: WorkspaceTreeNode = {
+            path: 'src',
+            name: 'src',
+            type: 'directory',
+            children: [
+              {
+                path: 'src/components',
+                name: 'components',
+                type: 'directory',
+                children: [
+                  {
+                    path: 'src/components/Login.tsx',
+                    name: 'Login.tsx',
+                    type: 'file'
+                  }
+                ]
+              },
+              {
+                path: 'src/styles',
+                name: 'styles',
+                type: 'directory',
+                children: [
+                  {
+                    path: 'src/styles/Login.css',
+                    name: 'Login.css',
+                    type: 'file'
+                  }
+                ]
+              }
+            ]
+          };
+
+          set(state => {
+            const currentRun = state.runDetailsById[mockRunId];
+            if (!currentRun) return {};
+            const updatedSteps = currentRun.steps.map((s: any) => {
+              if (s.id === 'step-3') return { ...s, status: 'completed' as const, log: s.log + '>>> Code and styling generated and written to files successfully.\n>>> Sandbox run finished.\n', finishedAt: getCurrentFullTime() };
+              return s;
+            });
+            const updatedDag = {
+              nodes: currentRun.dag.nodes.map((n: any) => {
+                if (n.id === 'step-3') return { ...n, status: 'completed' as const };
+                return n;
+              })
+            };
+            return {
+              runDetailsById: {
+                ...state.runDetailsById,
+                [mockRunId]: {
+                  ...currentRun,
+                  status: 'completed' as const,
+                  steps: updatedSteps,
+                  dag: updatedDag,
+                  files: mockFiles
+                }
+              },
+              runFilesByRunId: {
+                ...state.runFilesByRunId,
+                [mockRunId]: mockFiles
+              },
+              runFileContentsByRunId: {
+                ...state.runFileContentsByRunId,
+                [mockRunId]: mockFileContents
+              },
+              fileTreeByRunId: {
+                ...state.fileTreeByRunId,
+                [mockRunId]: fileTree
+              },
+              isProcessing: false
+            };
+          });
+
+        })();
+        return;
+      }
+
       const replyResult = generateMockReply({
         conversation: activeConv,
         agents,
@@ -1078,15 +1420,60 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           quotedMessageId: replyContext?.id || undefined,
           artifactRef: quoteArtifactRef || undefined,
           attachments,
+          useSandbox: useSandbox ? true : undefined,
+          executionMode: useSandbox ? 'sandbox' : undefined
         };
         const res = await sendMessageNonStreaming(activeConversationId, payload);
         if (res.code === 0) {
-          const { userMessage, agentMessages, artifacts, contextUsage } = res.data;
+          const { userMessage, agentMessages, artifacts, contextUsage, executionMode, run, workspaceId } = res.data;
+
+          if (executionMode === 'sandbox' && run) {
+            const runDetail = run;
+            set(state => ({
+              runsByConversationId: {
+                ...state.runsByConversationId,
+                [activeConversationId]: state.runsByConversationId[activeConversationId]?.includes(runDetail.id)
+                  ? state.runsByConversationId[activeConversationId]
+                  : [runDetail.id, ...(state.runsByConversationId[activeConversationId] || [])]
+              },
+              activeRunIdByConversationId: {
+                ...state.activeRunIdByConversationId,
+                [activeConversationId]: runDetail.id
+              },
+              runDetailsById: {
+                ...state.runDetailsById,
+                [runDetail.id]: runDetail
+              },
+              runFilesByRunId: {
+                ...state.runFilesByRunId,
+                [runDetail.id]: runDetail.files || []
+              },
+              runConflictsByRunId: {
+                ...state.runConflictsByRunId,
+                [runDetail.id]: runDetail.conflicts || []
+              },
+              runFileContentsByRunId: {
+                ...state.runFileContentsByRunId,
+                [runDetail.id]: {}
+              },
+              selectedSandboxFilePathByRunId: {
+                ...state.selectedSandboxFilePathByRunId,
+                [runDetail.id]: null
+              },
+              rightPanelTab: 'sandbox',
+              conversations: state.conversations.map(c =>
+                c.id === activeConversationId && workspaceId
+                  ? { ...c, workspaceId }
+                  : c
+              )
+            }));
+            get().loadSandboxFileTree(runDetail.id);
+          }
           
           // Cache the artifactRef with the server-side message ID if present
-          const mappedUserMessage = mapMessageMetadata(userMessage);
-          const finalArtifactRef = mappedUserMessage.artifactRef || newUserMessage.artifactRef;
-          if (finalArtifactRef && userMessage.id) {
+          const mappedUserMessage = userMessage ? mapMessageMetadata(userMessage) : null;
+          const finalArtifactRef = (mappedUserMessage && mappedUserMessage.artifactRef) || newUserMessage.artifactRef;
+          if (finalArtifactRef && userMessage && userMessage.id) {
             saveArtifactRefToLocal(userMessage.id, finalArtifactRef);
           }
 
@@ -1094,11 +1481,11 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             // Replace the optimistic message with the actual user message, preserving local reply/citation fields
             const updatedMessages = state.messages.map(m => {
               if (m.id === newUserMessage.id) {
-                return {
+                return mappedUserMessage ? {
                   ...mappedUserMessage,
                   quotedMessage: mappedUserMessage.quotedMessage || m.quotedMessage,
                   artifactRef: finalArtifactRef,
-                };
+                } : m;
               }
               return m;
             });
@@ -1475,6 +1862,11 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       await wsClient.connect();
       set({ wsStatus: 'connected' });
 
+      const activeConvId = get().activeConversationId;
+      if (activeConvId && !get().useMockMode) {
+        wsClient.send('conversation.subscribe', { conversationId: activeConvId });
+      }
+
       const unsubThinking = wsClient.on('agent.thinking.started', (event: any) => {
         const { agentId, agentName, conversationId } = event.data;
         set(state => {
@@ -1623,60 +2015,322 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         });
       });
 
+      const unsubExecutionDecided = wsClient.on('execution.mode.decided', (event: any) => {
+        const { conversationId, executionMode } = event.data;
+        if (executionMode === 'sandbox') {
+          set({ rightPanelTab: 'sandbox' });
+        }
+      });
+
       const unsubRunCreated = wsClient.on('run.created', (event: any) => {
-        const { runId } = event.data;
-        get().loadSandboxRunDetail(runId);
+        const { runId, conversationId, run } = event.data;
+        if (conversationId) {
+          set(state => ({
+            runsByConversationId: {
+              ...state.runsByConversationId,
+              [conversationId]: state.runsByConversationId[conversationId]?.includes(runId)
+                ? state.runsByConversationId[conversationId]
+                : [runId, ...(state.runsByConversationId[conversationId] || [])]
+            },
+            activeRunIdByConversationId: {
+              ...state.activeRunIdByConversationId,
+              [conversationId]: runId
+            },
+            rightPanelTab: 'sandbox'
+          }));
+        }
+        if (run) {
+          const runDetail = {
+            ...run,
+            steps: run.steps?.map((s: any) => ({
+              ...s,
+              log: s.log || s.logs || '',
+              description: s.description || s.task || ''
+            })) || []
+          };
+          set(state => ({
+            runDetailsById: {
+              ...state.runDetailsById,
+              [runId]: runDetail
+            },
+            runFilesByRunId: {
+              ...state.runFilesByRunId,
+              [runId]: runDetail.files || []
+            },
+            runConflictsByRunId: {
+              ...state.runConflictsByRunId,
+              [runId]: runDetail.conflicts || []
+            }
+          }));
+          get().loadSandboxFileTree(runId);
+        } else {
+          get().loadSandboxRunDetail(runId);
+        }
       });
 
       const unsubRunStepStarted = wsClient.on('run.step.started', (event: any) => {
-        const { runId } = event.data;
-        get().loadSandboxRunDetail(runId);
+        const { runId, stepId, status, run, steps, step } = event.data;
+        set(state => {
+          const existingRun = state.runDetailsById[runId];
+          const incomingSteps = run?.steps || steps || existingRun?.steps || [];
+          const mergedSteps = mergeRunSteps(
+            existingRun?.steps,
+            incomingSteps,
+            stepId,
+            step || { status: status || 'running' }
+          );
+
+          const baseRun = run || existingRun;
+          if (!baseRun) {
+            setTimeout(() => get().loadSandboxRunDetail(runId), 0);
+            return {};
+          }
+
+          const updatedDag = baseRun.dag ? {
+            ...baseRun.dag,
+            nodes: baseRun.dag.nodes?.map((n: any) => {
+              const isMatch = n.id === stepId || (step && n.id === step.id);
+              if (isMatch) {
+                return { ...n, status: status || step?.status || 'running' };
+              }
+              return n;
+            }) || []
+          } : undefined;
+
+          const runDetail = {
+            ...baseRun,
+            steps: mergedSteps,
+            dag: updatedDag || baseRun.dag
+          };
+
+          return {
+            runDetailsById: {
+              ...state.runDetailsById,
+              [runId]: runDetail
+            }
+          };
+        });
       });
 
       const unsubRunStepLog = wsClient.on('run.step.log', (event: any) => {
         const { runId, stepId, log } = event.data;
         set(state => {
-          if (!state.activeRun || state.activeRun.id !== runId) return {};
-          const updatedSteps = state.activeRun.steps.map((step: any) => {
+          const targetRun = state.runDetailsById[runId];
+          if (!targetRun) return {};
+          const updatedSteps = targetRun.steps?.map((step: any) => {
             if (step.id === stepId) {
-              return { ...step, log: (step.log || '') + log };
+              const currentLog = step.log || step.logs || '';
+              return { 
+                ...step, 
+                log: currentLog + log,
+                logs: currentLog + log
+              };
             }
             return step;
-          });
+          }) || [];
           return {
-            activeRun: {
-              ...state.activeRun,
-              steps: updatedSteps
+            runDetailsById: {
+              ...state.runDetailsById,
+              [runId]: {
+                ...targetRun,
+                steps: updatedSteps
+              }
             }
           };
         });
       });
 
       const unsubRunStepCompleted = wsClient.on('run.step.completed', (event: any) => {
-        const { runId } = event.data;
-        get().loadSandboxRunDetail(runId);
+        const { runId, stepId, status, run, steps, step } = event.data;
+        set(state => {
+          const existingRun = state.runDetailsById[runId];
+          const incomingSteps = run?.steps || steps || existingRun?.steps || [];
+          const mergedSteps = mergeRunSteps(
+            existingRun?.steps,
+            incomingSteps,
+            stepId,
+            step || { status: status || 'completed' }
+          );
+
+          const baseRun = run || existingRun;
+          if (!baseRun) {
+            setTimeout(() => get().loadSandboxRunDetail(runId), 0);
+            return {};
+          }
+
+          const updatedDag = baseRun.dag ? {
+            ...baseRun.dag,
+            nodes: baseRun.dag.nodes?.map((n: any) => {
+              const isMatch = n.id === stepId || (step && n.id === step.id);
+              if (isMatch) {
+                return { ...n, status: status || step?.status || 'completed' };
+              }
+              return n;
+            }) || []
+          } : undefined;
+
+          const runDetail = {
+            ...baseRun,
+            steps: mergedSteps,
+            dag: updatedDag || baseRun.dag
+          };
+
+          return {
+            runDetailsById: {
+              ...state.runDetailsById,
+              [runId]: runDetail
+            }
+          };
+        });
       });
 
       const unsubRunStepFailed = wsClient.on('run.step.failed', (event: any) => {
-        const { runId } = event.data;
-        get().loadSandboxRunDetail(runId);
+        const { runId, stepId, status, run, steps, step } = event.data;
+        set(state => {
+          const existingRun = state.runDetailsById[runId];
+          const incomingSteps = run?.steps || steps || existingRun?.steps || [];
+          const mergedSteps = mergeRunSteps(
+            existingRun?.steps,
+            incomingSteps,
+            stepId,
+            step || { status: status || 'failed' }
+          );
+
+          const baseRun = run || existingRun;
+          if (!baseRun) {
+            setTimeout(() => get().loadSandboxRunDetail(runId), 0);
+            return {};
+          }
+
+          const updatedDag = baseRun.dag ? {
+            ...baseRun.dag,
+            nodes: baseRun.dag.nodes?.map((n: any) => {
+              const isMatch = n.id === stepId || (step && n.id === step.id);
+              if (isMatch) {
+                return { ...n, status: status || step?.status || 'failed' };
+              }
+              return n;
+            }) || []
+          } : undefined;
+
+          const runDetail = {
+            ...baseRun,
+            steps: mergedSteps,
+            dag: updatedDag || baseRun.dag
+          };
+
+          return {
+            runDetailsById: {
+              ...state.runDetailsById,
+              [runId]: runDetail
+            }
+          };
+        });
       });
 
       const unsubRunStepConflict = wsClient.on('run.step.conflict', (event: any) => {
-        const { runId } = event.data;
-        get().loadSandboxRunDetail(runId);
-        get().loadSandboxConflicts(runId);
+        const { runId, stepId, status, run, steps, conflicts, step } = event.data;
+        set(state => {
+          const existingRun = state.runDetailsById[runId];
+          const incomingSteps = run?.steps || steps || existingRun?.steps || [];
+          const mergedSteps = mergeRunSteps(
+            existingRun?.steps,
+            incomingSteps,
+            stepId,
+            step || { status: status || 'conflict' }
+          );
+
+          const baseRun = run || existingRun;
+          if (!baseRun) {
+            setTimeout(() => get().loadSandboxRunDetail(runId), 0);
+            return {};
+          }
+
+          const updatedDag = baseRun.dag ? {
+            ...baseRun.dag,
+            nodes: baseRun.dag.nodes?.map((n: any) => {
+              const isMatch = n.id === stepId || (step && n.id === step.id);
+              if (isMatch) {
+                return { ...n, status: status || step?.status || 'conflict' };
+              }
+              return n;
+            }) || []
+          } : undefined;
+
+          const runDetail = {
+            ...baseRun,
+            steps: mergedSteps,
+            dag: updatedDag || baseRun.dag
+          };
+
+          return {
+            runDetailsById: {
+              ...state.runDetailsById,
+              [runId]: runDetail
+            },
+            runConflictsByRunId: {
+              ...state.runConflictsByRunId,
+              [runId]: conflicts || runDetail.conflicts || []
+            }
+          };
+        });
       });
 
       const unsubRunCompleted = wsClient.on('run.completed', (event: any) => {
-        const { runId } = event.data;
-        get().loadSandboxRunDetail(runId);
-        get().loadSandboxFiles(runId);
+        const { runId, run, files } = event.data;
+        if (run) {
+          set(state => {
+            const existingRun = state.runDetailsById[runId];
+            const mergedSteps = mergeRunSteps(existingRun?.steps, run.steps);
+            const runDetail = {
+              ...run,
+              steps: mergedSteps
+            };
+            return {
+              runDetailsById: {
+                ...state.runDetailsById,
+                [runId]: runDetail
+              }
+            };
+          });
+        }
+        if (files) {
+          set(state => ({
+            runFilesByRunId: {
+              ...state.runFilesByRunId,
+              [runId]: files
+            }
+          }));
+        }
+        if (run) {
+          get().loadSandboxFileTree(runId);
+        } else {
+          get().loadSandboxRunDetail(runId);
+          get().loadSandboxFiles(runId);
+          get().loadSandboxFileTree(runId);
+        }
       });
 
       const unsubRunFailed = wsClient.on('run.failed', (event: any) => {
-        const { runId } = event.data;
-        get().loadSandboxRunDetail(runId);
+        const { runId, run } = event.data;
+        if (run) {
+          set(state => {
+            const existingRun = state.runDetailsById[runId];
+            const mergedSteps = mergeRunSteps(existingRun?.steps, run.steps);
+            const runDetail = {
+              ...run,
+              steps: mergedSteps
+            };
+            return {
+              runDetailsById: {
+                ...state.runDetailsById,
+                [runId]: runDetail
+              }
+            };
+          });
+        } else {
+          get().loadSandboxRunDetail(runId);
+        }
       });
 
       (wsClient as any)._unsubs = [
@@ -1694,6 +2348,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         unsubRunStepConflict,
         unsubRunCompleted,
         unsubRunFailed,
+        unsubExecutionDecided,
       ];
     } catch (e) {
       console.error('[Store] WS 连接失败', e);
@@ -2248,255 +2903,366 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
   setShowAgentChatView: (show) => set({ showAgentChatView: show }),
 
+  // ============ Sandbox V1: 按会话和 runId 分离的状态模型 ============
   setRightPanelTab: (tab) => set({ rightPanelTab: tab }),
-  setSelectedSandboxFilePath: (path) => set({ selectedSandboxFilePath: path }),
 
-  createSandboxRun: async (prompt) => {
-    const { activeConversationId, useMockMode } = get();
+  getActiveRunId: (conversationId) => {
+    const { activeRunIdByConversationId } = get();
+    if (!conversationId) return null;
+    return activeRunIdByConversationId[conversationId] || null;
+  },
+
+  getActiveRun: (conversationId) => {
+    const { getActiveRunId, runDetailsById } = get();
+    const activeRunId = getActiveRunId(conversationId);
+    if (!activeRunId) return null;
+    return runDetailsById[activeRunId] || null;
+  },
+
+  setSelectedSandboxFilePath: (runId, path) => {
+    set(state => ({
+      selectedSandboxFilePathByRunId: {
+        ...state.selectedSandboxFilePathByRunId,
+        [runId || '']: path
+      }
+    }));
+  },
+
+  getSelectedSandboxFilePath: (runId) => {
+    const { selectedSandboxFilePathByRunId } = get();
+    if (!runId) return null;
+    return selectedSandboxFilePathByRunId[runId] || null;
+  },
+
+  createSandboxRun: async (prompt, environmentProfile) => {
+    const { activeConversationId, useMockMode, conversations } = get();
     if (!activeConversationId) return;
+
+    const conversation = conversations.find(c => c.id === activeConversationId);
+    const workspaceId = conversation?.workspaceId || undefined;
 
     if (!useMockMode) {
       try {
-        const res = await sandboxService.createSandboxRun(activeConversationId, prompt);
+        const res = await sandboxService.createSandboxRun(activeConversationId, { prompt, environmentProfile, workspaceId });
         if (res.code === 0 && res.data) {
-          set({
-            activeRun: res.data,
-            rightPanelTab: 'sandbox',
-            runFiles: res.data.files || [],
-            runConflicts: res.data.conflicts || [],
-            selectedSandboxFilePath: null,
-            runFileContents: {}
-          });
+          const runDetail = res.data;
+          set(state => ({
+            runsByConversationId: {
+              ...state.runsByConversationId,
+              [activeConversationId]: [runDetail.id, ...(state.runsByConversationId[activeConversationId] || [])]
+            },
+            activeRunIdByConversationId: {
+              ...state.activeRunIdByConversationId,
+              [activeConversationId]: runDetail.id
+            },
+            runDetailsById: {
+              ...state.runDetailsById,
+              [runDetail.id]: runDetail
+            },
+            runFilesByRunId: {
+              ...state.runFilesByRunId,
+              [runDetail.id]: runDetail.files || []
+            },
+            runConflictsByRunId: {
+              ...state.runConflictsByRunId,
+              [runDetail.id]: runDetail.conflicts || []
+            },
+            runFileContentsByRunId: {
+              ...state.runFileContentsByRunId,
+              [runDetail.id]: {}
+            },
+            selectedSandboxFilePathByRunId: {
+              ...state.selectedSandboxFilePathByRunId,
+              [runDetail.id]: null
+            },
+            rightPanelTab: 'sandbox'
+          }));
         }
       } catch (e) {
         console.error('[Store] 创建沙箱失败', e);
       }
     } else {
-      // Mock execution simulation
-      const runId = createId('run');
       const hasConflict = prompt.includes('conflict') || prompt.includes('冲突');
+      const hasFailed = prompt.includes('fail') || prompt.includes('失败') || prompt.includes('timeout');
+      const hasCancelled = prompt.includes('cancel') || prompt.includes('取消');
       
-      const nodes: any[] = [
-        { id: 'step-1', label: '初始化容器', agentId: 'system', status: 'completed' as const, dependencies: [] as string[] },
-        { id: 'step-2', label: '代码架构分析', agentId: 'agent-orchestrator', status: 'running' as const, dependencies: ['step-1'] },
-        { id: 'step-3', label: '生成代码源文件', agentId: 'agent-claude-code', status: 'pending' as const, dependencies: ['step-2'] },
-        { id: 'step-4', label: '编译与静态测试', agentId: 'agent-codex', status: 'pending' as const, dependencies: ['step-3'] }
-      ];
-
-      const steps: any[] = [
-        {
-          id: 'step-1',
-          runId,
-          agentId: 'system',
-          agentName: '系统',
-          status: 'completed',
-          description: '环境初始化完成。已加载 Docker python:3.11-slim，禁用网络接口 (--network none)。',
-          log: '[System] docker run --network none -d -v ...\n[System] Docker sandbox initialized successfully.\n[System] Created workspace directory /workspace.\n',
-          createdAt: getCurrentFullTime(),
-          updatedAt: getCurrentFullTime()
-        },
-        {
-          id: 'step-2',
-          runId,
-          agentId: 'agent-orchestrator',
-          agentName: 'Orchestrator',
-          status: 'running',
-          description: '正在分析任务需求，生成执行 DAG 步骤规划...',
-          log: '[Agent: Orchestrator] Starting task design...\n[Agent: Orchestrator] Workspace analysis complete. 4 files targeted.\n',
-          createdAt: getCurrentFullTime(),
-          updatedAt: getCurrentFullTime()
-        },
-        {
-          id: 'step-3',
-          runId,
-          agentId: 'agent-claude-code',
-          agentName: 'Claude Code',
-          status: 'pending',
-          description: '根据规划自动生成源文件内容及配置。',
-          createdAt: getCurrentFullTime(),
-          updatedAt: getCurrentFullTime()
-        },
-        {
-          id: 'step-4',
-          runId,
-          agentId: 'agent-codex',
-          agentName: 'Codex',
-          status: 'pending',
-          description: '执行编译检查与静态单元测试分析。',
-          createdAt: getCurrentFullTime(),
-          updatedAt: getCurrentFullTime()
-        }
-      ];
-
-      const runDetail: any = {
-        id: runId,
-        sandboxId: createId('sb'),
-        conversationId: activeConversationId,
-        ownerUserId: 'user-admin',
-        status: 'running',
-        prompt,
-        dag: { nodes },
-        summary: '正在生成 README.md 说明文件...',
-        createdAt: getCurrentFullTime(),
-        updatedAt: getCurrentFullTime(),
-        steps,
+      const baseRun = mockSandboxNormalScenarios.createNormalCompleteSandboxRun(activeConversationId!);
+      
+      const pendingRun = {
+        ...baseRun,
+        status: 'pending' as const,
+        steps: baseRun.steps.map((s: any) => ({ ...s, status: 'pending' as const, log: '' })),
         files: [],
-        conflicts: []
+        conflicts: [],
+        summary: '',
+        error: null,
+        finishedAt: null
       };
-
-      set({
-        activeRun: runDetail,
-        rightPanelTab: 'sandbox',
-        runFiles: [],
-        runConflicts: [],
-        selectedSandboxFilePath: null,
-        runFileContents: {}
-      });
-
-      // Simulation runner
-      let currentSteps = [...steps];
-      let currentNodes = [...nodes];
       
-      // Step 2 completes, Step 3 starts
+      set(state => ({
+        runsByConversationId: {
+          ...state.runsByConversationId,
+          [activeConversationId!]: [pendingRun.id, ...(state.runsByConversationId[activeConversationId!] || [])]
+        },
+        activeRunIdByConversationId: {
+          ...state.activeRunIdByConversationId,
+          [activeConversationId!]: pendingRun.id
+        },
+        runDetailsById: {
+          ...state.runDetailsById,
+          [pendingRun.id]: pendingRun
+        },
+        runFilesByRunId: {
+          ...state.runFilesByRunId,
+          [pendingRun.id]: []
+        },
+        runConflictsByRunId: {
+          ...state.runConflictsByRunId,
+          [pendingRun.id]: []
+        },
+        runFileContentsByRunId: {
+          ...state.runFileContentsByRunId,
+          [pendingRun.id]: {}
+        },
+        selectedSandboxFilePathByRunId: {
+          ...state.selectedSandboxFilePathByRunId,
+          [pendingRun.id]: null
+        },
+        rightPanelTab: 'sandbox'
+      }));
+      
+      const currentRunId = pendingRun.id;
+      let stepDelay = 0;
+      
       setTimeout(() => {
-        if (get().activeRun?.id !== runId) return;
-        currentSteps = currentSteps.map(s => {
-          if (s.id === 'step-2') {
-            return {
-              ...s,
-              status: 'completed' as const,
-              log: s.log + '[Agent: Orchestrator] Step 2 complete. Passing task to Claude Code.\n'
-            };
-          }
-          if (s.id === 'step-3') {
-            return {
-              ...s,
-              status: hasConflict ? ('conflict' as const) : ('running' as const),
-              description: hasConflict ? '检测到目标文件冲突' : '正在写入 README.md ...',
-              log: '[Agent: Claude Code] Starting step 3. Writing README.md...\n'
-            };
-          }
-          return s;
+        set(state => {
+          const targetRun = state.runDetailsById[currentRunId];
+          if (!targetRun) return state;
+          return {
+            runDetailsById: {
+              ...state.runDetailsById,
+              [currentRunId]: { ...targetRun, status: 'running' as const, startedAt: getCurrentFullTime() }
+            }
+          };
         });
-
-        currentNodes = currentNodes.map(n => {
-          if (n.id === 'step-2') return { ...n, status: 'completed' as const };
-          if (n.id === 'step-3') return { ...n, status: hasConflict ? ('conflict' as const) : ('running' as const) };
-          return n;
-        });
-
-        const mockConflicts = hasConflict ? [
-          {
-            id: 'conf-readme',
-            runId,
-            sandboxId: runDetail.sandboxId,
-            filePath: 'README.md',
-            baseVersion: 1,
-            currentVersion: 2,
-            incomingContent: '# Sandbox Conflict Test\n\nIncoming Conflict Content from Sandboxed Agent.',
-            incomingHash: 'hash-incoming',
-            status: 'open' as const,
-            createdAt: getCurrentFullTime()
-          }
-        ] : [];
-
-        set(state => ({
-          activeRun: state.activeRun ? {
-            ...state.activeRun,
-            status: hasConflict ? 'conflict' as const : 'running' as const,
-            steps: currentSteps,
-            dag: { nodes: currentNodes },
-            conflicts: mockConflicts
-          } : null,
-          runConflicts: mockConflicts
-        }));
-      }, 2000);
-
-      if (!hasConflict) {
-        // Step 3 completes, Step 4 starts
-        setTimeout(() => {
-          if (get().activeRun?.id !== runId) return;
-          currentSteps = currentSteps.map(s => {
-            if (s.id === 'step-3') {
+      }, (stepDelay += 500));
+      
+      const totalSteps = baseRun.steps.length;
+      
+      if (hasConflict) {
+        for (let i = 0; i < 3; i++) {
+          const currentStepIdx = i;
+          setTimeout(() => {
+            const runId = get().activeRunIdByConversationId[activeConversationId!];
+            if (!runId || runId !== currentRunId) return;
+            set(state => {
+              const targetRun = state.runDetailsById[currentRunId];
+              if (!targetRun) return state;
+              const updatedSteps = [...targetRun.steps];
+              if (updatedSteps[currentStepIdx]) {
+                if (i < 2) {
+                  updatedSteps[currentStepIdx] = {
+                    ...updatedSteps[currentStepIdx],
+                    status: 'completed' as const,
+                    log: baseRun.steps[i].log
+                  };
+                } else {
+                  const conflictRunData = mockSandboxNormalScenarios.createConflictScenarioSandboxRun(activeConversationId!);
+                  updatedSteps[currentStepIdx] = {
+                    ...updatedSteps[currentStepIdx],
+                    status: 'conflict' as const,
+                    log: conflictRunData.steps[2].log
+                  };
+                  return {
+                    runDetailsById: {
+                      ...state.runDetailsById,
+                      [currentRunId]: {
+                        ...targetRun,
+                        status: 'conflict' as const,
+                        steps: updatedSteps
+                      }
+                    },
+                    runConflictsByRunId: {
+                      ...state.runConflictsByRunId,
+                      [currentRunId]: conflictRunData.conflicts
+                    }
+                  };
+                }
+              }
               return {
-                ...s,
-                status: 'completed' as const,
-                log: s.log + '[Agent: Claude Code] README.md created. Version 1.\n'
+                runDetailsById: {
+                  ...state.runDetailsById,
+                  [currentRunId]: { ...targetRun, steps: updatedSteps }
+                }
               };
-            }
-            if (s.id === 'step-4') {
+            });
+          }, (stepDelay += 1500));
+        }
+      } else if (hasFailed) {
+        for (let i = 0; i < 2; i++) {
+          const currentStepIdx = i;
+          setTimeout(() => {
+            const runId = get().activeRunIdByConversationId[activeConversationId!];
+            if (!runId || runId !== currentRunId) return;
+            set(state => {
+              const targetRun = state.runDetailsById[currentRunId];
+              if (!targetRun) return state;
+              const updatedSteps = [...targetRun.steps];
+              if (updatedSteps[currentStepIdx]) {
+                if (i < 1) {
+                  updatedSteps[currentStepIdx] = {
+                    ...updatedSteps[currentStepIdx],
+                    status: 'completed' as const,
+                    log: baseRun.steps[i].log
+                  };
+                } else {
+                  const failedRunData = mockSandboxNormalScenarios.createFailedScenarioSandboxRun(activeConversationId!);
+                  updatedSteps[currentStepIdx] = {
+                    ...updatedSteps[currentStepIdx],
+                    status: 'failed' as const,
+                    log: failedRunData.steps[1].log,
+                    error: failedRunData.steps[1].error
+                  };
+                  return {
+                    runDetailsById: {
+                      ...state.runDetailsById,
+                      [currentRunId]: {
+                        ...targetRun,
+                        status: 'failed' as const,
+                        steps: updatedSteps,
+                        error: failedRunData.error,
+                        finishedAt: getCurrentFullTime()
+                      }
+                    }
+                  };
+                }
+              }
               return {
-                ...s,
-                status: 'running' as const,
-                log: '[Agent: Codex] Starting compilation and test script execution...\n'
+                runDetailsById: {
+                  ...state.runDetailsById,
+                  [currentRunId]: { ...targetRun, steps: updatedSteps }
+                }
               };
-            }
-            return s;
-          });
-
-          currentNodes = currentNodes.map(n => {
-            if (n.id === 'step-3') return { ...n, status: 'completed' as const };
-            if (n.id === 'step-4') return { ...n, status: 'running' as const };
-            return n;
-          });
-
-          const mockFiles = [
-            {
-              id: 'file-readme',
-              sandboxId: runDetail.sandboxId,
-              runId,
-              path: 'README.md',
-              contentHash: 'hash-1',
-              currentVersion: 1,
-              createdAt: getCurrentFullTime(),
-              updatedAt: getCurrentFullTime()
-            }
-          ];
-
-          set(state => ({
-            activeRun: state.activeRun ? {
-              ...state.activeRun,
-              steps: currentSteps,
-              dag: { nodes: currentNodes },
-              files: mockFiles
-            } : null,
-            runFiles: mockFiles,
-            runFileContents: {
-              ...state.runFileContents,
-              'README.md': '# Sandbox Run V1\n\nThis README was successfully generated inside Docker sandboxed environment with no-network parameters.\n'
-            }
-          }));
-        }, 4000);
-
-        // Step 4 completes, Run completed
-        setTimeout(() => {
-          if (get().activeRun?.id !== runId) return;
-          currentSteps = currentSteps.map(s => {
-            if (s.id === 'step-4') {
+            });
+          }, (stepDelay += 1500));
+        }
+      } else if (hasCancelled) {
+        for (let i = 0; i < 2; i++) {
+          const currentStepIdx = i;
+          setTimeout(() => {
+            const runId = get().activeRunIdByConversationId[activeConversationId!];
+            if (!runId || runId !== currentRunId) return;
+            set(state => {
+              const targetRun = state.runDetailsById[currentRunId];
+              if (!targetRun) return state;
+              const updatedSteps = [...targetRun.steps];
+              if (updatedSteps[currentStepIdx]) {
+                if (i < 1) {
+                  updatedSteps[currentStepIdx] = {
+                    ...updatedSteps[currentStepIdx],
+                    status: 'completed' as const,
+                    log: baseRun.steps[i].log
+                  };
+                } else {
+                  const cancelledRunData = mockSandboxNormalScenarios.createCancelledScenarioSandboxRun(activeConversationId!);
+                  updatedSteps[currentStepIdx] = {
+                    ...updatedSteps[currentStepIdx],
+                    status: 'blocked' as const,
+                    log: cancelledRunData.steps[1].log
+                  };
+                  return {
+                    runDetailsById: {
+                      ...state.runDetailsById,
+                      [currentRunId]: {
+                        ...targetRun,
+                        status: 'cancelled' as const,
+                        steps: updatedSteps,
+                        finishedAt: getCurrentFullTime()
+                      }
+                    }
+                  };
+                }
+              }
               return {
-                ...s,
-                status: 'completed' as const,
-                log: s.log + '[Agent: Codex] compilation success. 1 test case run: SUCCESS.\n[System] Task runs successfully.\n'
+                runDetailsById: {
+                  ...state.runDetailsById,
+                  [currentRunId]: { ...targetRun, steps: updatedSteps }
+                }
               };
-            }
-            return s;
-          });
+            });
+          }, (stepDelay += 1500));
+        }
+      } else {
+        for (let i = 0; i < totalSteps; i++) {
+          const currentStepIdx = i;
+          setTimeout(() => {
+            const runId = get().activeRunIdByConversationId[activeConversationId!];
+            if (!runId || runId !== currentRunId) return;
+            set(state => {
+              const targetRun = state.runDetailsById[currentRunId];
+              if (!targetRun) return state;
+              const updatedSteps = [...targetRun.steps];
+              if (updatedSteps[currentStepIdx]) {
+                updatedSteps[currentStepIdx] = {
+                  ...updatedSteps[currentStepIdx],
+                  status: 'completed' as const,
+                  log: baseRun.steps[currentStepIdx].log
+                };
+              }
+              const allStepsDone = i === totalSteps - 1;
+              return {
+                runDetailsById: {
+                  ...state.runDetailsById,
+                  [currentRunId]: {
+                    ...targetRun,
+                    steps: updatedSteps,
+                    status: allStepsDone ? 'completed' as const : targetRun.status,
+                    summary: allStepsDone ? baseRun.summary : '',
+                    finishedAt: allStepsDone ? getCurrentFullTime() : targetRun.finishedAt
+                  }
+                },
+                runFilesByRunId: allStepsDone ? {
+                  ...state.runFilesByRunId,
+                  [currentRunId]: baseRun.files
+                } : state.runFilesByRunId,
+                runFileContentsByRunId: allStepsDone ? {
+                  ...state.runFileContentsByRunId,
+                  [currentRunId]: baseRun.files.reduce((acc: Record<string, string>, f: any) => {
+                    acc[f.path] = mockSandboxNormalScenarios.getMockFileContent(f.path);
+                    return acc;
+                  }, {} as Record<string, string>)
+                } : state.runFileContentsByRunId
+              };
+            });
+          }, (stepDelay += 1500));
+        }
+      }
+    }
+  },
 
-          currentNodes = currentNodes.map(n => {
-            if (n.id === 'step-4') return { ...n, status: 'completed' as const };
-            return n;
+  loadSandboxRunList: async (conversationId) => {
+    const { useMockMode } = get();
+    if (!useMockMode) {
+      try {
+        const res = await sandboxService.getSandboxRunList(conversationId);
+        if (res.code === 0 && res.data) {
+          const list = res.data.list;
+          set(state => {
+            const newRunsById = { ...state.runDetailsById };
+            list.forEach((run: any) => {
+              newRunsById[run.id] = run;
+            });
+            return {
+              runsByConversationId: {
+                ...state.runsByConversationId,
+                [conversationId]: list.map((r: any) => r.id)
+              },
+              runDetailsById: newRunsById
+            };
           });
-
-          set(state => ({
-            activeRun: state.activeRun ? {
-              ...state.activeRun,
-              status: 'completed' as const,
-              steps: currentSteps,
-              dag: { nodes: currentNodes },
-              finishedAt: getCurrentFullTime()
-            } : null
-          }));
-        }, 6000);
+        }
+      } catch (e) {
+        console.error('[Store] 获取沙箱任务列表失败', e);
       }
     }
   },
@@ -2507,11 +3273,56 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       try {
         const res = await sandboxService.getSandboxRunDetail(runId);
         if (res.code === 0 && res.data) {
-          set({
-            activeRun: res.data,
-            runFiles: res.data.files || [],
-            runConflicts: res.data.conflicts || []
-          });
+          const runDetail = res.data;
+          if (runDetail.steps) {
+            set(state => {
+              const existingRun = state.runDetailsById[runId];
+              const mergedSteps = mergeRunSteps(existingRun?.steps, runDetail.steps);
+              runDetail.steps = mergedSteps;
+              return {
+                runDetailsById: {
+                  ...state.runDetailsById,
+                  [runId]: runDetail
+                },
+                runFilesByRunId: {
+                  ...state.runFilesByRunId,
+                  [runId]: runDetail.files || []
+                },
+                runConflictsByRunId: {
+                  ...state.runConflictsByRunId,
+                  [runId]: runDetail.conflicts || []
+                },
+                runsByConversationId: runDetail.conversationId ? {
+                  ...state.runsByConversationId,
+                  [runDetail.conversationId]: state.runsByConversationId[runDetail.conversationId]?.includes(runId)
+                    ? state.runsByConversationId[runDetail.conversationId]
+                    : [runId, ...(state.runsByConversationId[runDetail.conversationId] || [])]
+                } : state.runsByConversationId
+              };
+            });
+          } else {
+            set(state => ({
+              runDetailsById: {
+                ...state.runDetailsById,
+                [runId]: runDetail
+              },
+              runFilesByRunId: {
+                ...state.runFilesByRunId,
+                [runId]: runDetail.files || []
+              },
+              runConflictsByRunId: {
+                ...state.runConflictsByRunId,
+                [runId]: runDetail.conflicts || []
+              },
+              runsByConversationId: runDetail.conversationId ? {
+                ...state.runsByConversationId,
+                [runDetail.conversationId]: state.runsByConversationId[runDetail.conversationId]?.includes(runId)
+                  ? state.runsByConversationId[runDetail.conversationId]
+                  : [runId, ...(state.runsByConversationId[runDetail.conversationId] || [])]
+              } : state.runsByConversationId
+            }));
+          }
+          get().loadSandboxFileTree(runId);
         }
       } catch (e) {
         console.error('[Store] 获取沙箱运行详情失败', e);
@@ -2525,7 +3336,12 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       try {
         const res = await sandboxService.getSandboxFiles(runId);
         if (res.code === 0 && res.data) {
-          set({ runFiles: res.data });
+          set(state => ({
+            runFilesByRunId: {
+              ...state.runFilesByRunId,
+              [runId]: res.data
+            }
+          }));
         }
       } catch (e) {
         console.error('[Store] 获取沙箱文件列表失败', e);
@@ -2534,15 +3350,18 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
 
   loadSandboxFileContent: async (runId, path) => {
-    const { useMockMode, runFileContents } = get();
+    const { useMockMode, runFileContentsByRunId } = get();
     if (!useMockMode) {
       try {
         const res = await sandboxService.getSandboxFileContent(runId, path);
         if (res.code === 0 && res.data) {
           set(state => ({
-            runFileContents: {
-              ...state.runFileContents,
-              [path]: res.data.content
+            runFileContentsByRunId: {
+              ...state.runFileContentsByRunId,
+              [runId]: {
+                ...(state.runFileContentsByRunId[runId] || {}),
+                [path]: res.data.content
+              }
             }
           }));
           return res.data.content;
@@ -2551,7 +3370,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         console.error('[Store] 读取沙箱文件内容失败', e);
       }
     } else {
-      if (runFileContents[path]) return runFileContents[path];
+      const contents = runFileContentsByRunId[runId] || {};
+      if (contents[path]) return contents[path];
     }
     return '';
   },
@@ -2562,7 +3382,12 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       try {
         const res = await sandboxService.getSandboxConflicts(runId);
         if (res.code === 0 && res.data) {
-          set({ runConflicts: res.data });
+          set(state => ({
+            runConflictsByRunId: {
+              ...state.runConflictsByRunId,
+              [runId]: res.data
+            }
+          }));
         }
       } catch (e) {
         console.error('[Store] 获取沙箱冲突列表失败', e);
@@ -2571,7 +3396,10 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
 
   resolveSandboxConflict: async (runId, conflictId, resolution, content) => {
-    const { useMockMode, activeRun, runConflicts } = get();
+    const { useMockMode, getActiveRun, runConflictsByRunId } = get();
+    const activeConvId = get().activeConversationId;
+    const activeRun = getActiveRun(activeConvId);
+    
     if (!useMockMode) {
       try {
         const res = await sandboxService.resolveSandboxConflict(runId, conflictId, resolution, content);
@@ -2585,7 +3413,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       }
     } else {
       // Mock resolve simulation
-      const conflict = runConflicts.find(c => c.id === conflictId);
+      const conflicts = runConflictsByRunId[runId] || [];
+      const conflict = conflicts.find(c => c.id === conflictId);
       if (!conflict || !activeRun) return;
 
       const resolvedContent = resolution === 'current'
@@ -2595,44 +3424,51 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           : (content || '');
 
       // Mark conflict as resolved
-      const nextConflicts = runConflicts.map(c =>
+      const nextConflicts = conflicts.map(c =>
         c.id === conflictId
           ? { ...c, status: 'resolved' as const, resolution }
           : c
       );
 
       set(state => ({
-        runConflicts: nextConflicts,
-        runFileContents: {
-          ...state.runFileContents,
-          [conflict.filePath]: resolvedContent
+        runConflictsByRunId: {
+          ...state.runConflictsByRunId,
+          [runId]: nextConflicts
+        },
+        runFileContentsByRunId: {
+          ...state.runFileContentsByRunId,
+          [runId]: {
+            ...(state.runFileContentsByRunId[runId] || {}),
+            [conflict.filePath]: resolvedContent
+          }
         }
       }));
 
       // Simulate step-3 complete, step-4 start after conflict resolution
       setTimeout(() => {
-        if (get().activeRun?.id !== runId) return;
+        const currentRun = getActiveRun(activeConvId);
+        if (!currentRun || currentRun.id !== runId) return;
         
-        const currentSteps = activeRun.steps.map((s: any) => {
+        const currentSteps = currentRun.steps.map((s: any) => {
           if (s.id === 'step-3') {
             return {
               ...s,
               status: 'completed' as const,
               description: '写入源文件已完成',
-              log: s.log + `[System] Conflict resolved via resolution=${resolution}.\n[Agent: Claude Code] File README.md resolved and written.\n`
+              log: (s.log || '') + `[System] Conflict resolved via resolution=${resolution}.\n[Agent: Claude Code] File README.md resolved and written.\n`
             };
           }
           if (s.id === 'step-4') {
             return {
               ...s,
               status: 'running' as const,
-              log: '[Agent: Codex] Starting compilation and test script execution...\n'
+              log: (s.log || '') + '[Agent: Codex] Starting compilation and test script execution...\n'
             };
           }
           return s;
         });
 
-        const currentNodes = activeRun.dag.nodes.map((n: any) => {
+        const currentNodes = currentRun.dag.nodes.map((n: any) => {
           if (n.id === 'step-3') return { ...n, status: 'completed' as const };
           if (n.id === 'step-4') return { ...n, status: 'running' as const };
           return n;
@@ -2641,7 +3477,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         const mockFiles = [
           {
             id: 'file-readme',
-            sandboxId: activeRun.sandboxId,
+            sandboxId: currentRun.sandboxId,
             runId,
             path: conflict.filePath,
             contentHash: 'hash-resolved',
@@ -2652,45 +3488,58 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         ];
 
         set(state => ({
-          activeRun: state.activeRun ? {
-            ...state.activeRun,
-            status: 'running' as const,
-            steps: currentSteps,
-            dag: { nodes: currentNodes },
-            files: mockFiles,
-            conflicts: []
-          } : null,
-          runFiles: mockFiles,
-          runConflicts: []
+          runDetailsById: {
+            ...state.runDetailsById,
+            [runId]: {
+              ...state.runDetailsById[runId],
+              status: 'running' as const,
+              steps: currentSteps,
+              dag: { nodes: currentNodes },
+              files: mockFiles,
+              conflicts: []
+            }
+          },
+          runFilesByRunId: {
+            ...state.runFilesByRunId,
+            [runId]: mockFiles
+          },
+          runConflictsByRunId: {
+            ...state.runConflictsByRunId,
+            [runId]: []
+          }
         }));
 
         // Finally step 4 completes
         setTimeout(() => {
-          if (get().activeRun?.id !== runId) return;
-          const finalSteps = currentSteps.map((s: any) => {
+          const finalRun = getActiveRun(activeConvId);
+          if (!finalRun || finalRun.id !== runId) return;
+          const finalSteps = finalRun.steps.map((s: any) => {
             if (s.id === 'step-4') {
               return {
                 ...s,
                 status: 'completed' as const,
-                log: s.log + '[Agent: Codex] Compilation success. Test scripts: OK.\n[System] Sandbox V1 complete.\n'
+                log: (s.log || '') + '[Agent: Codex] Compilation success. Test scripts: OK.\n[System] Sandbox V1 complete.\n'
               };
             }
             return s;
           });
 
-          const finalNodes = currentNodes.map((n: any) => {
+          const finalNodes = finalRun.dag.nodes.map((n: any) => {
             if (n.id === 'step-4') return { ...n, status: 'completed' as const };
             return n;
           });
 
           set(state => ({
-            activeRun: state.activeRun ? {
-              ...state.activeRun,
-              status: 'completed' as const,
-              steps: finalSteps,
-              dag: { nodes: finalNodes },
-              finishedAt: getCurrentFullTime()
-            } : null
+            runDetailsById: {
+              ...state.runDetailsById,
+              [runId]: {
+                ...state.runDetailsById[runId],
+                status: 'completed' as const,
+                steps: finalSteps,
+                dag: { nodes: finalNodes },
+                finishedAt: getCurrentFullTime()
+              }
+            }
           }));
         }, 2000);
 
@@ -2704,19 +3553,28 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       try {
         const res = await sandboxService.cancelSandboxRun(runId);
         if (res.code === 0 && res.data) {
-          set({ activeRun: res.data });
+          set(state => ({
+            runDetailsById: {
+              ...state.runDetailsById,
+              [runId]: res.data
+            }
+          }));
         }
       } catch (e) {
         console.error('[Store] 取消沙箱失败', e);
       }
     } else {
       set(state => {
-        if (!state.activeRun || state.activeRun.id !== runId) return {};
+        const current = state.runDetailsById[runId];
+        if (!current) return {};
         return {
-          activeRun: {
-            ...state.activeRun,
-            status: 'cancelled' as const,
-            finishedAt: getCurrentFullTime()
+          runDetailsById: {
+            ...state.runDetailsById,
+            [runId]: {
+              ...current,
+              status: 'cancelled' as const,
+              finishedAt: getCurrentFullTime()
+            }
           }
         };
       });
@@ -3007,6 +3865,153 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
   clearNotifications: () => {
     set({ desktopNotifications: [] });
+  },
+
+  loadWorkspaces: async () => {
+    const { useMockMode } = get();
+    if (!useMockMode) {
+      try {
+        const res = await sandboxService.getWorkspaces();
+        if (res.code === 0 && res.data) {
+          set({ workspaces: res.data.list || [] });
+        }
+      } catch (e) {
+        console.error('[Store] 获取工作区列表失败', e);
+      }
+    } else {
+      set({
+        workspaces: [
+          {
+            id: 'workspace-1',
+            ownerUserId: 'user-guest',
+            name: 'My Workspace',
+            workspacePath: '/tmp/agenthub-sandboxes/workspace-1',
+            status: 'active',
+            createdAt: getCurrentFullTime(),
+            updatedAt: getCurrentFullTime()
+          },
+          {
+            id: 'workspace-2',
+            ownerUserId: 'user-guest',
+            name: 'Demo Project Workspace',
+            workspacePath: '/tmp/agenthub-sandboxes/workspace-2',
+            status: 'active',
+            createdAt: getCurrentFullTime(),
+            updatedAt: getCurrentFullTime()
+          }
+        ]
+      });
+    }
+  },
+
+  createWorkspace: async (name) => {
+    const { useMockMode, workspaces } = get();
+    if (!useMockMode) {
+      try {
+        const res = await sandboxService.createWorkspace({ name });
+        if (res.code === 0 && res.data) {
+          const newWorkspace = res.data;
+          set({ workspaces: [...workspaces, newWorkspace] });
+          return newWorkspace;
+        }
+      } catch (e) {
+        console.error('[Store] 创建工作区失败', e);
+      }
+    } else {
+      const newWorkspace: Workspace = {
+        id: `workspace-${Date.now()}`,
+        ownerUserId: 'user-guest',
+        name,
+        workspacePath: `/tmp/agenthub-sandboxes/workspace-${Date.now()}`,
+        status: 'active',
+        createdAt: getCurrentFullTime(),
+        updatedAt: getCurrentFullTime()
+      };
+      set({ workspaces: [...workspaces, newWorkspace] });
+      return newWorkspace;
+    }
+    return null;
+  },
+
+  loadSandboxFileTree: async (runId) => {
+    const { useMockMode } = get();
+    if (!useMockMode) {
+      try {
+        const res = await sandboxService.getSandboxFileTree(runId);
+        if (res.code === 0 && res.data) {
+          set(state => ({
+            fileTreeByRunId: {
+              ...state.fileTreeByRunId,
+              [runId]: res.data
+            }
+          }));
+          return res.data;
+        }
+      } catch (e) {
+        console.error('[Store] 获取沙箱文件目录树失败', e);
+      }
+    } else {
+      const runFiles = get().runFilesByRunId[runId] || [];
+      const tree: WorkspaceTreeNode = {
+        name: 'workspace',
+        type: 'directory',
+        children: runFiles.map(f => {
+          const parts = f.path.split('/');
+          if (parts.length > 1) {
+            return {
+              name: parts[0],
+              type: 'directory' as const,
+              children: [
+                {
+                  name: parts.slice(1).join('/'),
+                  type: 'file' as const,
+                  path: f.path,
+                  file: f
+                }
+              ]
+            };
+          }
+          return {
+            name: f.path,
+            type: 'file' as const,
+            path: f.path,
+            file: f
+          };
+        })
+      };
+      set(state => ({
+        fileTreeByRunId: {
+          ...state.fileTreeByRunId,
+          [runId]: tree
+        }
+      }));
+      return tree;
+    }
+    return null;
+  },
+
+  bindConversationWorkspace: async (conversationId, workspaceId) => {
+    const { useMockMode, conversations } = get();
+    if (!useMockMode) {
+      try {
+        const res = await updateConversation(conversationId, { workspaceId });
+        if (res.code === 0) {
+          set({
+            conversations: conversations.map(c =>
+              c.id === conversationId ? { ...c, workspaceId } : c
+            )
+          });
+        }
+      } catch (e) {
+        console.error('[Store] 绑定工作区失败', e);
+      }
+    } else {
+      set({
+        conversations: conversations.map(c =>
+          c.id === conversationId ? { ...c, workspaceId } : c
+        )
+      });
+    }
   },
 
 }));

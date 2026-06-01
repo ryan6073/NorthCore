@@ -204,7 +204,7 @@ try {
 export const platform = {
   isDesktop(): boolean {
     return !!(window.northcoreDesktop && window.northcoreDesktop.isDesktop) || 
-           currentDesktopMode === DESKTOP_MODES.MOCK_DESKTOP;
+           (currentDesktopMode as any) === DESKTOP_MODES.MOCK_DESKTOP;
   },
 
   getPlatformName(): string {
@@ -510,17 +510,17 @@ export const platform = {
   // Desktop Mock Testing Utilities
   desktopMock: {
     getMode: () => currentDesktopMode,
-    setMode: (mode: typeof DESKTOP_MODES[keyof typeof DESKTOP_MODES]) => {
-      currentDesktopMode = mode;
+    setMode: (mode: any) => {
+      (currentDesktopMode as any) = mode;
       localStorage.setItem('ag_desktop_mock_mode', mode);
       console.log(`[Platform] Desktop mock mode set to: ${mode}`);
     },
-    isMockDesktopMode: () => currentDesktopMode === DESKTOP_MODES.MOCK_DESKTOP,
+    isMockDesktopMode: () => (currentDesktopMode as any) === DESKTOP_MODES.MOCK_DESKTOP,
     getAvailableModes: () => Object.values(DESKTOP_MODES),
     getDesktopSystemInfo: () => {
       return {
         platformName: platform.getPlatformName(),
-        isMockDesktop: currentDesktopMode === DESKTOP_MODES.MOCK_DESKTOP,
+        isMockDesktop: (currentDesktopMode as any) === DESKTOP_MODES.MOCK_DESKTOP,
         mode: currentDesktopMode,
         mockWorkspacePath: '/mock/workspace/NorthCore',
         supportedFeatures: [

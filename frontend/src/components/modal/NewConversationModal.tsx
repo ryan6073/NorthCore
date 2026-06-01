@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CreateConversationPayload, Agent } from '@/types';
 import { X, UserPlus, Users, Check } from 'lucide-react';
+import { useAgentHubStore } from '../../store/useAgentHubStore';
 
 interface NewConversationModalProps {
   open: boolean;
@@ -10,21 +11,48 @@ interface NewConversationModalProps {
 }
 
 const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClose, onCreateConversation, agents }) => {
+  const { workspaces, loadWorkspaces, createWorkspace } = useAgentHubStore();
   const [mode, setMode] = useState<'single' | 'group'>('single');
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
+  
+  // Workspace specific states
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>('');
+  const [isCreatingWorkspace, setIsCreatingWorkspace] = useState<boolean>(false);
+  const [newWorkspaceName, setNewWorkspaceName] = useState<string>('');
+  const [isSubmittingWorkspace, setIsSubmittingWorkspace] = useState<boolean>(false);
 
   const displayAgents = agents;
 
   useEffect(() => {
-    if (!open) {
+    if (open) {
+      loadWorkspaces();
+    } else {
       setMode('single');
       setSelectedAgentIds([]);
+      setSelectedWorkspaceId('');
+      setIsCreatingWorkspace(false);
+      setNewWorkspaceName('');
     }
   }, [open]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedAgentIds.length === 0) return;
+
+    let finalWorkspaceId = selectedWorkspaceId || undefined;
+    if (isCreatingWorkspace && newWorkspaceName.trim()) {
+      setIsSubmittingWorkspace(true);
+      try {
+        const ws = await createWorkspace(newWorkspaceName.trim());
+        if (ws) {
+          finalWorkspaceId = ws.id;
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setIsSubmittingWorkspace(false);
+      }
+    }
 
     let finalAgentIds = selectedAgentIds;
     if (mode === 'group') {
@@ -41,10 +69,14 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
     onCreateConversation({
       title,
       mode,
-      agentIds: finalAgentIds
+      agentIds: finalAgentIds,
+      workspaceId: finalWorkspaceId
     });
 
     setSelectedAgentIds([]);
+    setSelectedWorkspaceId('');
+    setIsCreatingWorkspace(false);
+    setNewWorkspaceName('');
     onClose();
   };
 
@@ -53,9 +85,9 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
       setSelectedAgentIds([agentId]);
     } else {
       setSelectedAgentIds(prev => 
-        prev.includes(agentId) 
-          ? prev.filter(id => id !== agentId) 
-          : [...prev, agentId]
+          prev.includes(agentId) 
+            ? prev.filter(id => id !== agentId) 
+            : [...prev, agentId]
       );
     }
   };
@@ -114,7 +146,7 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
             <label className="block text-[11px] font-semibold text-lark-text-secondary dark:text-slate-400 mb-2">
               {mode === 'single' ? '选择一个 Agent 成员' : '多选 Agent 成员 (群聊将自动包含 Orchestrator 调度员)'}
             </label>
-            <div className="max-h-64 overflow-y-auto border border-lark-border dark:border-slate-800 rounded-xl p-1.5 space-y-1 bg-slate-50/30 dark:bg-slate-950/20">
+            <div className="max-h-52 overflow-y-auto border border-lark-border dark:border-slate-800 rounded-xl p-1.5 space-y-1 bg-slate-50/30 dark:bg-slate-950/20">
               {displayAgents.map((agent) => {
                 const isSelected = selectedAgentIds.includes(agent.id);
                 const activeBg = mode === 'single' ? 'bg-lark-primary-light dark:bg-violet-950/30 border-lark-primary/30 dark:border-violet-900/40 text-lark-primary dark:text-white' : 'bg-indigo-50 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-900/40 text-indigo-700 dark:text-white';
@@ -160,6 +192,54 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
             </div>
           </div>
 
+          {/* Workspace Selection Section */}
+          <div className="border-t border-slate-100 dark:border-slate-800/80 pt-3">
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-[11px] font-semibold text-lark-text-secondary dark:text-slate-400">
+                关联 Sandbox 工作区 (文件沙箱)
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCreatingWorkspace(!isCreatingWorkspace);
+                  setNewWorkspaceName('');
+                }}
+                className="text-[10px] text-lark-primary dark:text-violet-400 hover:underline font-medium"
+              >
+                {isCreatingWorkspace ? '选择已有工作区' : '➕ 新建工作区'}
+              </button>
+            </div>
+
+            {isCreatingWorkspace ? (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="请输入工作区名称，例如：商城前端工程"
+                  value={newWorkspaceName}
+                  onChange={(e) => setNewWorkspaceName(e.target.value)}
+                  className="flex-1 text-xs px-3 py-2 border border-lark-border dark:border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-lark-primary dark:focus:ring-violet-600 bg-slate-50 dark:bg-slate-950/40 text-slate-800 dark:text-slate-200"
+                  autoFocus
+                />
+              </div>
+            ) : (
+              <select
+                value={selectedWorkspaceId}
+                onChange={(e) => setSelectedWorkspaceId(e.target.value)}
+                className="w-full text-xs px-3 py-2 border border-lark-border dark:border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-lark-primary dark:focus:ring-violet-600 bg-slate-50 dark:bg-slate-950/40 text-slate-850 dark:text-slate-250"
+              >
+                <option value="">不绑定 (由沙箱运行自动分配默认工作区)</option>
+                {workspaces.map((ws) => (
+                  <option key={ws.id} value={ws.id}>
+                    📁 {ws.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+              同一个工作区内的文件将被持久保存，并可被多个会话复用以进行连续的代码开发。
+            </p>
+          </div>
+
           {/* Action Buttons */}
           <div className="flex gap-2.5 pt-2 flex-shrink-0">
             <button
@@ -171,16 +251,16 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
             </button>
             <button
               type="submit"
-              disabled={selectedAgentIds.length === 0}
+              disabled={selectedAgentIds.length === 0 || isSubmittingWorkspace}
               className={`flex-grow py-2 rounded-lg text-xs text-white font-semibold shadow-sm active:scale-95 transition-all ${
-                selectedAgentIds.length === 0
+                selectedAgentIds.length === 0 || isSubmittingWorkspace
                   ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border border-transparent cursor-not-allowed shadow-none'
                   : mode === 'single'
                     ? 'bg-lark-primary hover:bg-lark-primary-hover'
                     : 'bg-indigo-600 hover:bg-indigo-700'
               }`}
             >
-              创建{mode === 'single' ? '单聊' : '群聊'}
+              {isSubmittingWorkspace ? '正在创建工作区...' : `创建${mode === 'single' ? '单聊' : '群聊'}`}
             </button>
           </div>
         </form>

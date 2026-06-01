@@ -1,11 +1,30 @@
 import http from '@/services/index';
-import type { BaseApiResponse, AgentRunDetail, SandboxFile, SandboxFileDetail, SandboxConflict } from '@/types';
+import type { 
+  BaseApiResponse, 
+  AgentRunDetail, 
+  SandboxFile, 
+  SandboxFileDetail, 
+  SandboxConflict,
+  SandboxHtmlPreview,
+  CreateSandboxRunRequest,
+  PaginatedData,
+  Workspace,
+  WorkspaceTreeNode
+} from '@/types';
 
 export async function createSandboxRun(
   conversationId: string,
-  prompt: string
+  payload: CreateSandboxRunRequest
 ): Promise<BaseApiResponse<AgentRunDetail>> {
-  return await http.post(`/conversations/${conversationId}/runs`, { prompt });
+  return await http.post(`/conversations/${conversationId}/runs`, payload);
+}
+
+export async function getSandboxRunList(
+  conversationId: string,
+  page: number = 1,
+  pageSize: number = 20
+): Promise<BaseApiResponse<PaginatedData<AgentRunDetail>>> {
+  return await http.get(`/conversations/${conversationId}/runs`, { params: { page, pageSize } });
 }
 
 export async function getSandboxRunDetail(
@@ -26,6 +45,14 @@ export async function getSandboxFileContent(
 ): Promise<BaseApiResponse<SandboxFileDetail>> {
   const encodedPath = encodeURIComponent(filePath);
   return await http.get(`/runs/${runId}/files/${encodedPath}`);
+}
+
+export async function getSandboxHtmlPreview(
+  runId: string,
+  filePath: string
+): Promise<BaseApiResponse<SandboxHtmlPreview>> {
+  const encodedPath = encodeURIComponent(filePath);
+  return await http.get(`/runs/${runId}/preview/${encodedPath}`);
 }
 
 export async function getSandboxConflicts(
@@ -53,14 +80,45 @@ export async function cancelSandboxRun(
   return await http.post(`/runs/${runId}/cancel`);
 }
 
+export async function getWorkspaces(
+  page: number = 1,
+  pageSize: number = 20
+): Promise<BaseApiResponse<PaginatedData<Workspace>>> {
+  return await http.get('/workspaces', { params: { page, pageSize } });
+}
+
+export async function createWorkspace(
+  payload: { name: string }
+): Promise<BaseApiResponse<Workspace>> {
+  return await http.post('/workspaces', payload);
+}
+
+export async function getWorkspaceDetail(
+  workspaceId: string
+): Promise<BaseApiResponse<Workspace>> {
+  return await http.get(`/workspaces/${workspaceId}`);
+}
+
+export async function getSandboxFileTree(
+  runId: string
+): Promise<BaseApiResponse<WorkspaceTreeNode>> {
+  return await http.get(`/runs/${runId}/files/tree`);
+}
+
 const sandboxService = {
   createSandboxRun,
+  getSandboxRunList,
   getSandboxRunDetail,
   getSandboxFiles,
   getSandboxFileContent,
+  getSandboxHtmlPreview,
   getSandboxConflicts,
   resolveSandboxConflict,
   cancelSandboxRun,
+  getWorkspaces,
+  createWorkspace,
+  getWorkspaceDetail,
+  getSandboxFileTree
 };
 
 export default sandboxService;

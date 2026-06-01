@@ -103,6 +103,24 @@ export interface Agent {
 export type AgentListItem = Agent;
 export type AgentDetail = Agent;
 
+export interface Workspace {
+  id: string;
+  ownerUserId: string;
+  name: string;
+  workspacePath: string;
+  status: 'active' | string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceTreeNode {
+  name: string;
+  type: 'directory' | 'file';
+  path?: string;
+  children?: WorkspaceTreeNode[];
+  file?: SandboxFile;
+}
+
 export interface Conversation {
   id: string;
   title: string;
@@ -115,6 +133,7 @@ export interface Conversation {
   isPinned?: boolean;
   isArchived?: boolean;
   visible?: boolean;
+  workspaceId?: string | null;
 }
 
 export interface Message {
@@ -180,11 +199,13 @@ export interface CreateConversationPayload {
   title: string;
   mode: ConversationMode;
   agentIds: string[];
+  workspaceId?: string;
 }
 
 export interface UpdateConversationPayload {
   title?: string;
   agentIds?: string[];
+  workspaceId?: string | null;
 }
 
 export type MemoryCategory = 'preference' | 'project' | 'profile' | 'constraint';
@@ -252,13 +273,21 @@ export interface SendMessageRequest {
   quotedMessageId?: string;
   artifactRef?: ArtifactReference;
   attachments?: MessageAttachment[];
+  useSandbox?: boolean;
+  executionMode?: 'chat' | 'sandbox';
+  runMode?: 'chat' | 'sandbox';
 }
 
 export interface SendMessageResponse {
-  userMessage: Message;
+  userMessage: Message | null;
   agentMessages: Message[];
   artifacts: Artifact[];
   contextUsage?: ContextUsage;
+  executionMode?: 'chat' | 'sandbox';
+  intent?: string;
+  reason?: string;
+  run?: AgentRunDetail;
+  workspaceId?: string;
 }
 
 export interface BaseApiResponse<T = any> {
@@ -389,18 +418,7 @@ export interface AgentStatusChangedEvent {
   };
 }
 
-export type AllWSEvent =
-  | ConnectedEvent
-  | PingEvent
-  | PongEvent
-  | ConversationMessageCreateEvent
-  | ConversationMessageUserCreatedEvent
-  | AgentThinkingStartedEvent
-  | ConversationMessageChunkEvent
-  | ConversationMessageCompletedEvent
-  | ArtifactCreatedEvent
-  | ConversationAllTasksCompletedEvent
-  | AgentStatusChangedEvent;
+
 
 export interface AgentChat {
   id: string;
@@ -444,6 +462,8 @@ export interface Sandbox {
   status: 'active' | 'terminated';
   createdAt: string;
   updatedAt: string;
+  workspaceId?: string | null;
+  workspacePath?: string;
 }
 
 export interface AgentRunStep {
@@ -521,6 +541,8 @@ export interface AgentRunDetail {
   steps: AgentRunStep[];
   files: SandboxFile[];
   conflicts: SandboxConflict[];
+  workspaceId?: string | null;
+  workspace?: Workspace | null;
 }
 
 export type AgentRunStepStatus =
@@ -530,3 +552,224 @@ export type AgentRunStepStatus =
   | 'failed'
   | 'conflict'
   | 'blocked';
+
+export type SandboxToolName =
+  | 'inspect_environment'
+  | 'read_dependency_manifest'
+  | 'setup_environment'
+  | 'list_files'
+  | 'scan_workspace'
+  | 'read_workspace_file'
+  | 'import_workspace_file'
+  | 'read_file'
+  | 'write_file'
+  | 'run_command'
+  | 'validate_command'
+  | 'finish';
+
+export interface SandboxToolCall {
+  id: string;
+  name: SandboxToolName;
+  tool: SandboxToolName;
+  arguments: Record<string, any>;
+  args: Record<string, any>;
+  status: 'running' | 'success' | 'failed';
+  result: Record<string, any>;
+  error?: string | null;
+  createdAt: string;
+  startedAt: string;
+  finishedAt?: string | null;
+  durationMs?: number | null;
+}
+
+export interface CommandResult {
+  command: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  stdoutPreview: string;
+  stderrPreview: string;
+  timedOut: boolean;
+  cwd: string;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+}
+
+export interface SandboxStepOutput {
+  toolCalls: SandboxToolCall[];
+  commandResults: CommandResult[];
+  changedFiles: string[];
+  validations?: Array<{
+    id: string;
+    command: string;
+    success: boolean;
+    result: CommandResult;
+    createdAt: string;
+  }>;
+  workspaceScan?: {
+    tracked: Array<{ path: string; size: number }>;
+    untracked: Array<{ path: string; size: number }>;
+    skipped: Array<{ path: string; reason: string }>;
+  };
+  environmentState?: {
+    workspace: string;
+    pythonVenv?: string | null;
+    venvActivated?: boolean;
+    packageManager?: string;
+    network?: string;
+    allowNetwork?: boolean;
+    lastSetupStatus?: 'running' | 'success' | 'failed';
+  };
+  finish?: {
+    success: boolean;
+    summary: string;
+    nextActions?: string[];
+    validationCommandId?: string;
+    validationSkippedReason?: string;
+    validationRequired?: boolean;
+  };
+}
+
+export interface EnvironmentProfile {
+  packageManager: string;
+  pythonVersion: string;
+  allowNetwork: boolean;
+}
+
+export interface CreateSandboxRunRequest {
+  prompt: string;
+  environmentProfile?: EnvironmentProfile;
+  workspaceId?: string;
+}
+
+export interface SandboxHtmlPreview {
+  html: string;
+  sourceFilePath: string;
+  resolvedAssets: Array<{
+    ref: string;
+    path: string;
+    kind: 'stylesheet' | 'script';
+  }>;
+  missingAssets: Array<{
+    ref: string;
+    path: string;
+    kind: 'stylesheet' | 'script';
+  }>;
+  warnings: string[];
+}
+
+export interface RunEventData {
+  conversationId: string;
+  runId: string;
+  status?: 'pending' | 'running' | 'completed' | 'failed' | 'conflict' | 'cancelled';
+  run?: AgentRunDetail;
+  steps?: AgentRunStep[];
+  files?: SandboxFile[];
+  conflicts?: SandboxConflict[];
+  stepId?: string;
+  log?: string;
+}
+
+export interface RunCreatedEvent {
+  type: 'run.created';
+  eventId: string;
+  data: RunEventData;
+}
+
+export interface RunStepStartedEvent {
+  type: 'run.step.started';
+  eventId: string;
+  data: RunEventData;
+}
+
+export interface RunStepToolStartedEvent {
+  type: 'run.step.tool.started';
+  eventId: string;
+  data: RunEventData & { toolName: string };
+}
+
+export interface RunStepToolCompletedEvent {
+  type: 'run.step.tool.completed';
+  eventId: string;
+  data: RunEventData & { toolName: string };
+}
+
+export interface RunStepToolFailedEvent {
+  type: 'run.step.tool.failed';
+  eventId: string;
+  data: RunEventData & { toolName: string; error?: string };
+}
+
+export interface RunStepLogEvent {
+  type: 'run.step.log';
+  eventId: string;
+  data: RunEventData;
+}
+
+export interface RunStepCompletedEvent {
+  type: 'run.step.completed';
+  eventId: string;
+  data: RunEventData;
+}
+
+export interface RunStepFailedEvent {
+  type: 'run.step.failed';
+  eventId: string;
+  data: RunEventData;
+}
+
+export interface RunStepConflictEvent {
+  type: 'run.step.conflict';
+  eventId: string;
+  data: RunEventData;
+}
+
+export interface RunCompletedEvent {
+  type: 'run.completed';
+  eventId: string;
+  data: RunEventData;
+}
+
+export interface RunFailedEvent {
+  type: 'run.failed';
+  eventId: string;
+  data: RunEventData;
+}
+
+export interface ExecutionModeDecidedEvent {
+  type: 'execution.mode.decided';
+  eventId: string;
+  data: {
+    conversationId: string;
+    executionMode: 'chat' | 'sandbox';
+    intent?: string;
+    confidence?: number;
+    reason?: string;
+  };
+}
+
+export type AllWSEvent =
+  | ConnectedEvent
+  | PingEvent
+  | PongEvent
+  | ConversationMessageCreateEvent
+  | ConversationMessageUserCreatedEvent
+  | AgentThinkingStartedEvent
+  | ConversationMessageChunkEvent
+  | ConversationMessageCompletedEvent
+  | ArtifactCreatedEvent
+  | ConversationAllTasksCompletedEvent
+  | AgentStatusChangedEvent
+  | RunCreatedEvent
+  | RunStepStartedEvent
+  | RunStepToolStartedEvent
+  | RunStepToolCompletedEvent
+  | RunStepToolFailedEvent
+  | RunStepLogEvent
+  | RunStepCompletedEvent
+  | RunStepFailedEvent
+  | RunStepConflictEvent
+  | RunCompletedEvent
+  | RunFailedEvent
+  | ExecutionModeDecidedEvent;

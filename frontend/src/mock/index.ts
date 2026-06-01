@@ -1,4 +1,5 @@
-import { Agent, Conversation, Message, Artifact, ArtifactVersion } from '@/types';
+import { Agent, Conversation, Message, Artifact, ArtifactVersion, AgentRunDetail, SandboxFile, SandboxConflict, SandboxHtmlPreview } from '@/types';
+import { sandboxMockScenarios } from './sandboxMockData';
 
 export const mockAgents: Agent[] = [
   {
@@ -223,8 +224,8 @@ export const mockAgents: Agent[] = [
     description: '桌面原生文件系统专家，拥有本地工作区完全访问权限',
     tags: ['本地文件', '文件修改', '工作区管理'],
     status: 'online',
-    category: 'desktop',
-    provider: 'desktop-native',
+    category: 'desktop' as any,
+    provider: 'desktop-native' as any,
     enabled: true,
     lastUsedAt: '2026-05-23 10:30',
     systemPrompt: `你是 DesktopNative，这是一个运行在用户本地桌面端的 AI 助手，拥有完整的文件系统访问和操作系统集成能力。
@@ -248,7 +249,7 @@ export const mockAgents: Agent[] = [
 - 执行安全的 shell 命令（在用户明确授权下）
 - 将生成的产物直接应用到本地项目，立即看到代码运行结果`,
     modelConfig: {
-      provider: 'desktop-native',
+      provider: 'desktop-native' as any,
       modelName: 'DesktopNative-v1',
       temperature: 0.4,
       maxTokens: 128000
@@ -269,7 +270,7 @@ export const mockAgents: Agent[] = [
       desktopFullAccess: true,
       workspaceBoundaryEnforced: true,
       confirmBeforeOverwrite: true
-    }
+    } as any
   }
 ];
 
@@ -799,3 +800,13 @@ Thumbs.db
     createdAt: '2026-05-23 10:45'
   }
 ];
+
+export const mockSandboxNormalScenarios = {
+  sandboxMockScenarios,
+  createNormalCompleteSandboxRun: sandboxMockScenarios.createNormalCompleteSandboxRun,
+  createConflictScenarioSandboxRun: sandboxMockScenarios.createConflictScenarioSandboxRun,
+  createFailedScenarioSandboxRun: sandboxMockScenarios.createFailedScenarioSandboxRun,
+  createCancelledScenarioSandboxRun: sandboxMockScenarios.createCancelledScenarioSandboxRun,
+  getMockFileContent: sandboxMockScenarios.getMockFileContent,
+  createMockHtmlPreview: sandboxMockScenarios.createMockHtmlPreview
+};

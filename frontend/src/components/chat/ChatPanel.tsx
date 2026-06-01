@@ -10,7 +10,7 @@ interface ChatPanelProps {
   agents: Agent[];
   messages: Message[];
   artifacts: Artifact[];
-  onSendMessage: (content: string, attachments?: MessageAttachment[], targetAgentId?: string) => void;
+  onSendMessage: (content: string, attachments?: MessageAttachment[], targetAgentId?: string, useSandbox?: boolean) => void;
 }
 
 const COMMON_EMOJIS = [
@@ -110,7 +110,16 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const removeFileFromContext = useAgentHubStore(state => state.removeFileFromContext);
   const currentWorkspace = useAgentHubStore(state => state.currentWorkspace);
   const isDesktop = useAgentHubStore(state => state.isDesktop);
+  const workspaces = useAgentHubStore(state => state.workspaces);
+  const loadWorkspaces = useAgentHubStore(state => state.loadWorkspaces);
+  const bindConversationWorkspace = useAgentHubStore(state => state.bindConversationWorkspace);
   const [isSandboxMode, setIsSandboxMode] = useState(false);
+
+  useEffect(() => {
+    if (conversation && conversation.mode !== 'agent') {
+      loadWorkspaces();
+    }
+  }, [conversation?.id]);
   const [isApplyToLocal, setIsApplyToLocal] = useState(false);
   const [showMemoryPanel, setShowMemoryPanel] = useState(false);
   const [memoryTab, setMemoryTab] = useState<'pins' | 'memories'>('pins');
@@ -334,13 +343,9 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     const trimmed = inputValue.trim();
     if (!trimmed && pendingAttachments.length === 0) return;
     
-    if (isSandboxMode) {
-      createSandboxRun(trimmed);
-      setIsSandboxMode(false);
-    } else {
-      const targetAgentId = parseTargetAgentId(trimmed);
-      onSendMessage(trimmed, pendingAttachments, targetAgentId || undefined);
-    }
+    const targetAgentId = parseTargetAgentId(trimmed);
+    onSendMessage(trimmed, pendingAttachments, targetAgentId || undefined, isSandboxMode);
+    setIsSandboxMode(false);
     setInputValue('');
     setPendingAttachments([]);
     setShowEmojiPicker(false);
@@ -573,6 +578,24 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
             }`}>
               {conversation.mode === 'single' ? '单聊' : conversation.mode === 'agent' ? 'Agent' : '群聊'}
             </span>
+          )}
+
+          {conversation && conversation.mode !== 'agent' && (
+            <div className="flex items-center flex-shrink-0">
+              <select
+                value={conversation.workspaceId || ''}
+                onChange={(e) => bindConversationWorkspace(conversation.id, e.target.value || null)}
+                className="text-[10px] bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded focus:outline-none hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer font-sans font-medium max-w-[140px]"
+                title="选择或切换绑定的 Sandbox 工作区"
+              >
+                <option value="">📁 未绑定工作区</option>
+                {workspaces.map(w => (
+                  <option key={w.id} value={w.id}>
+                    📁 {w.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
 
 

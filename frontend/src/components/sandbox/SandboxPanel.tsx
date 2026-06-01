@@ -3,47 +3,111 @@ import { useAgentHubStore } from '../../store/useAgentHubStore';
 import { 
   CheckCircle2, AlertTriangle, Loader2, Terminal, 
   FileText, GitMerge, ArrowLeft, Ban, ShieldAlert,
-  ChevronRight, FileCode, Check, Edit2, Undo
+  ChevronRight, FileCode, Check, Edit2, Undo, Folder, ChevronDown
 } from 'lucide-react';
-import { AgentRunStep, SandboxFile, SandboxConflict } from '../../types';
+import { AgentRunStep, SandboxFile, SandboxConflict, WorkspaceTreeNode } from '../../types';
+
+interface FileTreeNodeProps {
+  node: WorkspaceTreeNode;
+  onFileClick: (path: string) => void;
+  selectedFilePath: string | null;
+}
+
+const FileTreeNodeComponent: React.FC<FileTreeNodeProps> = ({ node, onFileClick, selectedFilePath }) => {
+  const [isOpen, setIsOpen] = useState(true);
+
+  if (node.type === 'file') {
+    const isSelected = selectedFilePath === node.path;
+    return (
+      <div
+        onClick={() => node.path && onFileClick(node.path)}
+        className={`flex items-center space-x-2 px-2 py-1.5 rounded-lg cursor-pointer transition-all select-none text-xs font-mono border ${
+          isSelected
+            ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-350'
+            : 'border-transparent text-slate-300 hover:bg-slate-800/40 hover:text-slate-100'
+        }`}
+      >
+        <FileCode className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-indigo-400' : 'text-slate-450'}`} />
+        <span className="truncate">{node.name}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      <div
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center space-x-2 px-2 py-1.5 rounded-lg cursor-pointer text-xs font-semibold text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 select-none transition-all"
+      >
+        {isOpen ? (
+          <ChevronDown className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+        ) : (
+          <ChevronRight className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+        )}
+        <Folder className={`w-3.5 h-3.5 flex-shrink-0 ${isOpen ? 'text-indigo-400/80 fill-indigo-400/10' : 'text-slate-500'}`} />
+        <span className="truncate">{node.name}</span>
+      </div>
+      {isOpen && node.children && (
+        <div className="pl-3 border-l border-slate-800/60 ml-3.5 space-y-1 py-0.5">
+          {node.children.map((child, index) => (
+            <FileTreeNodeComponent
+              key={index}
+              node={child}
+              onFileClick={onFileClick}
+              selectedFilePath={selectedFilePath}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const SandboxPanel: React.FC = () => {
   const {
-    activeRun,
-    runFiles,
-    runConflicts,
-    selectedSandboxFilePath,
+    activeConversationId,
+    getActiveRunId,
+    getActiveRun,
+    runFilesByRunId,
+    runConflictsByRunId,
+    selectedSandboxFilePathByRunId,
     loadSandboxFiles,
     loadSandboxFileContent,
     loadSandboxConflicts,
     resolveSandboxConflict,
     cancelSandboxRun,
-    setSelectedSandboxFilePath
+    setSelectedSandboxFilePath,
+    getSelectedSandboxFilePath,
+    fileTreeByRunId,
+    loadSandboxFileTree
   } = useAgentHubStore();
+
+  const activeRunId = getActiveRunId(activeConversationId);
+  const activeRun = getActiveRun(activeConversationId);
+  const runFiles = activeRunId ? (runFilesByRunId[activeRunId] || []) : [];
+  const runConflicts = activeRunId ? (runConflictsByRunId[activeRunId] || []) : [];
+  const selectedSandboxFilePath = getSelectedSandboxFilePath(activeRunId);
+  const fileTree = activeRunId ? (fileTreeByRunId[activeRunId] || null) : null;
 
   const [activeTab, setActiveTab] = useState<'workflow' | 'files' | 'conflicts'>('workflow');
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   
-  // Conflict editing state
   const [editingConflict, setEditingConflict] = useState<SandboxConflict | null>(null);
   const [manualContent, setManualContent] = useState<string>('');
   const [isResolving, setIsResolving] = useState(false);
 
-  // File viewing state
   const [selectedFileContent, setSelectedFileContent] = useState<string>('');
   const [isFileLoading, setIsFileLoading] = useState(false);
 
   const logEndRef = useRef<HTMLDivElement>(null);
 
-  // Refresh data periodically if running
   useEffect(() => {
-    if (!activeRun) return;
+    if (!activeRunId || !activeRun) return;
 
-    // Load initial files & conflicts
-    loadSandboxFiles(activeRun.id);
-    loadSandboxConflicts(activeRun.id);
+    loadSandboxFiles(activeRunId);
+    loadSandboxFileTree(activeRunId);
+    loadSandboxConflicts(activeRunId);
 
-    // Auto-select step 2 if running, step 1 is completed
     if (activeRun.steps && activeRun.steps.length > 0) {
       const runningStep = activeRun.steps.find((s: AgentRunStep) => s.status === 'running');
       const failedStep = activeRun.steps.find((s: AgentRunStep) => s.status === 'failed' || s.status === 'conflict');
@@ -55,18 +119,16 @@ export const SandboxPanel: React.FC = () => {
         setSelectedStepId(activeRun.steps[0].id);
       }
     }
-  }, [activeRun?.id]);
+  }, [activeRunId, activeRun?.id]);
 
-  // Handle auto-scroll for terminal log updates
   useEffect(() => {
     if (logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [activeRun?.steps, selectedStepId]);
 
-  // Load file content when selected file path changes
   useEffect(() => {
-    if (!activeRun || !selectedSandboxFilePath) {
+    if (!activeRunId || !selectedSandboxFilePath) {
       setSelectedFileContent('');
       return;
     }
@@ -74,7 +136,7 @@ export const SandboxPanel: React.FC = () => {
     const fetchContent = async () => {
       setIsFileLoading(true);
       try {
-        const content = await loadSandboxFileContent(activeRun.id, selectedSandboxFilePath);
+        const content = await loadSandboxFileContent(activeRunId, selectedSandboxFilePath);
         setSelectedFileContent(content || '');
       } catch (err) {
         console.error('Failed to load file content:', err);
@@ -83,21 +145,20 @@ export const SandboxPanel: React.FC = () => {
       }
     };
     fetchContent();
-  }, [selectedSandboxFilePath, activeRun?.id]);
+  }, [selectedSandboxFilePath, activeRunId]);
 
   if (!activeRun) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-slate-400 p-6 space-y-4">
         <ShieldAlert className="w-12 h-12 text-slate-500 animate-pulse" />
         <p className="text-center font-medium">当前无正在执行的沙箱任务</p>
-        <p className="text-xs text-slate-500 text-center max-w-[240px]">
-          在聊天界面点击 “沙箱执行” 按钮即可开启安全隔离的 Docker 运行沙箱。
+        <p className="text-xs text-slate-555 text-center max-w-[240px]">
+          在聊天界面输入开发指令或点击 “沙箱运行” 面板开启安全隔离的 Docker 运行沙箱。
         </p>
       </div>
     );
   }
 
-  // Get status color / badge style
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'running':
@@ -148,11 +209,11 @@ export const SandboxPanel: React.FC = () => {
   const openConflictsCount = runConflicts?.filter(c => c.status === 'open').length || 0;
 
   const handleResolve = async (resolution: 'current' | 'incoming' | 'manual') => {
-    if (!editingConflict) return;
+    if (!editingConflict || !activeRunId) return;
     setIsResolving(true);
     try {
       await resolveSandboxConflict(
-        activeRun.id, 
+        activeRunId, 
         editingConflict.id, 
         resolution, 
         resolution === 'manual' ? manualContent : undefined
@@ -172,12 +233,11 @@ export const SandboxPanel: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full bg-slate-900 border-l border-slate-800 text-slate-200 overflow-hidden font-sans">
-      {/* Header */}
       <div className="p-4 border-b border-slate-800 bg-slate-950/60 backdrop-blur-md">
         <div className="flex items-start justify-between">
           <div>
             <div className="flex items-center space-x-2">
-              <span className="text-xs uppercase tracking-wider font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded">Docker Sandbox V1</span>
+              <span className="text-xs uppercase tracking-wider font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded">Docker Sandbox V2</span>
               {getStatusBadge(activeRun.status)}
             </div>
             <h3 className="text-sm font-semibold mt-2 line-clamp-1 text-slate-100" title={activeRun.prompt}>
@@ -191,8 +251,8 @@ export const SandboxPanel: React.FC = () => {
           </div>
           {(activeRun.status === 'running' || activeRun.status === 'pending' || activeRun.status === 'conflict') && (
             <button
-              onClick={() => cancelSandboxRun(activeRun.id)}
-              className="text-xs flex items-center space-x-1 px-2.5 py-1.5 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-all font-medium"
+              onClick={() => activeRunId && cancelSandboxRun(activeRunId)}
+              className="text-xs flex items-center space-x-1 px-2.5 py-1.5 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-all font-medium animate-pulse"
             >
               <Ban className="w-3.5 h-3.5 mr-1" />
               终止
@@ -200,7 +260,6 @@ export const SandboxPanel: React.FC = () => {
           )}
         </div>
 
-        {/* Local Navigation Tabs */}
         <div className="flex space-x-1 mt-4 p-0.5 bg-slate-900/80 rounded-lg border border-slate-800/80">
           <button
             onClick={() => setActiveTab('workflow')}
@@ -248,13 +307,10 @@ export const SandboxPanel: React.FC = () => {
         </div>
       </div>
 
-      {/* Content Area */}
       <div className="flex-1 overflow-y-auto min-h-0 bg-slate-900/40">
         
-        {/* Tab 1: Workflow & Logs */}
         {activeTab === 'workflow' && (
           <div className="flex flex-col h-full">
-            {/* Step DAG Progress Grid */}
             <div className="p-4 border-b border-slate-800/60 bg-slate-950/20">
               <div className="text-[11px] uppercase text-slate-500 font-bold tracking-wider mb-2">沙箱执行流程 (DAG)</div>
               <div className="space-y-2">
@@ -310,7 +366,6 @@ export const SandboxPanel: React.FC = () => {
               </div>
             </div>
 
-            {/* Terminal logs for selected step */}
             <div className="flex-1 flex flex-col min-h-0 bg-slate-950">
               <div className="flex items-center justify-between px-4 py-2 border-b border-slate-850 bg-slate-900/40">
                 <div className="flex items-center space-x-2 text-xs text-slate-400 font-mono">
@@ -340,27 +395,24 @@ export const SandboxPanel: React.FC = () => {
           </div>
         )}
 
-        {/* Tab 2: Generated Files */}
         {activeTab === 'files' && (
           <div className="flex flex-col h-full min-h-0">
             {selectedSandboxFilePath ? (
               <div className="flex flex-col h-full min-h-0 bg-slate-950">
-                {/* File preview header */}
                 <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800 bg-slate-900/60">
                   <button
-                    onClick={() => setSelectedSandboxFilePath(null)}
+                    onClick={() => activeRunId && setSelectedSandboxFilePath(activeRunId, null)}
                     className="flex items-center space-x-1 text-xs text-slate-400 hover:text-slate-200 transition-colors"
                   >
                     <ArrowLeft className="w-3.5 h-3.5" />
-                    <span>返回文件列表</span>
+                    <span>返回文件树</span>
                   </button>
-                  <span className="text-xs font-mono text-indigo-400 px-2 py-0.5 bg-indigo-500/10 rounded">
+                  <span className="text-xs font-mono text-indigo-400 px-2 py-0.5 bg-indigo-500/10 rounded max-w-[200px] truncate" title={selectedSandboxFilePath}>
                     {selectedSandboxFilePath}
                   </span>
                 </div>
                 
-                {/* File content preview */}
-                <div className="flex-1 overflow-auto p-4 font-mono text-xs text-slate-300">
+                <div className="flex-grow overflow-auto p-4 font-mono text-xs text-slate-300">
                   {isFileLoading ? (
                     <div className="flex flex-col items-center justify-center h-full space-y-2 text-slate-500">
                       <Loader2 className="w-6 h-6 animate-spin text-indigo-400" />
@@ -374,18 +426,25 @@ export const SandboxPanel: React.FC = () => {
                 </div>
               </div>
             ) : (
-              <div className="p-4 space-y-2">
-                <div className="text-[11px] uppercase text-slate-500 font-bold tracking-wider mb-2">沙箱环境生成的文件</div>
-                {runFiles.length === 0 ? (
-                  <div className="text-center py-8 text-slate-500 text-xs">
-                    当前尚未生成任何文件
+              <div className="p-4 space-y-2 flex-grow overflow-y-auto">
+                <div className="text-[11px] uppercase text-slate-500 font-bold tracking-wider mb-2">沙箱环境文件目录树</div>
+                {fileTree && fileTree.children && fileTree.children.length > 0 ? (
+                  <div className="space-y-1">
+                    {fileTree.children.map((node, index) => (
+                      <FileTreeNodeComponent
+                        key={index}
+                        node={node}
+                        onFileClick={(path) => activeRunId && setSelectedSandboxFilePath(activeRunId, path)}
+                        selectedFilePath={selectedSandboxFilePath}
+                      />
+                    ))}
                   </div>
-                ) : (
+                ) : runFiles.length > 0 ? (
                   <div className="grid grid-cols-1 gap-2">
                     {runFiles.map((file: SandboxFile) => (
                       <div
                         key={file.id}
-                        onClick={() => setSelectedSandboxFilePath(file.path)}
+                        onClick={() => activeRunId && setSelectedSandboxFilePath(activeRunId, file.path)}
                         className="flex items-center justify-between p-3 rounded-lg border border-slate-800 bg-slate-900/40 hover:bg-slate-800/40 transition-all cursor-pointer group"
                       >
                         <div className="flex items-center space-x-3 min-w-0">
@@ -394,14 +453,15 @@ export const SandboxPanel: React.FC = () => {
                             <p className="text-xs font-medium text-slate-200 truncate group-hover:text-indigo-300 transition-colors">
                               {file.path}
                             </p>
-                            <p className="text-[10px] text-slate-500 mt-0.5">
-                              版本: V{file.currentVersion} • Hash: {file.contentHash.substring(0, 8)}
-                            </p>
                           </div>
                         </div>
                         <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-indigo-400 group-hover:translate-x-0.5 transition-all" />
                       </div>
                     ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-slate-500 text-xs">
+                    当前工作区尚未生成任何文件
                   </div>
                 )}
               </div>
@@ -409,12 +469,10 @@ export const SandboxPanel: React.FC = () => {
           </div>
         )}
 
-        {/* Tab 3: Conflicts Panel */}
         {activeTab === 'conflicts' && (
           <div className="flex flex-col h-full min-h-0">
             {editingConflict ? (
               <div className="flex flex-col h-full min-h-0 bg-slate-950">
-                {/* Conflict editing header */}
                 <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800 bg-slate-900/60">
                   <button
                     onClick={() => setEditingConflict(null)}
@@ -429,7 +487,6 @@ export const SandboxPanel: React.FC = () => {
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  {/* Side by side view */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div className="border border-slate-800 rounded-lg overflow-hidden bg-slate-900/20">
                       <div className="bg-slate-900 px-3 py-1.5 border-b border-slate-800 text-[11px] font-bold text-slate-400 flex items-center justify-between">
@@ -443,7 +500,6 @@ export const SandboxPanel: React.FC = () => {
                         </button>
                       </div>
                       <pre className="p-3 text-[10px] font-mono text-slate-500 whitespace-pre-wrap max-h-48 overflow-y-auto">
-                        {/* We don't have base file content in the conflict object direct field in mock, we can show placeholder or incoming */}
                         [当前文件内容]
                       </pre>
                     </div>
@@ -465,7 +521,6 @@ export const SandboxPanel: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Manual editing area */}
                   <div className="flex flex-col border border-slate-800 rounded-lg bg-slate-900/30">
                     <div className="bg-slate-900 px-3 py-2 border-b border-slate-800 flex justify-between items-center">
                       <span className="text-xs font-bold text-slate-300 flex items-center">
@@ -476,7 +531,7 @@ export const SandboxPanel: React.FC = () => {
                         onClick={() => setManualContent(editingConflict.incomingContent || '')}
                         className="text-[10px] text-slate-500 hover:text-slate-300 flex items-center"
                       >
-                        <Undo className="w-3 h-3 mr-0.5" />
+                        <Undo className="w-3.5 h-3.5 mr-0.5" />
                         重置为传入内容
                       </button>
                     </div>
@@ -582,3 +637,4 @@ export const SandboxPanel: React.FC = () => {
     </div>
   );
 };
+

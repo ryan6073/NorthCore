@@ -2067,11 +2067,17 @@ GET /api/v1/conversations/conv-group-1/agents/agent-claude-code/config
 | 参数名 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | prompt | string | 是 | 沙箱任务需要执行的自然语言指令 |
+| environmentProfile | object | 否 | 沙箱环境配置文件 |
 
 **请求示例**:
 ```json
 {
-  "prompt": "创建一个 README.md，内容说明这是沙箱测试"
+  "prompt": "创建一个 README.md，内容说明这是沙箱测试",
+  "environmentProfile": {
+    "packageManager": "uv",
+    "pythonVersion": "3.11",
+    "allowNetwork": true
+  }
 }
 ```
 
@@ -2107,6 +2113,115 @@ GET /api/v1/conversations/conv-group-1/agents/agent-claude-code/config
   }
 }
 ```
+
+**字段说明**:
+- `environmentProfile` 可选，不传时后端默认使用 `packageManager=uv`、`allowNetwork=true`
+- 每个 run 都会创建一个空 Docker 工作区
+
+**优先级**: P0
+
+---
+
+#### GET /conversations/{conversationId}/runs
+
+**接口名称**: 获取会话沙箱运行任务列表
+
+**接口用途**: 页面刷新后恢复当前会话的沙箱任务列表，默认按创建时间倒序。
+
+**使用场景**:
+1. 页面刷新后，获取当前会话历史沙箱任务。
+2. 前端取第一条作为右侧面板默认展示的最近 run。
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| conversationId | string | 是 | 会话唯一标识 ID |
+
+**Query 参数**:
+- `page` (number, 可选): 页码，默认 1
+- `pageSize` (number, 可选): 每页条数，默认 20
+
+**响应体示例**:
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "list": [
+      {
+        "id": "run-xxxxxx",
+        "sandboxId": "sb-xxxxxx",
+        "conversationId": "conv-xxxxxx",
+        "ownerUserId": "user-xxxxxx",
+        "status": "running",
+        "prompt": "创建一个 README.md，内容说明这是沙箱测试",
+        "dag": {
+          "nodes": []
+        },
+        "summary": "创建沙箱测试说明文档",
+        "createdAt": "2026-05-29 15:30:00",
+        "updatedAt": "2026-05-29 15:30:05",
+        "startedAt": "2026-05-29 15:30:02",
+        "steps": [],
+        "files": [],
+        "conflicts": []
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "pageSize": 20,
+    "hasMore": false
+  }
+}
+```
+
+**优先级**: P0
+
+---
+
+#### GET /runs/{runId}/preview/{filePath}
+
+**接口名称**: HTML 多文件预览 Bundle
+
+**接口用途**: 给沙箱生成的 HTML Artifact 组装多文件预览，后端只从 `sandbox_files/sandbox_file_versions` 读取 tracked 文件。
+
+**使用场景**:
+1. 当前 Artifact `type = html` 且 metadata 中存在 `sourceRunId/sourceFilePath` 时调用。
+2. 返回的 HTML 放入 iframe `srcDoc` 进行预览。
+
+**路径参数**:
+
+| 参数名 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| runId | string | 是 | 运行任务唯一标识 ID |
+| filePath | string | 是 | 沙箱内相对文件路径（需 URL 编码） |
+
+**响应体示例**:
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "html": "<html>...</html>",
+    "sourceFilePath": "index.html",
+    "resolvedAssets": [
+      {
+        "ref": "styles.css",
+        "path": "styles.css",
+        "kind": "stylesheet"
+      }
+    ],
+    "missingAssets": [],
+    "warnings": []
+  }
+}
+```
+
+**字段说明**:
+- `<link rel="stylesheet" href="styles.css">` 会被替换成内联 `<style>`
+- `<script src="app.js"></script>` 会被替换成内联 `<script>`
+- 跳过外部 URL、绝对路径、`data:`、`blob:`、`http(s):`、`//cdn...`，原因写入 `warnings`
 
 **优先级**: P0
 
@@ -2776,6 +2891,317 @@ ws://localhost:8000/ws
   }
 }
 ```
+
+**优先级**: P1
+
+---
+
+### 5.13 run.created
+
+**事件方向**: 服务端推送 → 客户端
+
+**事件用途**: 沙箱任务创建并初始化完成，通知前端。
+
+**payload 示例**:
+```json
+{
+  "type": "run.created",
+  "eventId": "evt-001",
+  "data": {
+    "conversationId": "conv-xxx",
+    "runId": "run-xxx",
+    "run": {
+      "id": "run-xxx",
+      "status": "pending",
+      "prompt": "创建一个 README.md"
+    }
+  }
+}
+```
+
+**字段说明**:
+- 所有 `run.*` 事件都带 `conversationId` 和 `runId`，用于归属判断
+
+**前端处理方式**:
+- 创建/更新对应 conversation 的 run
+- 设为该 conversation 的 active run
+
+**优先级**: P1
+
+---
+
+### 5.14 run.step.started
+
+**事件方向**: 服务端推送 → 客户端
+
+**事件用途**: 某个沙箱步骤开始执行。
+
+**payload 示例**:
+```json
+{
+  "type": "run.step.started",
+  "eventId": "evt-001",
+  "data": {
+    "conversationId": "conv-xxx",
+    "runId": "run-xxx",
+    "stepId": "step-1",
+    "status": "running"
+  }
+}
+```
+
+**前端处理方式**:
+- 把对应 step 标记为 running
+- 使用事件里的 `run/steps` 合并本地状态
+
+**优先级**: P1
+
+---
+
+### 5.15 run.step.tool.started
+
+**事件方向**: 服务端推送 → 客户端
+
+**事件用途**: Agent 在某 step 中开始调用具体工具。
+
+**payload 示例**:
+```json
+{
+  "type": "run.step.tool.started",
+  "eventId": "evt-001",
+  "data": {
+    "conversationId": "conv-xxx",
+    "runId": "run-xxx",
+    "stepId": "step-1",
+    "toolName": "write_file"
+  }
+}
+```
+
+**前端处理方式**:
+- 展示 Agent 正在调用的工具
+
+**优先级**: P1
+
+---
+
+### 5.16 run.step.tool.completed
+
+**事件方向**: 服务端推送 → 客户端
+
+**事件用途**: Agent 在某 step 中完成了工具调用。
+
+**payload 示例**:
+```json
+{
+  "type": "run.step.tool.completed",
+  "eventId": "evt-001",
+  "data": {
+    "conversationId": "conv-xxx",
+    "runId": "run-xxx",
+    "stepId": "step-1",
+    "toolName": "write_file"
+  }
+}
+```
+
+**前端处理方式**:
+- 追加工具结果
+- 刷新文件树或 step output
+
+**优先级**: P1
+
+---
+
+### 5.17 run.step.tool.failed
+
+**事件方向**: 服务端推送 → 客户端
+
+**事件用途**: Agent 在某 step 中的工具调用失败。
+
+**payload 示例**:
+```json
+{
+  "type": "run.step.tool.failed",
+  "eventId": "evt-001",
+  "data": {
+    "conversationId": "conv-xxx",
+    "runId": "run-xxx",
+    "stepId": "step-1",
+    "toolName": "write_file",
+    "error": "Permission denied"
+  }
+}
+```
+
+**前端处理方式**:
+- 展示工具错误
+- 如果是写文件冲突，刷新冲突列表
+
+**优先级**: P1
+
+---
+
+### 5.18 run.step.log
+
+**事件方向**: 服务端推送 → 客户端
+
+**事件用途**: 实时追加沙箱步骤日志输出。
+
+**payload 示例**:
+```json
+{
+  "type": "run.step.log",
+  "eventId": "evt-001",
+  "data": {
+    "conversationId": "conv-xxx",
+    "runId": "run-xxx",
+    "stepId": "step-1",
+    "log": "[Agent] Writing file README.md..."
+  }
+}
+```
+
+**前端处理方式**:
+- 直接追加到 `runId + stepId` 对应日志区
+- 不要等轮询刷新
+
+**优先级**: P1
+
+---
+
+### 5.19 run.step.completed
+
+**事件方向**: 服务端推送 → 客户端
+
+**事件用途**: 沙箱步骤执行完成。
+
+**payload 示例**:
+```json
+{
+  "type": "run.step.completed",
+  "eventId": "evt-001",
+  "data": {
+    "conversationId": "conv-xxx",
+    "runId": "run-xxx",
+    "stepId": "step-1",
+    "status": "completed",
+    "steps": []
+  }
+}
+```
+
+**前端处理方式**:
+- 把 step 标记为 completed
+- 合并事件里的 run 快照
+
+**优先级**: P1
+
+---
+
+### 5.20 run.step.failed
+
+**事件方向**: 服务端推送 → 客户端
+
+**事件用途**: 沙箱步骤执行失败。
+
+**payload 示例**:
+```json
+{
+  "type": "run.step.failed",
+  "eventId": "evt-001",
+  "data": {
+    "conversationId": "conv-xxx",
+    "runId": "run-xxx",
+    "stepId": "step-1",
+    "status": "failed",
+    "error": "Command exit code 1"
+  }
+}
+```
+
+**前端处理方式**:
+- 把 step 标记为 failed 或 blocked
+- 展示 error
+
+**优先级**: P1
+
+---
+
+### 5.21 run.step.conflict
+
+**事件方向**: 服务端推送 → 客户端
+
+**事件用途**: 沙箱步骤产生文件冲突。
+
+**payload 示例**:
+```json
+{
+  "type": "run.step.conflict",
+  "eventId": "evt-001",
+  "data": {
+    "conversationId": "conv-xxx",
+    "runId": "run-xxx",
+    "conflicts": []
+  }
+}
+```
+
+**前端处理方式**:
+- 刷新对应 run 的冲突列表
+
+**优先级**: P1
+
+---
+
+### 5.22 run.completed
+
+**事件方向**: 服务端推送 → 客户端
+
+**事件用途**: 整个沙箱任务执行完成。
+
+**payload 示例**:
+```json
+{
+  "type": "run.completed",
+  "eventId": "evt-001",
+  "data": {
+    "conversationId": "conv-xxx",
+    "runId": "run-xxx",
+    "run": {}
+  }
+}
+```
+
+**前端处理方式**:
+- 刷新 run 详情、文件列表、Artifact 列表
+
+**优先级**: P1
+
+---
+
+### 5.23 run.failed
+
+**事件方向**: 服务端推送 → 客户端
+
+**事件用途**: 整个沙箱任务执行失败。
+
+**payload 示例**:
+```json
+{
+  "type": "run.failed",
+  "eventId": "evt-001",
+  "data": {
+    "conversationId": "conv-xxx",
+    "runId": "run-xxx",
+    "error": "Docker container timed out"
+  }
+}
+```
+
+**前端处理方式**:
+- 展示失败原因
+- 如果 status 是 `conflict`，引导用户去冲突面板
 
 **优先级**: P1
 

@@ -21,15 +21,33 @@ class AgentHubWSClient {
     return new Promise((resolve, reject) => {
       if (this.ws?.readyState === WebSocket.OPEN) {
         console.log('[WebSocket] 已连接');
+        resolve({ type: 'connected', eventId: 'already_connected', data: {} } as any);
         return;
       }
+
+      let isResolved = false;
+      const timeoutTimer = setTimeout(() => {
+        if (!isResolved) {
+          isResolved = true;
+          console.warn('[WebSocket] 连接超时');
+          if (this.ws) {
+            this.ws.close();
+          }
+          reject(new Error('WebSocket connection timeout'));
+        }
+      }, 15000); // 15 seconds connection timeout
 
       this.ws = new WebSocket(targetUrl);
 
       this.ws.onopen = () => {
         console.log('[WebSocket] 连接成功');
+        clearTimeout(timeoutTimer);
         this.startHeartbeat();
         this.reconnectAttempts = 0;
+        if (!isResolved) {
+          isResolved = true;
+          resolve({ type: 'connected', eventId: 'onopen', data: {} } as any);
+        }
       };
 
       this.ws.onmessage = (event) => {
@@ -38,7 +56,11 @@ class AgentHubWSClient {
           this.dispatchEvent(parsed);
 
           if (parsed.type === 'connected') {
-            resolve(parsed as ConnectedEvent);
+            if (!isResolved) {
+              isResolved = true;
+              clearTimeout(timeoutTimer);
+              resolve(parsed as ConnectedEvent);
+            }
           }
         } catch (err) {
           console.warn('[WebSocket] 解析消息失败', err);
@@ -47,6 +69,7 @@ class AgentHubWSClient {
 
       this.ws.onclose = (event) => {
         console.log('[WebSocket] 连接关闭', event.code);
+        clearTimeout(timeoutTimer);
         this.cleanup();
         if (!this.isManualClose) {
           this.scheduleReconnect();
@@ -55,7 +78,11 @@ class AgentHubWSClient {
 
       this.ws.onerror = (err) => {
         console.error('[WebSocket] 连接错误', err);
-        reject(err);
+        clearTimeout(timeoutTimer);
+        if (!isResolved) {
+          isResolved = true;
+          reject(err);
+        }
       };
     });
   }
@@ -148,13 +175,27 @@ class AgentHubWSClient {
 
   private getWebSocketUrl(): string {
     let baseUrl = '';
+    let apiBase = '';
     try {
       const metaEnv = (import.meta as any).env;
       if (metaEnv?.VITE_WS_URL) {
         baseUrl = metaEnv.VITE_WS_URL;
       }
+      if (metaEnv?.VITE_API_BASE_URL) {
+        apiBase = metaEnv.VITE_API_BASE_URL;
+      }
     } catch {
       // ignore
+    }
+
+    if (!baseUrl && apiBase && (apiBase.startsWith('http://') || apiBase.startsWith('https://'))) {
+      const wsProtocol = apiBase.startsWith('https://') ? 'wss:' : 'ws:';
+      try {
+        const urlObj = new URL(apiBase);
+        baseUrl = `${wsProtocol}//${urlObj.host}/ws`;
+      } catch {
+        // fallback
+      }
     }
 
     if (!baseUrl) {
