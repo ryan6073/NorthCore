@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Conversation, Message, Agent, Artifact, MessageAttachment, AgentMentionItem } from '@/types';
 import MessageBubble from './MessageBubble';
 import ContextUsageRing from '@/components/common/ContextUsageRing';
-import { Send, Paperclip, Smile, AtSign, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight, Settings, Pencil, Check, Terminal, Cpu, FileText, Folder, Save } from 'lucide-react';
+import { Send, Paperclip, Smile, AtSign, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight, Settings, Pencil, Check, Terminal, Cpu, FileText, Folder, Save, Globe } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface ChatPanelProps {
@@ -95,6 +95,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const setReplyContext = useAgentHubStore(state => state.setReplyContext);
   const quoteArtifactRef = useAgentHubStore(state => state.quoteArtifactRef);
   const setQuoteArtifactRef = useAgentHubStore(state => state.setQuoteArtifactRef);
+  const webSearchMode = useAgentHubStore(state => state.webSearchMode);
+  const setWebSearchMode = useAgentHubStore(state => state.setWebSearchMode);
 
   const pins = useAgentHubStore(state => state.pins);
   const memories = useAgentHubStore(state => state.memories);
@@ -1099,6 +1101,41 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
               >
                 <Terminal className="w-3.5 h-3.5 mr-0.5" />
                 沙箱运行
+              </button>
+
+              <div className="w-[1px] h-3 bg-lark-border/60 dark:bg-slate-800 mx-1" />
+              <button
+                type="button"
+                onClick={() => {
+                  const modes: ('auto' | 'force' | 'off')[] = ['auto', 'force', 'off'];
+                  const nextIndex = (modes.indexOf(webSearchMode) + 1) % modes.length;
+                  setWebSearchMode(modes[nextIndex]);
+                }}
+                className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-bold transition-all border ${
+                  webSearchMode === 'force'
+                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-450 border-emerald-500/35 ring-1 ring-emerald-500/20'
+                    : webSearchMode === 'auto'
+                      ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
+                      : 'text-slate-400 dark:text-slate-500 hover:text-slate-500 hover:bg-slate-500/5 border-transparent'
+                }`}
+                title={`联网搜索模式: ${
+                  webSearchMode === 'auto'
+                    ? '自动 (按需搜索)'
+                    : webSearchMode === 'force'
+                      ? '强制 (必须搜索)'
+                      : '禁用 (不联网)'
+                } - 点击切换`}
+              >
+                <Globe className={`w-3.5 h-3.5 mr-0.5 ${webSearchMode === 'force' ? 'animate-pulse' : ''}`} />
+                <span>
+                  联网: {
+                    webSearchMode === 'auto'
+                      ? '自动'
+                      : webSearchMode === 'force'
+                        ? '强制'
+                        : '关闭'
+                  }
+                </span>
               </button>
 
               {isDesktop && currentWorkspace && (

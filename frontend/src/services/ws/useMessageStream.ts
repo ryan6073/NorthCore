@@ -20,9 +20,9 @@ export function useMessageStream(options: UseMessageStreamOptions = {}) {
   const [currentEventId, setCurrentEventId] = useState<string | null>(null);
   const messageBufferRef = useRef(new Map<string, { content: string }>());
 
-  const startStream = useCallback((conversationId: string, content: string): string => {
+  const startStream = useCallback((conversationId: string, content: string, webSearchMode?: 'auto' | 'force' | 'off'): string => {
     const eventId = `evt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    wsClient.send('conversation.message.create', { conversationId, content }, eventId);
+    wsClient.send('conversation.message.create', { conversationId, content, webSearchMode }, eventId);
     setCurrentEventId(eventId);
     setIsStreaming(true);
     return eventId;

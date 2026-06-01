@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Message, Agent as AgentType } from '@/types';
-import { User, Bot, Sparkles, CornerUpLeft, Pin, Copy, Check, Navigation, FileCode } from 'lucide-react';
+import { User, Bot, Sparkles, CornerUpLeft, Pin, Copy, Check, Navigation, FileCode, Globe } from 'lucide-react';
 import CodeBlock from './CodeBlock';
 import TaskPlanCard from './TaskPlanCard';
 import ArtifactMessage from './ArtifactMessage';
@@ -395,6 +395,58 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
                   ))}
                 </div>
               )}
+
+            {/* 5. Web Search V1 Results & Error indicators */}
+            {!isUser && message.metadata?.webSearch && (
+              <>
+                {message.metadata.webSearch.error && (
+                  <div className="text-[10px] text-rose-500/85 dark:text-rose-400/85 font-semibold mt-1.5 flex items-center gap-1 select-none bg-rose-50/40 dark:bg-rose-950/10 border border-rose-200/50 dark:border-rose-900/30 px-2 py-0.5 rounded-lg">
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse flex-shrink-0" />
+                    <span>联网搜索失败 ({message.metadata.webSearch.error})，已使用普通回复</span>
+                  </div>
+                )}
+
+                {message.metadata.webSearch.used && message.metadata.webSearch.results && message.metadata.webSearch.results.length > 0 && (
+                  <div className="mt-2 w-full self-stretch bg-slate-50 dark:bg-slate-900/40 border border-slate-200/60 dark:border-slate-800/80 rounded-xl p-3 shadow-xs animate-fade-in flex flex-col gap-2">
+                    {/* Header */}
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-450 select-none uppercase tracking-wider">
+                      <Globe className="w-3.5 h-3.5 animate-pulse text-emerald-500" />
+                      <span>已联网搜索: "{message.metadata.webSearch.query}"</span>
+                      <span className="text-[9px] opacity-75 font-normal ml-auto text-slate-400 bg-slate-100 dark:bg-slate-850 px-1.5 py-0.5 rounded-sm">
+                        {message.metadata.webSearch.results.length} 个来源
+                      </span>
+                    </div>
+                    
+                    {/* Results List */}
+                    <div className="flex flex-wrap gap-2">
+                      {message.metadata.webSearch.results.map((result: any, idx: number) => (
+                        <a
+                          key={idx}
+                          href={result.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="group/source relative flex items-center gap-1.5 px-2.5 py-1 bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 hover:border-emerald-500/30 hover:ring-1 hover:ring-emerald-500/10 rounded-lg text-[10px] font-medium text-slate-600 dark:text-slate-350 hover:text-emerald-600 dark:hover:text-emerald-400 transition-all shadow-xs truncate max-w-[220px]"
+                        >
+                          <span className="w-4 h-4 rounded-md bg-slate-50 dark:bg-slate-900 flex items-center justify-center text-[9px] font-bold text-slate-400 dark:text-slate-550 border border-slate-200/40 dark:border-slate-850 flex-shrink-0">
+                            {idx + 1}
+                          </span>
+                          <span className="truncate flex-1 font-sans">{result.title}</span>
+                          
+                          {/* Body Tooltip on Hover */}
+                          {result.body && (
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover/source:block z-40 bg-slate-900 text-white text-[9.5px] p-2.5 rounded-xl shadow-xl w-64 whitespace-normal border border-slate-850 leading-normal">
+                              <div className="font-bold text-emerald-400 mb-1">{result.title}</div>
+                              <div className="text-slate-300">{result.body}</div>
+                              <div className="text-[8px] text-slate-500 font-mono mt-1.5 truncate">{result.href}</div>
+                            </div>
+                          )}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       </div>

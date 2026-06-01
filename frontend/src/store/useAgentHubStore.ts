@@ -138,6 +138,7 @@ interface AgentHubStore {
   // Phase 3 states
   replyContext: { id: string; senderName: string; content: string } | null;
   quoteArtifactRef: ArtifactReference | null;
+  webSearchMode: 'auto' | 'force' | 'off';
 
   // ============ v4 新增：Agent 一对一专属对话系统 ============
   showAgentProfile: boolean;
@@ -169,6 +170,7 @@ interface AgentHubStore {
   // Phase 3 Actions
   setReplyContext: (reply: { id: string; senderName: string; content: string } | null) => void;
   setQuoteArtifactRef: (ref: ArtifactReference | null) => void;
+  setWebSearchMode: (mode: 'auto' | 'force' | 'off') => void;
 
   // User and Settings state
   currentUser: { id?: string; name: string; email: string; avatar: string; isLoggedIn: boolean } | null;
@@ -212,7 +214,7 @@ interface AgentHubStore {
   updateMemory: (memoryId: string, content: string, category?: MemoryCategory) => Promise<void>;
   saveEditedArtifact: (artifactId: string, newContent: string) => Promise<void>;
   
-  sendMessage: (content: string, attachments?: MessageAttachment[], targetAgentId?: string, useSandbox?: boolean) => Promise<void>;
+  sendMessage: (content: string, attachments?: MessageAttachment[], targetAgentId?: string, useSandbox?: boolean, webSearchMode?: 'auto' | 'force' | 'off') => Promise<void>;
   saveAgent: (agent: Agent) => Promise<void>;
   createAgent: (agent: Omit<Agent, 'id' | 'lastUsedAt'>) => Promise<string>;
   deleteAgent: (agentId: string) => Promise<void>;
@@ -343,6 +345,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   // Phase 3 states
   replyContext: null,
   quoteArtifactRef: null,
+  webSearchMode: 'auto',
 
   // v4 新增初始状态
   showAgentProfile: false,
@@ -996,8 +999,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     console.log('[Store] 上下文压缩处理完成');
   },
 
-  sendMessage: async (content, attachments, targetAgentId, useSandbox) => {
-    const { activeConversationId, useMockMode, conversations, agents, replyContext, quoteArtifactRef, workspaceContextFiles } = get();
+  sendMessage: async (content, attachments, targetAgentId, useSandbox, webSearchMode) => {
+    const { activeConversationId, useMockMode, conversations, agents, replyContext, quoteArtifactRef, workspaceContextFiles, webSearchMode: storeWebSearchMode } = get();
+    const finalWebSearchMode = webSearchMode !== undefined ? webSearchMode : storeWebSearchMode;
     if (!activeConversationId) return;
 
     const activeConv = conversations.find(c => c.id === activeConversationId);
@@ -1435,7 +1439,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           artifactRef: quoteArtifactRef || undefined,
           attachments,
           useSandbox: useSandbox ? true : undefined,
-          executionMode: useSandbox ? 'sandbox' : undefined
+          executionMode: useSandbox ? 'sandbox' : undefined,
+          webSearchMode: finalWebSearchMode,
         };
         const res = await sendMessageNonStreaming(activeConversationId, payload);
         if (res.code === 0) {
@@ -2559,6 +2564,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
   setReplyContext: (replyContext) => set({ replyContext }),
   setQuoteArtifactRef: (quoteArtifactRef) => set({ quoteArtifactRef }),
+  setWebSearchMode: (webSearchMode) => set({ webSearchMode }),
 
   login: async (email, password) => {
     const { useMockMode } = get();

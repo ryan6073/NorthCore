@@ -277,6 +277,7 @@ export interface SendMessageRequest {
   useSandbox?: boolean;
   executionMode?: 'chat' | 'sandbox';
   runMode?: 'chat' | 'sandbox';
+  webSearchMode?: 'auto' | 'force' | 'off';
 }
 
 export interface SendMessageResponse {
@@ -774,3 +775,21 @@ export type AllWSEvent =
   | RunCompletedEvent
   | RunFailedEvent
   | ExecutionModeDecidedEvent;
+
+export interface WebSearchResult {
+  title: string;
+  body: string;
+  href: string;
+}
+
+export interface WebSearchMetadata {
+  shouldSearch: boolean;
+  decisionReason: string;
+  mode: 'auto' | 'force' | 'off';
+  used: boolean;
+  provider: 'ddgs' | string;
+  query: string;
+  cacheHit: boolean;
+  results: WebSearchResult[];
+  error: string | null;
+}

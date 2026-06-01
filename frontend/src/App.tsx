@@ -115,8 +115,8 @@ function App() {
     setConfiguringAgentId(null);
   }, [setActiveConversationId, setLeftSidebarViewMode, setConfiguringAgentId]);
 
-  const handleSendMessage = useCallback(async (content: string, attachments?: any[], targetAgentId?: string) => {
-    await sendMessage(content, attachments, targetAgentId);
+  const handleSendMessage = useCallback(async (content: string, attachments?: any[], targetAgentId?: string, useSandbox?: boolean) => {
+    await sendMessage(content, attachments, targetAgentId, useSandbox);
   }, [sendMessage]);
 
   const handleCreateConversation = useCallback(async (payload: CreateConversationPayload) => {
