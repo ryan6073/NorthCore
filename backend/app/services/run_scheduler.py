@@ -16,10 +16,12 @@ from app.database import (
     get_sandbox,
     get_sandbox_file_version,
     list_agent_run_steps,
+    list_sandbox_files_changed_by_run,
     list_sandbox_files,
     list_sandbox_conflicts,
     now_text,
     set_sandbox_file_artifact,
+    update_artifact,
     update_agent_run,
     update_agent_run_step,
     update_sandbox,
@@ -167,9 +169,11 @@ def _run_snapshot_payload(run_id: str, extra: Optional[Dict[str, Any]] = None) -
     if run:
         payload.update({
             "conversationId": run.get("conversationId"),
+            "workspaceId": run.get("workspaceId"),
             "status": run.get("status"),
             "run": run,
             "sandbox": run.get("sandbox"),
+            "workspace": run.get("workspace"),
             "steps": run.get("steps", []),
             "files": run.get("files", []),
             "conflicts": run.get("conflicts", []),
@@ -315,25 +319,21 @@ class RunScheduler:
             if failed_steps:
                 update_agent_run(run_id, status="failed", summary="任务部分步骤失败", mark_finished=True)
                 await self.sandbox_service.stop_container(sandbox["id"], sandbox.get("containerId") or container_id, final_status="failed")
-                self.sandbox_service.maybe_cleanup_workspace(sandbox["workspacePath"], "failed")
                 print(f"[SandboxRun] failed run={run_id} failedSteps={len(failed_steps)}", flush=True)
                 await send("run.failed", _run_snapshot_payload(run_id, {"status": "failed", "failedSteps": failed_steps}))
             elif conflicts:
                 update_agent_run(run_id, status="conflict", summary="任务完成但存在文件冲突", mark_finished=True)
                 await self.sandbox_service.stop_container(sandbox["id"], sandbox.get("containerId") or container_id, final_status="conflict")
-                self.sandbox_service.maybe_cleanup_workspace(sandbox["workspacePath"], "conflict")
                 print(f"[SandboxRun] conflict run={run_id} conflicts={len(conflicts)}", flush=True)
                 await send("run.failed", _run_snapshot_payload(run_id, {"status": "conflict", "conflicts": conflicts}))
             else:
                 update_agent_run(run_id, status="completed", summary="沙箱任务完成", mark_finished=True)
                 await self.sandbox_service.stop_container(sandbox["id"], sandbox.get("containerId") or container_id, final_status="completed")
-                self.sandbox_service.maybe_cleanup_workspace(sandbox["workspacePath"], "completed")
                 print(f"[SandboxRun] completed run={run_id}", flush=True)
                 await send("run.completed", _run_snapshot_payload(run_id))
         except Exception as exc:
             update_agent_run(run_id, status="failed", error=str(exc), mark_finished=True)
             await self.sandbox_service.stop_container(sandbox["id"], sandbox.get("containerId"), final_status="failed")
-            self.sandbox_service.maybe_cleanup_workspace(sandbox["workspacePath"], "failed")
             update_sandbox(sandbox["id"], status="failed", error=str(exc))
             print(f"[SandboxRun] exception run={run_id} error={exc}", flush=True)
             await send("run.failed", _run_snapshot_payload(run_id, {"error": str(exc)}))
@@ -355,7 +355,7 @@ class RunScheduler:
             for step in pending:
                 if any(dep in failed_ids for dep in step["dependsOn"]):
                     update_agent_run_step(step["id"], status="blocked", error="依赖步骤未成功完成", mark_finished=True)
-                    await send("run.step.failed", _run_snapshot_payload(run_id, {"step": get_agent_run_step_payload(step["id"])}))
+                    await send("run.step.failed", _run_snapshot_payload(run_id, {"stepId": step["id"], "step": get_agent_run_step_payload(step["id"])}))
 
             steps = list_agent_run_steps(run_id)
             ready = [
@@ -388,7 +388,7 @@ class RunScheduler:
     ) -> None:
         agent = get_agent(step["agentId"]) or get_agent("agent-claude-code")
         update_agent_run_step(step["id"], status="running", claimed_by=step["agentId"], mark_started=True)
-        await send("run.step.started", _run_snapshot_payload(run_id, {"step": get_agent_run_step_payload(step["id"])}))
+        await send("run.step.started", _run_snapshot_payload(run_id, {"stepId": step["id"], "step": get_agent_run_step_payload(step["id"])}))
         try:
             result = await self._run_tool_loop(run_id, sandbox, container_id, step, agent, send)
             if result["status"] == "conflict":
@@ -412,7 +412,7 @@ class RunScheduler:
                 )
                 await send(
                     "run.step.failed",
-                    _run_snapshot_payload(run_id, {"step": get_agent_run_step_payload(step["id"]), "error": result.get("error")}),
+                    _run_snapshot_payload(run_id, {"stepId": step["id"], "step": get_agent_run_step_payload(step["id"]), "error": result.get("error")}),
                 )
                 return
 
@@ -423,12 +423,12 @@ class RunScheduler:
                 append_log=result.get("logs", ""),
                 mark_finished=True,
             )
-            await send("run.step.completed", _run_snapshot_payload(run_id, {"step": get_agent_run_step_payload(step["id"])}))
+            await send("run.step.completed", _run_snapshot_payload(run_id, {"stepId": step["id"], "step": get_agent_run_step_payload(step["id"])}))
         except Exception as exc:
             update_agent_run_step(step["id"], status="failed", error=str(exc), mark_finished=True)
             await send(
                 "run.step.failed",
-                _run_snapshot_payload(run_id, {"step": get_agent_run_step_payload(step["id"]), "error": str(exc)}),
+                _run_snapshot_payload(run_id, {"stepId": step["id"], "step": get_agent_run_step_payload(step["id"]), "error": str(exc)}),
             )
 
     async def _run_tool_loop(
@@ -934,34 +934,46 @@ class RunScheduler:
             return
         print(f"[SandboxArtifact] sync start run={run_id}", flush=True)
         synced = 0
-        for file_meta in list_sandbox_files(run_id):
-            if file_meta.get("artifactId"):
-                continue
+        for file_meta in list_sandbox_files_changed_by_run(run_id):
             version = get_sandbox_file_version(file_meta["id"], file_meta["currentVersion"])
             if not version or not version.get("content"):
                 continue
             artifact_type = _artifact_type_for_path(file_meta["path"])
-            artifact = create_artifact(
-                conversation_id=run["conversationId"],
-                title=file_meta["path"],
-                artifact_type=artifact_type,
-                content=version["content"],
-                run_id=run_id,
-                description=f"Run {run_id} 输出文件",
-                created_by=run_id,
-                created_by_type="agent",
-                metadata={
-                    "source": "sandbox",
-                    "sourceRunId": run_id,
-                    "sourceSandboxId": sandbox["id"],
-                    "sourceSandboxFileId": file_meta["id"],
-                    "sourceFilePath": file_meta["path"],
-                    "sourceFileVersion": version["version"],
-                    "sourceContentHash": version["contentHash"],
-                    "sourceStepId": version.get("createdByStepId"),
-                },
-            )
-            set_sandbox_file_artifact(file_meta["id"], artifact["id"])
+            metadata = {
+                "source": "sandbox",
+                "sourceRunId": run_id,
+                "sourceSandboxId": sandbox["id"],
+                "sourceWorkspaceId": run.get("workspaceId") or sandbox.get("workspaceId"),
+                "sourceSandboxFileId": file_meta["id"],
+                "sourceFilePath": file_meta["path"],
+                "sourceFileVersion": version["version"],
+                "sourceContentHash": version["contentHash"],
+                "sourceStepId": version.get("createdByStepId"),
+            }
+            if file_meta.get("artifactId"):
+                artifact = update_artifact(
+                    file_meta["artifactId"],
+                    version["content"],
+                    change_summary=f"Run {run_id} 更新 {file_meta['path']}",
+                    created_by=run_id,
+                    created_by_type="agent",
+                    metadata=metadata,
+                )
+                if not artifact:
+                    continue
+            else:
+                artifact = create_artifact(
+                    conversation_id=run["conversationId"],
+                    title=file_meta["path"],
+                    artifact_type=artifact_type,
+                    content=version["content"],
+                    run_id=run_id,
+                    description=f"Run {run_id} 输出文件",
+                    created_by=run_id,
+                    created_by_type="agent",
+                    metadata=metadata,
+                )
+                set_sandbox_file_artifact(file_meta["id"], artifact["id"])
             synced += 1
             print(
                 f"[SandboxArtifact] created run={run_id} path={file_meta['path']} "
@@ -975,6 +987,7 @@ class RunScheduler:
                     run_id,
                     {
                         "conversationId": run["conversationId"],
+                        "artifactId": artifact_meta.get("id"),
                         "artifact": artifact_meta,
                     },
                 ),

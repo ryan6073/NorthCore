@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import agents, artifacts, auth, conversations, messages, runs, system, ws
+from app.api.routes import agents, artifacts, auth, conversations, messages, runs, system, workspaces, ws
 from app.app_metadata import APP_DESCRIPTION, APP_TITLE, APP_VERSION
 from app.database import init_db
 
@@ -33,6 +33,7 @@ app.include_router(conversations.router)
 app.include_router(messages.router)
 app.include_router(runs.router)
 app.include_router(artifacts.router)
+app.include_router(workspaces.router)
 app.include_router(ws.router)
 
 

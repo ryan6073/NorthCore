@@ -10,7 +10,7 @@ from app.api.deps import current_user_or_default, extract_bearer_token, user_fro
 from app.api.responses import fail, ok
 from app.config import settings
 from app.core.llm_client import client
-from app.core.orchestrator import AGENT_CONFIGS, analyze_orchestrator_intent
+from app.core.orchestrator import AGENT_CONFIGS, analyze_orchestrator_intent, classify_message_execution_mode
 from app.database import *
 from app.services.file_version_service import FileVersionService
 from app.services.run_scheduler import RunScheduler, generate_dag
@@ -1439,6 +1439,80 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
 
     total_artifacts = 0
     completed_messages: List[Dict[str, Any]] = []
+    execution_decision = classify_message_execution_mode(
+        content,
+        payload=data,
+        conversation=conversation,
+        selected_agent=target_agent,
+    )
+    await emit_conversation_event(
+        current_user,
+        conversation_id,
+        "execution.mode.decided",
+        event_id,
+        {
+            "conversationId": conversation_id,
+            "executionMode": execution_decision["executionMode"],
+            "intent": execution_decision["intent"],
+            "confidence": execution_decision["confidence"],
+            "reason": execution_decision["reason"],
+        },
+    )
+    if execution_decision["executionMode"] == "sandbox":
+        from app.services.run_service import create_run_for_conversation
+
+        status_content = "已识别为产物型任务，正在创建沙箱运行..."
+        status_message = create_message(
+            conversation_id=conversation_id,
+            sender_id="system",
+            sender_name="系统",
+            role="system",
+            msg_type="status",
+            content=status_content,
+            metadata={
+                "executionMode": execution_decision["executionMode"],
+                "intent": execution_decision["intent"],
+                "reason": execution_decision["reason"],
+            },
+        )
+        completed_messages.append(status_message)
+        update_conversation_activity(conversation_id, status_content)
+        await send_message_completed(current_user, conversation_id, event_id, status_message)
+
+        async def emit_run(event_type: str, payload: Dict[str, Any]) -> None:
+            await emit_conversation_event(current_user, conversation_id, event_type, event_id, payload)
+
+        try:
+            run = await create_run_for_conversation(
+                current_user=current_user,
+                conversation_id=conversation_id,
+                prompt=execution_decision.get("suggestedRunPrompt") or model_user_input,
+                payload=data,
+                emit=emit_run,
+            )
+        except ValueError as exc:
+            await send_ws_error(websocket, event_id, 40000, str(exc))
+            return
+        await emit_conversation_event(
+            current_user,
+            conversation_id,
+            "conversation.all_tasks.completed",
+            event_id,
+            {
+                "conversationId": conversation_id,
+                "summary": "沙箱任务已创建",
+                "totalMessages": 2,
+                "totalArtifacts": 0,
+                "executionMode": "sandbox",
+                "intent": execution_decision["intent"],
+                "reason": execution_decision["reason"],
+                "run": run,
+                "workspaceId": run.get("workspaceId"),
+                "contextUsage": build_context_usage(conversation),
+            },
+        )
+        schedule_memory_extraction(conversation, user_message, completed_messages)
+        return
 
     if conversation["mode"] == "group" and not target_agent:
         intent_result = analyze_orchestrator_intent(content)

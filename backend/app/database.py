@@ -25,6 +25,10 @@ def create_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:12]}"
 
 
+def _workspace_path_for_id(workspace_id: str) -> str:
+    return str((Path(settings.SANDBOX_WORKSPACE_ROOT) / workspace_id).resolve())
+
+
 def _json_dump(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
@@ -373,6 +377,17 @@ def init_db() -> None:
                 FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS workspaces (
+                id TEXT PRIMARY KEY,
+                owner_user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                workspace_path TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS conversations (
                 id TEXT PRIMARY KEY,
                 owner_user_id TEXT NOT NULL,
@@ -380,6 +395,7 @@ def init_db() -> None:
                 mode TEXT NOT NULL CHECK (mode IN ('agent', 'single', 'group')),
                 conversation_type TEXT NOT NULL DEFAULT 'manual',
                 contact_agent_id TEXT,
+                workspace_id TEXT,
                 visible INTEGER NOT NULL DEFAULT 1,
                 is_pinned INTEGER NOT NULL DEFAULT 0,
                 is_archived INTEGER NOT NULL DEFAULT 0,
@@ -388,7 +404,8 @@ def init_db() -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
-                FOREIGN KEY (contact_agent_id) REFERENCES agents(id) ON DELETE SET NULL
+                FOREIGN KEY (contact_agent_id) REFERENCES agents(id) ON DELETE SET NULL,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
             );
 
             CREATE TABLE IF NOT EXISTS conversation_agents (
@@ -533,6 +550,7 @@ def init_db() -> None:
                 id TEXT PRIMARY KEY,
                 owner_user_id TEXT NOT NULL,
                 conversation_id TEXT NOT NULL,
+                workspace_id TEXT,
                 run_id TEXT,
                 status TEXT NOT NULL DEFAULT 'pending',
                 container_id TEXT,
@@ -543,7 +561,8 @@ def init_db() -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
-                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
             );
 
             CREATE TABLE IF NOT EXISTS agent_runs (
@@ -551,6 +570,7 @@ def init_db() -> None:
                 sandbox_id TEXT NOT NULL,
                 conversation_id TEXT NOT NULL,
                 owner_user_id TEXT NOT NULL,
+                workspace_id TEXT,
                 status TEXT NOT NULL DEFAULT 'pending',
                 prompt TEXT NOT NULL DEFAULT '',
                 dag_json TEXT NOT NULL DEFAULT '{}',
@@ -562,7 +582,8 @@ def init_db() -> None:
                 finished_at TEXT,
                 FOREIGN KEY (sandbox_id) REFERENCES sandboxes(id) ON DELETE CASCADE,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
             );
 
             CREATE TABLE IF NOT EXISTS agent_run_steps (
@@ -589,6 +610,7 @@ def init_db() -> None:
                 id TEXT PRIMARY KEY,
                 sandbox_id TEXT NOT NULL,
                 run_id TEXT NOT NULL,
+                workspace_id TEXT,
                 path TEXT NOT NULL,
                 content_hash TEXT NOT NULL DEFAULT '',
                 current_version INTEGER NOT NULL DEFAULT 0,
@@ -597,6 +619,7 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (sandbox_id) REFERENCES sandboxes(id) ON DELETE CASCADE,
                 FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
                 FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE SET NULL,
                 UNIQUE (sandbox_id, path)
             );
@@ -654,10 +677,15 @@ def init_db() -> None:
                 ON conversation_agent_overrides(conversation_id);
             CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
                 ON agent_runs(conversation_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_workspaces_owner_updated_at
+                ON workspaces(owner_user_id, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_run_steps_run_status
                 ON agent_run_steps(run_id, status);
             CREATE INDEX IF NOT EXISTS idx_sandbox_files_run_path
                 ON sandbox_files(run_id, path);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_sandbox_files_workspace_path
+                ON sandbox_files(workspace_id, path)
+                WHERE workspace_id IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_sandbox_conflicts_run_status
                 ON sandbox_conflicts(run_id, status);
             """
@@ -687,9 +715,14 @@ def init_db() -> None:
         ensure_column(conn, "conversations", "is_pinned", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "conversations", "is_archived", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "conversations", "system_prompt", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "conversations", "workspace_id", "TEXT")
+        ensure_column(conn, "sandboxes", "workspace_id", "TEXT")
+        ensure_column(conn, "agent_runs", "workspace_id", "TEXT")
+        ensure_column(conn, "sandbox_files", "workspace_id", "TEXT")
         seed_default_user(conn)
         migrate_legacy_ownership(conn)
         migrate_agent_conversation_mode(conn)
+        ensure_column(conn, "conversations", "workspace_id", "TEXT")
         conn.executescript(
             """
             DROP INDEX IF EXISTS idx_conversations_contact_unique;
@@ -702,6 +735,11 @@ def init_db() -> None:
                 WHERE mode = 'agent' AND contact_agent_id IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_agents_owner_enabled
                 ON agents(owner_user_id, enabled);
+            CREATE INDEX IF NOT EXISTS idx_workspaces_owner_updated_at
+                ON workspaces(owner_user_id, updated_at DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_sandbox_files_workspace_path
+                ON sandbox_files(workspace_id, path)
+                WHERE workspace_id IS NOT NULL;
             """
         )
         migrate_artifact_versions(conn)
@@ -1605,6 +1643,7 @@ def conversation_from_row(row: sqlite3.Row, agent_ids: Optional[List[str]] = Non
         "mode": row["mode"],
         "conversationType": row["conversation_type"],
         "contactAgentId": row["contact_agent_id"],
+        "workspaceId": row["workspace_id"],
         "visible": bool(row["visible"]),
         "isPinned": bool(row["is_pinned"]),
         "isArchived": bool(row["is_archived"]),
@@ -1613,6 +1652,18 @@ def conversation_from_row(row: sqlite3.Row, agent_ids: Optional[List[str]] = Non
         "lastMessage": row["last_message"],
         "updatedAt": row["updated_at"],
         "createdAt": row["created_at"],
+    }
+
+
+def workspace_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "ownerUserId": row["owner_user_id"],
+        "name": row["name"],
+        "workspacePath": row["workspace_path"],
+        "status": row["status"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
     }
 
 
@@ -1751,6 +1802,7 @@ def sandbox_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "id": row["id"],
         "ownerUserId": row["owner_user_id"],
         "conversationId": row["conversation_id"],
+        "workspaceId": row["workspace_id"],
         "runId": row["run_id"],
         "status": row["status"],
         "containerId": row["container_id"],
@@ -1769,6 +1821,7 @@ def agent_run_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "sandboxId": row["sandbox_id"],
         "conversationId": row["conversation_id"],
         "ownerUserId": row["owner_user_id"],
+        "workspaceId": row["workspace_id"],
         "status": row["status"],
         "prompt": row["prompt"],
         "dag": _json_load(row["dag_json"], {}),
@@ -1807,6 +1860,7 @@ def sandbox_file_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "id": row["id"],
         "sandboxId": row["sandbox_id"],
         "runId": row["run_id"],
+        "workspaceId": row["workspace_id"],
         "path": row["path"],
         "contentHash": row["content_hash"],
         "currentVersion": row["current_version"],
@@ -1846,6 +1900,123 @@ def sandbox_conflict_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "createdAt": row["created_at"],
         "resolvedAt": row["resolved_at"],
     }
+
+
+def create_workspace(
+    owner_user_id: str,
+    name: Optional[str] = None,
+    workspace_id: Optional[str] = None,
+    workspace_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    workspace_id = workspace_id or create_id("workspace")
+    timestamp = now_text()
+    resolved_path = workspace_path or _workspace_path_for_id(workspace_id)
+    Path(resolved_path).mkdir(parents=True, exist_ok=True)
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO workspaces (
+                id, owner_user_id, name, workspace_path, status,
+                created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, 'active', ?, ?)
+            """,
+            (
+                workspace_id,
+                owner_user_id,
+                (name or f"Workspace {workspace_id[-6:]}").strip(),
+                resolved_path,
+                timestamp,
+                timestamp,
+            ),
+        )
+        row = conn.execute("SELECT * FROM workspaces WHERE id = ?", (workspace_id,)).fetchone()
+    return workspace_from_row(row)
+
+
+def get_workspace(workspace_id: str, owner_user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    owner_clause = ""
+    params: List[Any] = [workspace_id]
+    if owner_user_id:
+        owner_clause = "AND owner_user_id = ?"
+        params.append(owner_user_id)
+    with get_connection() as conn:
+        row = conn.execute(
+            f"SELECT * FROM workspaces WHERE id = ? {owner_clause}",
+            params,
+        ).fetchone()
+    return workspace_from_row(row) if row else None
+
+
+def list_workspaces(
+    owner_user_id: str,
+    page: int = 1,
+    page_size: int = 20,
+) -> Dict[str, Any]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM workspaces
+            WHERE owner_user_id = ?
+            ORDER BY updated_at DESC, created_at DESC
+            """,
+            (owner_user_id,),
+        ).fetchall()
+    return paginate([workspace_from_row(row) for row in rows], page, page_size)
+
+
+def bind_conversation_workspace(
+    conversation_id: str,
+    workspace_id: Optional[str],
+    owner_user_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    owner_clause = ""
+    params: List[Any] = [workspace_id, now_text(), conversation_id]
+    if owner_user_id:
+        owner_clause = "AND owner_user_id = ?"
+        params.append(owner_user_id)
+    with get_connection() as conn:
+        cur = conn.execute(
+            f"""
+            UPDATE conversations
+            SET workspace_id = ?, updated_at = ?
+            WHERE id = ? {owner_clause}
+            """,
+            params,
+        )
+        if cur.rowcount == 0:
+            return None
+    return get_conversation(conversation_id, owner_user_id=owner_user_id)
+
+
+def ensure_conversation_workspace(
+    conversation_id: str,
+    owner_user_id: str,
+    workspace_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    conversation = get_conversation(conversation_id, owner_user_id=owner_user_id)
+    if not conversation:
+        return None
+    if workspace_id:
+        workspace = get_workspace(workspace_id, owner_user_id=owner_user_id)
+        if not workspace:
+            return None
+        if conversation.get("workspaceId") != workspace["id"]:
+            bind_conversation_workspace(conversation_id, workspace["id"], owner_user_id=owner_user_id)
+        Path(workspace["workspacePath"]).mkdir(parents=True, exist_ok=True)
+        return workspace
+    if conversation.get("workspaceId"):
+        workspace = get_workspace(conversation["workspaceId"], owner_user_id=owner_user_id)
+        if workspace:
+            Path(workspace["workspacePath"]).mkdir(parents=True, exist_ok=True)
+            return workspace
+    workspace = create_workspace(
+        owner_user_id=owner_user_id,
+        name=f"{conversation['title']} Workspace",
+    )
+    bind_conversation_workspace(conversation_id, workspace["id"], owner_user_id=owner_user_id)
+    return workspace
 
 
 def list_agents(
@@ -2152,6 +2323,7 @@ def create_conversation(
     conversation_type: str = "manual",
     contact_agent_id: Optional[str] = None,
     system_prompt: str = "",
+    workspace_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     if mode == "group":
         normalized_agent_ids = []
@@ -2166,10 +2338,10 @@ def create_conversation(
             """
             INSERT INTO conversations (
                 id, owner_user_id, title, mode, conversation_type,
-                contact_agent_id, visible, is_pinned, is_archived,
+                contact_agent_id, workspace_id, visible, is_pinned, is_archived,
                 system_prompt, last_message, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 1, 0, 0, ?, '', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, '', ?, ?)
             """,
             (
                 conversation_id,
@@ -2178,6 +2350,7 @@ def create_conversation(
                 mode,
                 conversation_type,
                 contact_agent_id,
+                workspace_id,
                 system_prompt.strip(),
                 timestamp,
                 timestamp,
@@ -2256,12 +2429,13 @@ def update_conversation(conversation_id: str, payload: Dict[str, Any], owner_use
         return None
     title = payload.get("title", current["title"])
     system_prompt = payload.get("systemPrompt", current.get("systemPrompt", ""))
+    workspace_id = payload.get("workspaceId", current.get("workspaceId"))
     agent_ids = payload.get("agentIds")
     timestamp = now_text()
     with get_connection() as conn:
         conn.execute(
-            "UPDATE conversations SET title = ?, system_prompt = ?, updated_at = ? WHERE id = ?",
-            (title, str(system_prompt or "").strip(), timestamp, conversation_id),
+            "UPDATE conversations SET title = ?, system_prompt = ?, workspace_id = ?, updated_at = ? WHERE id = ?",
+            (title, str(system_prompt or "").strip(), workspace_id, timestamp, conversation_id),
         )
         if agent_ids is not None:
             conn.execute("DELETE FROM conversation_agents WHERE conversation_id = ?", (conversation_id,))
@@ -2694,6 +2868,7 @@ def create_sandbox(
     image: str,
     network: str,
     workspace_path: str,
+    workspace_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     sandbox_id = create_id("sandbox")
     timestamp = now_text()
@@ -2701,12 +2876,12 @@ def create_sandbox(
         conn.execute(
             """
             INSERT INTO sandboxes (
-                id, owner_user_id, conversation_id, status, image, network,
+                id, owner_user_id, conversation_id, workspace_id, status, image, network,
                 workspace_path, created_at, updated_at
             )
-            VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
             """,
-            (sandbox_id, owner_user_id, conversation_id, image, network, workspace_path, timestamp, timestamp),
+            (sandbox_id, owner_user_id, conversation_id, workspace_id, image, network, workspace_path, timestamp, timestamp),
         )
         row = conn.execute("SELECT * FROM sandboxes WHERE id = ?", (sandbox_id,)).fetchone()
     return sandbox_from_row(row)
@@ -2759,6 +2934,7 @@ def create_agent_run(
     prompt: str,
     dag: Dict[str, Any],
     run_id: Optional[str] = None,
+    workspace_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     run_id = run_id or create_id("run")
     timestamp = now_text()
@@ -2766,12 +2942,12 @@ def create_agent_run(
         conn.execute(
             """
             INSERT INTO agent_runs (
-                id, sandbox_id, conversation_id, owner_user_id, status,
+                id, sandbox_id, conversation_id, owner_user_id, workspace_id, status,
                 prompt, dag_json, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
             """,
-            (run_id, sandbox_id, conversation_id, owner_user_id, prompt, _json_dump(dag), timestamp, timestamp),
+            (run_id, sandbox_id, conversation_id, owner_user_id, workspace_id, prompt, _json_dump(dag), timestamp, timestamp),
         )
     update_sandbox(sandbox_id, run_id=run_id)
     return get_agent_run(run_id)
@@ -2915,9 +3091,11 @@ def get_agent_run_detail(run_id: str, owner_user_id: Optional[str] = None) -> Op
     if not run:
         return None
     sandbox = get_sandbox(run["sandboxId"], owner_user_id=owner_user_id)
+    workspace = get_workspace(run["workspaceId"], owner_user_id=owner_user_id) if run.get("workspaceId") else None
     return {
         **run,
         "sandbox": sandbox,
+        "workspace": workspace,
         "steps": list_agent_run_steps(run_id),
         "files": list_sandbox_files(run_id),
         "conflicts": list_sandbox_conflicts(run_id),
@@ -2954,6 +3132,22 @@ def list_agent_runs_for_conversation(
 
 
 def list_sandbox_files(run_id: str) -> List[Dict[str, Any]]:
+    run = get_agent_run(run_id)
+    with get_connection() as conn:
+        if run and run.get("workspaceId"):
+            rows = conn.execute(
+                "SELECT * FROM sandbox_files WHERE workspace_id = ? ORDER BY path ASC",
+                (run["workspaceId"],),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM sandbox_files WHERE run_id = ? ORDER BY path ASC",
+                (run_id,),
+            ).fetchall()
+    return [sandbox_file_from_row(row) for row in rows]
+
+
+def list_sandbox_files_changed_by_run(run_id: str) -> List[Dict[str, Any]]:
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT * FROM sandbox_files WHERE run_id = ? ORDER BY path ASC",
@@ -2963,11 +3157,18 @@ def list_sandbox_files(run_id: str) -> List[Dict[str, Any]]:
 
 
 def get_sandbox_file(run_id: str, file_path: str) -> Optional[Dict[str, Any]]:
+    run = get_agent_run(run_id)
     with get_connection() as conn:
-        row = conn.execute(
-            "SELECT * FROM sandbox_files WHERE run_id = ? AND path = ?",
-            (run_id, file_path),
-        ).fetchone()
+        if run and run.get("workspaceId"):
+            row = conn.execute(
+                "SELECT * FROM sandbox_files WHERE workspace_id = ? AND path = ?",
+                (run["workspaceId"], file_path),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM sandbox_files WHERE run_id = ? AND path = ?",
+                (run_id, file_path),
+            ).fetchone()
     return sandbox_file_from_row(row) if row else None
 
 
@@ -3033,20 +3234,30 @@ def create_sandbox_file_version(
         ).fetchone()
         if not sandbox:
             raise ValueError("sandbox not found for run")
+        workspace_id = sandbox["workspace_id"]
+        if not workspace_id:
+            run = conn.execute("SELECT * FROM agent_runs WHERE id = ?", (run_id,)).fetchone()
+            workspace_id = run["workspace_id"] if run else None
         conn.execute(
             """
             INSERT OR IGNORE INTO sandbox_files (
-                id, sandbox_id, run_id, path, content_hash, current_version,
+                id, sandbox_id, run_id, workspace_id, path, content_hash, current_version,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, '', 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, '', 0, ?, ?)
             """,
-            (create_id("file"), sandbox_id, run_id, file_path, timestamp, timestamp),
+            (create_id("file"), sandbox_id, run_id, workspace_id, file_path, timestamp, timestamp),
         )
-        file_row = conn.execute(
-            "SELECT * FROM sandbox_files WHERE sandbox_id = ? AND path = ?",
-            (sandbox_id, file_path),
-        ).fetchone()
+        if workspace_id:
+            file_row = conn.execute(
+                "SELECT * FROM sandbox_files WHERE workspace_id = ? AND path = ?",
+                (workspace_id, file_path),
+            ).fetchone()
+        else:
+            file_row = conn.execute(
+                "SELECT * FROM sandbox_files WHERE sandbox_id = ? AND path = ?",
+                (sandbox_id, file_path),
+            ).fetchone()
         current_version = int(file_row["current_version"] or 0)
         if current_version != int(base_version):
             return create_conflict(conn, file_row, current_version)
@@ -3071,10 +3282,10 @@ def create_sandbox_file_version(
         conn.execute(
             """
             UPDATE sandbox_files
-            SET content_hash = ?, current_version = ?, updated_at = ?
+            SET sandbox_id = ?, run_id = ?, workspace_id = ?, content_hash = ?, current_version = ?, updated_at = ?
             WHERE id = ?
             """,
-            (content_hash, next_version, timestamp, file_row["id"]),
+            (sandbox_id, run_id, workspace_id, content_hash, next_version, timestamp, file_row["id"]),
         )
         file_row = conn.execute("SELECT * FROM sandbox_files WHERE id = ?", (file_row["id"],)).fetchone()
         version_row = conn.execute("SELECT * FROM sandbox_file_versions WHERE id = ?", (version_id,)).fetchone()

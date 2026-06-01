@@ -28,11 +28,11 @@ class SandboxService:
         self._sessions: Dict[str, PersistentDockerShell] = {}
         self._environment_states: Dict[str, Dict[str, object]] = {}
 
-    def build_workspace_path(self, run_id: str) -> Path:
-        return self.workspace_root / run_id
+    def build_workspace_path(self, workspace_id: str) -> Path:
+        return self.workspace_root / workspace_id
 
-    def prepare_workspace(self, run_id: str) -> Path:
-        path = self.build_workspace_path(run_id)
+    def prepare_workspace(self, workspace_id: str) -> Path:
+        path = self.build_workspace_path(workspace_id)
         path.mkdir(parents=True, exist_ok=True)
         return path
 

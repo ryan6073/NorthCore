@@ -59,6 +59,7 @@ async def api_create_conversation(payload: Dict[str, Any] = Body(...), authoriza
     mode = payload.get("mode", "single")
     agent_ids = payload.get("agentIds", [])
     system_prompt = str(payload.get("systemPrompt") or "").strip()
+    workspace_id = str(payload.get("workspaceId") or "").strip() or None
     if not title:
         return fail(40000, "会话标题不能为空")
     if mode not in {"single", "group"}:
@@ -69,12 +70,15 @@ async def api_create_conversation(payload: Dict[str, Any] = Body(...), authoriza
     agent_error = validate_enabled_agent_ids(agent_ids, owner_user_id=current_user["id"])
     if agent_error:
         return fail(40002, agent_error)
+    if workspace_id and not get_workspace(workspace_id, owner_user_id=current_user["id"]):
+        return fail(40001, "Workspace 不存在")
     conversation = create_conversation(
         title=title,
         mode=mode,
         agent_ids=agent_ids,
         owner_user_id=current_user["id"],
         system_prompt=system_prompt,
+        workspace_id=workspace_id,
     )
     return ok(attach_context_usage(conversation), message="会话创建成功")
 
@@ -251,6 +255,11 @@ async def api_update_conversation(conversation_id: str, payload: Dict[str, Any] 
         agent_error = validate_enabled_agent_ids(agent_ids, owner_user_id=current_user["id"])
         if agent_error:
             return fail(40002, agent_error)
+    if "workspaceId" in payload:
+        workspace_id = str(payload.get("workspaceId") or "").strip() or None
+        if workspace_id and not get_workspace(workspace_id, owner_user_id=current_user["id"]):
+            return fail(40001, "Workspace 不存在")
+        payload = {**payload, "workspaceId": workspace_id}
     conversation = update_conversation(conversation_id, payload, owner_user_id=current_user["id"])
     if not conversation:
         return fail(40001, "会话不存在")

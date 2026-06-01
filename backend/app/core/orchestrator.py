@@ -1,5 +1,6 @@
 import json
 import re
+from typing import Any, Dict, Optional
 from app.config import settings
 from app.core.llm_client import client
 
@@ -76,6 +77,77 @@ ORCHESTRATOR_INTENT_SYSTEM = """你是 AgentHub 的群聊协调器 Orchestrator�
 }
 """
 
+EXECUTION_MODE_CONFIDENCE_THRESHOLD = 0.65
+
+EXECUTION_MODE_SYSTEM = """你是 AgentHub 的执行模式分类器。
+你需要判断用户消息应该走普通聊天，还是启动 Sandbox Run 执行。
+
+只能输出 JSON，不要输出 Markdown，不要输出解释文本。
+
+executionMode 只能是：
+- chat
+- sandbox
+
+intent 只能是：
+- qa
+- analysis
+- code_explanation
+- code_review
+- artifact_generation
+- code_modification
+- project_creation
+- debug_run
+- build_or_test
+- other
+
+普通 chat 场景，不要启动 sandbox：
+- “这段代码什么意思？”
+- “帮我分析一下这个方案”
+- “你觉得这个架构如何？”
+- “解释一下这个报错”
+- “帮我 review 这段代码逻辑”
+- “什么是 WebSocket？”
+- 讨论、解释、评估、文本类 code review、方案分析。
+
+sandbox 场景，需要启动 sandbox：
+- “帮我生成一个登录页面”
+- “创建一个 React 项目”
+- “实现这个功能”
+- “修改工作区里的代码”
+- “生成 HTML / CSS / JS 文件”
+- “运行测试”
+- “构建项目”
+- “修复这个 bug 并验证”
+- “生成可预览 artifact”
+- 明确要求创建、修改、运行、验证、构建、生成文件或项目产物。
+
+第一版宁可少启动 sandbox，也不要误把普通讨论判为 sandbox。
+
+格式：
+{
+  "useSandbox": true,
+  "executionMode": "sandbox",
+  "intent": "artifact_generation",
+  "confidence": 0.86,
+  "reason": "用户要求生成登录页面，需要创建文件和可预览产物",
+  "suggestedRunPrompt": "请生成一个完整的登录页面，并输出可预览 HTML artifact",
+  "suggestedAgentId": "agent-claude-code"
+}
+"""
+
+VALID_EXECUTION_INTENTS = {
+    "qa",
+    "analysis",
+    "code_explanation",
+    "code_review",
+    "artifact_generation",
+    "code_modification",
+    "project_creation",
+    "debug_run",
+    "build_or_test",
+    "other",
+}
+
 
 def _extract_json_object(text: str) -> dict:
     """Parse the first JSON object from a model response."""
@@ -90,6 +162,147 @@ def _extract_json_object(text: str) -> dict:
         if not match:
             raise
         return json.loads(match.group(0))
+
+
+def _chat_execution_decision(
+    user_input: str,
+    intent: str = "other",
+    reason: str = "默认按普通聊天处理",
+    confidence: float = 0.5,
+) -> Dict[str, Any]:
+    return {
+        "useSandbox": False,
+        "executionMode": "chat",
+        "intent": intent if intent in VALID_EXECUTION_INTENTS else "other",
+        "confidence": confidence,
+        "reason": reason,
+        "suggestedRunPrompt": user_input,
+    }
+
+
+def _sandbox_execution_decision(
+    user_input: str,
+    intent: str = "artifact_generation",
+    reason: str = "用户明确要求创建或修改可执行产物",
+    confidence: float = 1.0,
+    suggested_agent_id: str = "agent-claude-code",
+) -> Dict[str, Any]:
+    return {
+        "useSandbox": True,
+        "executionMode": "sandbox",
+        "intent": intent if intent in VALID_EXECUTION_INTENTS else "artifact_generation",
+        "confidence": confidence,
+        "reason": reason,
+        "suggestedRunPrompt": user_input,
+        "suggestedAgentId": suggested_agent_id,
+    }
+
+
+def _explicit_execution_mode(payload: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+    use_sandbox = payload.get("useSandbox")
+    if use_sandbox is True:
+        return "sandbox"
+    if use_sandbox is False:
+        return "chat"
+    raw_mode = str(payload.get("executionMode") or payload.get("runMode") or "").strip().lower()
+    if raw_mode in {"sandbox", "run"}:
+        return "sandbox"
+    if raw_mode in {"chat", "message"}:
+        return "chat"
+    return None
+
+
+def _fallback_execution_decision(user_input: str) -> Dict[str, Any]:
+    lowered = user_input.lower()
+    sandbox_markers = (
+        "生成一个", "创建一个", "实现", "修改工作区", "运行测试", "构建项目",
+        "修复", "并验证", "可预览", "html", "css", "javascript", "react 项目",
+        "create a", "generate a", "build", "run tests", "implement",
+    )
+    chat_markers = (
+        "什么意思", "解释", "分析", "你觉得", "方案如何", "review 这段",
+        "什么是", "why", "explain", "analyze",
+    )
+    if any(marker in user_input or marker in lowered for marker in chat_markers):
+        return _chat_execution_decision(user_input, intent="analysis", reason="fallback 判断为解释/分析类消息", confidence=0.6)
+    if any(marker in user_input or marker in lowered for marker in sandbox_markers):
+        return _sandbox_execution_decision(user_input, reason="fallback 判断为产物型任务", confidence=0.66)
+    return _chat_execution_decision(user_input, reason="fallback 默认普通聊天", confidence=0.5)
+
+
+def _normalize_execution_decision(payload: Dict[str, Any], user_input: str) -> Dict[str, Any]:
+    mode = str(payload.get("executionMode") or "").strip().lower()
+    use_sandbox = bool(payload.get("useSandbox")) or mode == "sandbox"
+    if mode not in {"chat", "sandbox"}:
+        mode = "sandbox" if use_sandbox else "chat"
+    try:
+        confidence = float(payload.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    intent = str(payload.get("intent") or "other").strip()
+    if intent not in VALID_EXECUTION_INTENTS:
+        intent = "other"
+    reason = str(payload.get("reason") or "").strip() or "模型未提供原因"
+    suggested_run_prompt = str(payload.get("suggestedRunPrompt") or user_input).strip() or user_input
+    suggested_agent_id = str(payload.get("suggestedAgentId") or "").strip()
+    if mode == "sandbox" and confidence >= EXECUTION_MODE_CONFIDENCE_THRESHOLD:
+        decision = _sandbox_execution_decision(
+            suggested_run_prompt,
+            intent=intent,
+            reason=reason,
+            confidence=confidence,
+            suggested_agent_id=suggested_agent_id or "agent-claude-code",
+        )
+    else:
+        decision = _chat_execution_decision(
+            user_input,
+            intent=intent,
+            reason=reason if confidence >= EXECUTION_MODE_CONFIDENCE_THRESHOLD else "分类置信度过低，按普通聊天处理",
+            confidence=confidence,
+        )
+    decision["suggestedRunPrompt"] = suggested_run_prompt
+    if suggested_agent_id:
+        decision["suggestedAgentId"] = suggested_agent_id
+    return decision
+
+
+def classify_message_execution_mode(
+    user_input: str,
+    payload: Optional[Dict[str, Any]] = None,
+    conversation: Optional[Dict[str, Any]] = None,
+    selected_agent: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Decide whether a user message should stay chat or start a sandbox run."""
+    content = (user_input or "").strip()
+    explicit_mode = _explicit_execution_mode(payload)
+    if explicit_mode == "chat":
+        return _chat_execution_decision(content, reason="payload 显式指定普通聊天", confidence=1.0)
+    if explicit_mode == "sandbox":
+        return _sandbox_execution_decision(content, reason="payload 显式指定 sandbox 执行", confidence=1.0)
+
+    if conversation and conversation.get("mode") == "agent":
+        return _chat_execution_decision(content, reason="agent 联系人会话本轮不自动触发 sandbox", confidence=1.0)
+
+    try:
+        context = {
+            "conversationMode": conversation.get("mode") if conversation else None,
+            "selectedAgentId": selected_agent.get("id") if selected_agent else None,
+            "selectedAgentName": selected_agent.get("name") if selected_agent else None,
+            "userInput": content,
+        }
+        res = client.chat.completions.create(
+            model=settings.MODEL_EP,
+            messages=[
+                {"role": "system", "content": EXECUTION_MODE_SYSTEM},
+                {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
+            ],
+        )
+        raw_content = res.choices[0].message.content or ""
+        return _normalize_execution_decision(_extract_json_object(raw_content), content)
+    except Exception:
+        return _fallback_execution_decision(content)
 
 
 def _looks_like_task(user_input: str) -> bool:

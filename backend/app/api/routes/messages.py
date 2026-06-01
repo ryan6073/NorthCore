@@ -98,6 +98,55 @@ async def api_send_message(conversation_id: str, payload: Dict[str, Any] = Body(
 
     agent_messages: List[Dict[str, Any]] = []
     artifacts: List[Dict[str, Any]] = []
+    execution_decision = classify_message_execution_mode(
+        content,
+        payload=payload,
+        conversation=conversation,
+        selected_agent=target_agent,
+    )
+    if execution_decision["executionMode"] == "sandbox":
+        status_content = "已识别为产物型任务，正在创建沙箱运行..."
+        status_message = create_message(
+            conversation_id=conversation_id,
+            sender_id="system",
+            sender_name="系统",
+            role="system",
+            msg_type="status",
+            content=status_content,
+            metadata={
+                "executionMode": execution_decision["executionMode"],
+                "intent": execution_decision["intent"],
+                "reason": execution_decision["reason"],
+            },
+        )
+        agent_messages.append(status_message)
+        update_conversation_activity(conversation_id, status_content)
+
+        async def emit(event_type: str, data: Dict[str, Any]) -> None:
+            await emit_run_event(current_user, conversation_id, event_type, data)
+
+        try:
+            run = await create_run_for_conversation(
+                current_user=current_user,
+                conversation_id=conversation_id,
+                prompt=execution_decision.get("suggestedRunPrompt") or model_user_input,
+                payload=payload,
+                emit=emit,
+            )
+        except ValueError as exc:
+            return fail(40000, str(exc))
+        schedule_memory_extraction(conversation, user_message, agent_messages)
+        return ok({
+            "userMessage": user_message,
+            "agentMessages": agent_messages,
+            "artifacts": artifacts,
+            "contextUsage": build_context_usage(conversation),
+            "executionMode": "sandbox",
+            "intent": execution_decision["intent"],
+            "reason": execution_decision["reason"],
+            "run": run,
+            "workspaceId": run.get("workspaceId"),
+        }, message="沙箱任务已创建")
 
     if conversation["mode"] == "group" and not target_agent:
         intent_result = analyze_orchestrator_intent(content)
@@ -130,6 +179,9 @@ async def api_send_message(conversation_id: str, payload: Dict[str, Any] = Body(
                 "agentMessages": agent_messages,
                 "artifacts": artifacts,
                 "contextUsage": build_context_usage(conversation),
+                "executionMode": execution_decision["executionMode"],
+                "intent": execution_decision["intent"],
+                "reason": execution_decision["reason"],
             }, message="消息发送成功")
 
         plan_content = format_task_plan_content(intent_result["taskPlan"])
@@ -182,4 +234,7 @@ async def api_send_message(conversation_id: str, payload: Dict[str, Any] = Body(
         "agentMessages": agent_messages,
         "artifacts": artifacts,
         "contextUsage": build_context_usage(conversation),
+        "executionMode": execution_decision["executionMode"],
+        "intent": execution_decision["intent"],
+        "reason": execution_decision["reason"],
     }, message="消息发送成功")

@@ -23,8 +23,8 @@ async def api_create_run(conversation_id: str, payload: Dict[str, Any] = Body(..
     conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
     if not conversation:
         return fail(40001, "会话不存在")
-    if conversation.get("mode") not in {"agent", "group"}:
-        return fail(40000, "Sandbox Run 仅支持 agent 或 group 会话")
+    if conversation.get("mode") not in {"agent", "single", "group"}:
+        return fail(40000, "Sandbox Run 仅支持 agent、single 或 group 会话")
     prompt = str(payload.get("prompt") or payload.get("content") or "").strip()
     if not prompt:
         return fail(40000, "prompt 不能为空")
@@ -33,62 +33,20 @@ async def api_create_run(conversation_id: str, payload: Dict[str, Any] = Body(..
         f"user={current_user['id']} prompt={prompt[:120]!r}",
         flush=True,
     )
-    environment_profile = payload.get("environmentProfile")
-    if not isinstance(environment_profile, dict):
-        environment_profile = {}
-    package_manager = str(environment_profile.get("packageManager") or "uv").strip() or "uv"
-    allow_network = environment_profile.get("allowNetwork")
-    if allow_network is None:
-        allow_network = settings.SANDBOX_ALLOW_NETWORK
-    environment_profile = {
-        **environment_profile,
-        "packageManager": package_manager,
-        "allowNetwork": bool(allow_network),
-    }
-
-    sandbox_network = settings.SANDBOX_NETWORK if environment_profile["allowNetwork"] else "none"
-    sandbox_service = SandboxService(network=sandbox_network)
-    environment_profile["allowNetwork"] = sandbox_service.network != "none"
-
-    allowed_agent_ids = run_allowed_agent_ids(conversation)
-    run_id = create_id("run")
-    dag_payload = await generate_dag(prompt, allowed_agent_ids=allowed_agent_ids)
-    dag_payload["environmentProfile"] = environment_profile
-    dag = namespace_run_dag(run_id, dag_payload)
-    print(
-        f"[SandboxRun] dag generated run={run_id} steps={len(dag.get('steps', []))} "
-        f"agents={allowed_agent_ids}",
-        flush=True,
-    )
-    workspace_path = sandbox_service.prepare_workspace(run_id)
-    sandbox = create_sandbox(
-        owner_user_id=current_user["id"],
-        conversation_id=conversation_id,
-        image=settings.SANDBOX_IMAGE,
-        network=sandbox_service.network,
-        workspace_path=str(workspace_path),
-    )
-    run = create_agent_run(
-        owner_user_id=current_user["id"],
-        conversation_id=conversation_id,
-        sandbox_id=sandbox["id"],
-        prompt=prompt,
-        dag=dag,
-        run_id=run_id,
-    )
-    create_agent_run_steps(run_id, dag.get("steps", []))
-    print(
-        f"[SandboxRun] created run={run_id} sandbox={sandbox['id']} "
-        f"workspace={workspace_path} network={sandbox_service.network}",
-        flush=True,
-    )
-    detail = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
 
     async def emit(event_type: str, data: Dict[str, Any]) -> None:
         await emit_run_event(current_user, conversation_id, event_type, data)
 
-    await emit("run.created", build_run_event_payload(run_id, {"run": detail}))
-    asyncio.create_task(RunScheduler(sandbox_service=sandbox_service).run(run_id, emit=emit))
+    try:
+        detail = await create_run_for_conversation(
+            current_user=current_user,
+            conversation_id=conversation_id,
+            prompt=prompt,
+            payload=payload,
+            emit=emit,
+        )
+    except ValueError as exc:
+        return fail(40000, str(exc))
     return ok(detail, message="沙箱任务已创建")
 
 
@@ -129,6 +87,15 @@ async def api_list_run_files(run_id: str, authorization: Optional[str] = Header(
     if not detail:
         return fail(40001, "Run 不存在")
     return ok(list_sandbox_files(run_id))
+
+
+@router.get("/runs/{run_id}/files/tree")
+async def api_list_run_files_tree(run_id: str, authorization: Optional[str] = Header(None)):
+    current_user = current_user_or_default(authorization)
+    detail = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
+    if not detail:
+        return fail(40001, "Run 不存在")
+    return ok(build_files_tree(list_sandbox_files(run_id)))
 
 
 @router.get("/runs/{run_id}/files/{file_path:path}")
@@ -211,7 +178,6 @@ async def api_cancel_run(run_id: str, authorization: Optional[str] = Header(None
     if sandbox:
         sandbox_service = SandboxService()
         await sandbox_service.stop_container(sandbox["id"], sandbox.get("containerId"))
-        sandbox_service.maybe_cleanup_workspace(sandbox["workspacePath"], "cancelled")
         update_sandbox(sandbox["id"], status="cancelled")
     await emit_run_event(
         current_user,
