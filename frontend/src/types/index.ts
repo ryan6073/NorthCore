@@ -161,6 +161,7 @@ export interface Message {
 export interface Artifact {
   id: string;
   conversationId: string;
+  runId?: string;
   title: string;
   type: ArtifactType;
   description?: string;
