@@ -316,7 +316,7 @@ interface AgentHubStore {
   restartLocalAgent: (id: string) => Promise<void>;
   loadLocalAgentLogs: (id: string) => Promise<void>;
   applyArtifactToLocal: (artifactId: string, versionId: string, targetPath: string, autoOverwrite?: boolean) => Promise<{ success: boolean; error?: string; conflict?: boolean }>;
-  addDesktopNotification: (title: string, body: string, type: string) => void;
+  addDesktopNotification: (title: string, body: string, type: string, eventType?: 'task' | 'artifact' | 'error' | 'step') => void;
   markNotificationAsRead: (id: string) => void;
   clearNotifications: () => void;
 }
@@ -2312,6 +2312,12 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           };
         });
         get().loadArtifactContent(artifactWithRunId.id);
+        get().addDesktopNotification(
+          '生成了新产物',
+          `成功生成了文件: ${artifactWithRunId.title}`,
+          'success',
+          'artifact'
+        );
       });
 
       const unsubAllCompleted = wsClient.on('conversation.all_tasks.completed', (event: any) => {
@@ -2364,6 +2370,12 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
           return newState;
         });
+        get().addDesktopNotification(
+          '工作流任务已全部完成',
+          '所有 Agent 的规划任务均已成功执行完成。',
+          'success',
+          'task'
+        );
       });
 
       const unsubStatusChanged = wsClient.on('agent.status.changed', (event: any) => {
@@ -2558,6 +2570,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             }
           };
         });
+        const agentName = step?.agentName || '沙箱步骤';
+        get().addDesktopNotification(
+          '沙箱步骤执行成功',
+          `步骤 "${agentName}" 已执行完成。`,
+          'success',
+          'step'
+        );
       });
 
       const unsubRunStepFailed = wsClient.on('run.step.failed', (event: any) => {
@@ -2602,6 +2621,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             }
           };
         });
+        const agentName = step?.agentName || '沙箱步骤';
+        get().addDesktopNotification(
+          '沙箱步骤执行失败',
+          `步骤 "${agentName}" 执行失败。`,
+          'error',
+          'error'
+        );
       });
 
       const unsubRunStepConflict = wsClient.on('run.step.conflict', (event: any) => {
@@ -2650,6 +2676,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             }
           };
         });
+        const agentName = step?.agentName || '沙箱步骤';
+        get().addDesktopNotification(
+          '检测到代码冲突',
+          `步骤 "${agentName}" 检测到冲突，需要手动合并。`,
+          'warning',
+          'error'
+        );
       });
 
       const unsubRunCompleted = wsClient.on('run.completed', (event: any) => {
@@ -2715,6 +2748,12 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           get().loadSandboxFiles(runId);
           get().loadSandboxFileTree(runId);
         }
+        get().addDesktopNotification(
+          '沙箱运行已完成',
+          `沙箱任务 (ID: ${runId}) 已成功执行完成。`,
+          'success',
+          'task'
+        );
       });
 
       const unsubRunFailed = wsClient.on('run.failed', (event: any) => {
@@ -2765,6 +2804,12 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           });
           get().loadSandboxRunDetail(runId);
         }
+        get().addDesktopNotification(
+          '沙箱运行失败',
+          `沙箱任务 (ID: ${runId}) 执行失败。`,
+          'error',
+          'error'
+        );
       });
 
       (wsClient as any)._unsubs = [
@@ -4293,7 +4338,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     }
   },
 
-  addDesktopNotification: (title, body, type) => {
+  addDesktopNotification: (title, body, type, eventType) => {
     const newNotification = {
       id: createId('notif'),
       title,
@@ -4305,6 +4350,41 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     set(state => ({
       desktopNotifications: [newNotification, ...state.desktopNotifications]
     }));
+
+    // Trigger System-level notifications if enabled in settings
+    const { enableNotifications, notifyOnTaskCompleted, notifyOnArtifactCreated, notifyOnAgentError } = get().settings;
+    if (enableNotifications) {
+      if (eventType === 'task' && !notifyOnTaskCompleted) return;
+      if (eventType === 'artifact' && !notifyOnArtifactCreated) return;
+      if (eventType === 'error' && !notifyOnAgentError) return;
+
+      // 1. Electron Desktop Native Bridge Notification
+      try {
+        if (platform.isDesktop() && platform.notification?.show) {
+          platform.notification.show({ title, body });
+          return;
+        }
+      } catch (err) {
+        console.warn('Electron platform notification failed, falling back to Web API:', err);
+      }
+
+      // 2. HTML5 Browser API standard Notifications
+      try {
+        if ('Notification' in window) {
+          if (Notification.permission === 'granted') {
+            new Notification(title, { body, icon: '/favicon.ico' });
+          } else if (Notification.permission !== 'denied') {
+            Notification.requestPermission().then(permission => {
+              if (permission === 'granted') {
+                new Notification(title, { body, icon: '/favicon.ico' });
+              }
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Standard Web Notification failed:', err);
+      }
+    }
   },
 
   markNotificationAsRead: (id) => {
