@@ -194,7 +194,18 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
       <div
         key={conv.id}
         onClick={() => onSelectConversation(conv.id)}
-        className={`p-2.5 rounded-lg cursor-pointer transition-all duration-150 relative group ${
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData('text/plain', conv.id);
+          e.dataTransfer.effectAllowed = 'move';
+          (window as any).__dragging_conversation_id = conv.id;
+          document.body.classList.add('is-dragging-conversation');
+        }}
+        onDragEnd={() => {
+          document.body.classList.remove('is-dragging-conversation');
+          delete (window as any).__dragging_conversation_id;
+        }}
+        className={`p-2.5 rounded-lg cursor-pointer transition-all duration-150 relative group select-none active:opacity-60 ${
           isActive
             ? isAgentMode
               ? 'bg-emerald-50/70 dark:bg-gradient-to-r dark:from-emerald-950/35 dark:to-teal-950/15 text-emerald-600 dark:text-emerald-400 font-medium'

@@ -12,6 +12,7 @@ interface RightPanelProps {
   artifacts: Artifact[];
   onSelectArtifact: (artifactId: string) => void;
   onOpenFullScreenPreview: () => void;
+  customConversationId?: string;
 }
 
 const RightPanel: React.FC<RightPanelProps> = ({
@@ -19,7 +20,8 @@ const RightPanel: React.FC<RightPanelProps> = ({
   agents,
   artifacts,
   onSelectArtifact,
-  onOpenFullScreenPreview
+  onOpenFullScreenPreview,
+  customConversationId
 }) => {
   const [topHeight, setTopHeight] = useState(280);
   const isDragging = useRef(false);
@@ -60,12 +62,18 @@ const RightPanel: React.FC<RightPanelProps> = ({
     };
   }, [handleMouseMove, handleMouseUp]);
 
-  const rightPanelTab = useAgentHubStore(state => state.rightPanelTab);
-  const setRightPanelTab = useAgentHubStore(state => state.setRightPanelTab);
+  const globalRightPanelTab = useAgentHubStore(state => state.rightPanelTab);
+  const setGlobalRightPanelTab = useAgentHubStore(state => state.setRightPanelTab);
+  const [localRightPanelTab, setLocalRightPanelTab] = useState<'artifacts' | 'sandbox'>('artifacts');
+
+  const rightPanelTab = customConversationId ? localRightPanelTab : globalRightPanelTab;
+  const setRightPanelTab = customConversationId ? setLocalRightPanelTab : setGlobalRightPanelTab;
 
   // Jump to the message where this artifact was created
   const handleJumpToMessage = useCallback((artifactId: string) => {
-    const messages = useAgentHubStore.getState().messages;
+    const messages = customConversationId
+      ? (useAgentHubStore.getState().conversationMessages[customConversationId] || [])
+      : useAgentHubStore.getState().messages;
     const msg = messages.find(m => m.artifactId === artifactId);
     if (msg) {
       const element = document.getElementById(`msg-${msg.id}`);
@@ -77,7 +85,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
         }, 1500);
       }
     }
-  }, []);
+  }, [customConversationId]);
 
   // Set selected artifact and open fullscreen modal
   const handleFullScreenPreview = useCallback((artifactId: string) => {
@@ -129,12 +137,14 @@ const RightPanel: React.FC<RightPanelProps> = ({
 
         <div className="flex-grow overflow-hidden min-w-0 flex flex-col">
           {rightPanelTab === 'sandbox' ? (
-            <SandboxPanel />
+            <SandboxPanel customConversationId={customConversationId} />
           ) : (
             <ArtifactList
               artifacts={artifacts}
               onJumpToMessage={handleJumpToMessage}
               onFullScreenPreview={handleFullScreenPreview}
+              customConversationId={customConversationId}
+              onSelectTab={setRightPanelTab}
             />
           )}
         </div>

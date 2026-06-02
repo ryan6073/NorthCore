@@ -8,9 +8,13 @@ import {
 import { AgentRunStep, SandboxFile, SandboxConflict } from '../../types';
 import { DeploymentView } from './DeploymentView';
 
-export const SandboxPanel: React.FC = () => {
+interface SandboxPanelProps {
+  customConversationId?: string;
+}
+
+export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId }) => {
   const {
-    activeConversationId,
+    activeConversationId: storeActiveId,
     getActiveRunId,
     getActiveRun,
     runFilesByRunId,
@@ -26,6 +30,8 @@ export const SandboxPanel: React.FC = () => {
     getSelectedSandboxFilePath,
     conversations
   } = useAgentHubStore();
+
+  const activeConversationId = customConversationId || storeActiveId;
 
   const activeRunId = getActiveRunId(activeConversationId);
   const activeRun = getActiveRun(activeConversationId);
@@ -267,7 +273,13 @@ export const SandboxPanel: React.FC = () => {
         {activeTab === 'workflow' && (
           <div className="flex flex-col h-full">
             <div className="p-4 border-b border-slate-800/60 bg-slate-950/20">
-              <div className="text-[11px] uppercase text-slate-500 font-bold tracking-wider mb-2">沙箱执行流程 (DAG)</div>
+              <div className="text-[11px] uppercase text-slate-500 font-bold tracking-wider mb-2">
+                {activeRun.dag?.strategy === 'platform_single_step'
+                  ? '平台任务执行 (单步)'
+                  : activeRun.dag?.strategy === 'group_orchestrator_dag'
+                    ? 'Orchestrator 任务分派流程'
+                    : '沙箱执行流程 (DAG)'}
+              </div>
               <div className="space-y-2">
                 {activeRun.steps?.map((step: AgentRunStep, idx: number) => {
                   const isSelected = step.id === selectedStepId;
@@ -303,8 +315,13 @@ export const SandboxPanel: React.FC = () => {
                       <div className="mt-0.5">{icon}</div>
                       <div className="flex-1 min-w-0">
                         <div className="flex justify-between items-center">
-                          <span className="text-xs font-bold text-slate-200">
-                            {idx + 1}. {step.agentName}
+                          <span className="text-xs font-bold text-slate-200 flex flex-wrap items-center gap-1.5">
+                            <span>{idx + 1}. {step.agentName}</span>
+                            {step.runtime && step.runtime !== 'native' && (
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-violet-500/10 text-violet-400 font-mono font-semibold uppercase border border-violet-500/20">
+                                platform: {step.runtime}
+                              </span>
+                            )}
                           </span>
                           <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${statusColor}`}>
                             {step.status}

@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import LeftSidebar from './components/layout/LeftSidebar';
 import ChatPanel from './components/chat/ChatPanel';
 import RightPanel from './components/layout/RightPanel';
@@ -12,6 +12,8 @@ import { useAgentHubStore } from './store/useAgentHubStore';
 import { CreateConversationPayload, Agent } from './types';
 import { LoginView } from './components/auth/LoginView';
 import { SettingsModal } from './components/modal/SettingsModal';
+import { MessageSquare, X } from 'lucide-react';
+import FloatingChatWindow from './components/chat/FloatingChatWindow';
 
 const getNewAgentTemplate = (): Agent => ({
   id: 'new',
@@ -59,6 +61,12 @@ function App() {
   const leftSidebarViewMode = useAgentHubStore(state => state.leftSidebarViewMode);
   const useMockMode = useAgentHubStore(state => state.useMockMode);
   const currentUser = useAgentHubStore(state => state.currentUser);
+
+  const floatingConversations = useAgentHubStore(state => state.floatingConversations);
+  const addFloatingConversation = useAgentHubStore(state => state.addFloatingConversation);
+  const updateFloatingConversation = useAgentHubStore(state => state.updateFloatingConversation);
+
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   const showAgentProfile = useAgentHubStore(state => state.showAgentProfile);
   const viewingAgentId = useAgentHubStore(state => state.viewingAgentId);
@@ -180,7 +188,30 @@ function App() {
   const isSessionLevel = configuringAgentIsSessionLevel;
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden bg-white dark:bg-[#06070d]">
+    <div
+      className="h-screen w-screen flex flex-col overflow-hidden bg-white dark:bg-[#06070d] relative"
+      onDragOver={(e) => {
+        if ((window as any).__dragging_conversation_id) {
+          e.preventDefault();
+          if (e.clientX > 320) {
+            setIsDraggingOver(true);
+          } else {
+            setIsDraggingOver(false);
+          }
+        }
+      }}
+      onDragLeave={() => {
+        setIsDraggingOver(false);
+      }}
+      onDrop={(e) => {
+        setIsDraggingOver(false);
+        const convId = e.dataTransfer.getData('text/plain') || (window as any).__dragging_conversation_id;
+        if (convId && e.clientX > 320) {
+          e.preventDefault();
+          addFloatingConversation(convId, e.clientX - 180, e.clientY - 30);
+        }
+      }}
+    >
       {isDesktop && <TitleBar />}
       <div className="flex-1 min-h-0 flex relative">
         <AppLayout
@@ -279,6 +310,65 @@ function App() {
             onClose={closeAgentProfile}
             onGoChat={() => handleOpenAgentChat(viewingAgentId)}
           />
+        );
+      })()}
+
+      {/* Visual Dropzone Overlay */}
+      {isDraggingOver && (
+        <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[4px] z-[999] flex items-center justify-center pointer-events-none animate-fade-in">
+          <div className="p-8 bg-white/90 dark:bg-slate-900/90 border-2 border-dashed border-lark-primary dark:border-violet-500 rounded-3xl shadow-2xl flex flex-col items-center justify-center gap-3 animate-scale-in text-lark-primary dark:text-violet-400">
+            <MessageSquare className="w-12 h-12 animate-bounce-subtle" />
+            <h3 className="text-base font-bold">✨ 释放鼠标生成悬浮聊天窗 ✨</h3>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">松开鼠标即可在当前位置创建独立的浮动对话框</p>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Active Windows */}
+      {floatingConversations.filter(fc => !fc.isMinimized).map(fc => (
+        <FloatingChatWindow key={fc.id} floatingId={fc.id} />
+      ))}
+
+      {/* Floating Minimized Badges */}
+      {(() => {
+        const minimized = floatingConversations.filter(fc => fc.isMinimized);
+        if (minimized.length === 0) return null;
+        return (
+          <div className="fixed bottom-6 right-6 flex flex-col gap-3.5 z-[9999] select-none">
+            {minimized.map(fc => {
+              const conv = conversations.find(c => c.id === fc.id);
+              if (!conv) return null;
+              const convAgent = agents.find(a => conv.agentIds.includes(a.id));
+              const avatar = conv.mode === 'agent' && convAgent ? convAgent.avatar : '';
+              
+              return (
+                <div
+                  key={fc.id}
+                  onClick={() => updateFloatingConversation(fc.id, { isMinimized: false })}
+                  className="group relative w-12 h-12 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl flex items-center justify-center cursor-pointer hover:scale-110 active:scale-95 transition-all duration-300 ring-2 ring-indigo-500/20"
+                  title={`点击还原会话: ${conv.title}`}
+                >
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      useAgentHubStore.getState().removeFloatingConversation(fc.id);
+                    }}
+                    className="absolute -top-1 -right-1 hidden group-hover:flex w-4.5 h-4.5 rounded-full bg-red-550 text-white items-center justify-center shadow-md border border-white"
+                  >
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+
+                  {conv.mode === 'agent' && avatar ? (
+                    <img src={avatar} alt="" className="w-full h-full rounded-full object-cover" />
+                  ) : (
+                    <MessageSquare className="w-5 h-5 text-lark-primary" />
+                  )}
+                  
+                  <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-500 border-2 border-white dark:border-slate-900 animate-pulse" />
+                </div>
+              );
+            })}
+          </div>
         );
       })()}
     </div>

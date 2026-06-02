@@ -16,6 +16,17 @@ import sandboxService from '@/services/http/sandboxService';
 import { platform, FileNode, WorkspaceInfo, AgentProcessInfo } from '@/utils/platform';
 import modelService from '@/services/http/modelService';
 
+export interface FloatingConversation {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  isMinimized: boolean;
+  isMaximized: boolean;
+}
+
+
 // Mock model data for offline/mock mode
 const mockModelProviders: ModelProvider[] = [
   { id: 'openai', name: 'OpenAI (GPT)', protocol: 'openai_chat_completions', requiresBaseUrl: false },
@@ -319,6 +330,16 @@ interface AgentHubStore {
   addDesktopNotification: (title: string, body: string, type: string, eventType?: 'task' | 'artifact' | 'error' | 'step') => void;
   markNotificationAsRead: (id: string) => void;
   clearNotifications: () => void;
+
+  // Floating Chat Specific properties
+  floatingConversations: FloatingConversation[];
+  conversationMessages: Record<string, Message[]>;
+  conversationArtifacts: Record<string, Artifact[]>;
+  conversationSelectedArtifactId: Record<string, string | null>;
+  addFloatingConversation: (id: string, x?: number, y?: number) => void;
+  removeFloatingConversation: (id: string) => void;
+  updateFloatingConversation: (id: string, updates: Partial<FloatingConversation>) => void;
+  sendMessageToConversation: (convId: string, content: string, attachments?: any[], targetAgentId?: string, useSandbox?: boolean) => Promise<void>;
 }
 
 const mergeLocalFlags = (list: Conversation[]): Conversation[] => {
@@ -344,6 +365,10 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   modelCredentials: [],
   modelConfigs: [],
   messages: [],
+  floatingConversations: [],
+  conversationMessages: {},
+  conversationArtifacts: {},
+  conversationSelectedArtifactId: {},
   artifacts: [],
   artifactVersions: {},
   pins: [],
@@ -1778,15 +1803,36 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             };
           });
         } else {
+          const errorMsg: Message = {
+            id: createId('msg'),
+            conversationId: activeConversationId,
+            senderId: 'system',
+            senderName: '系统',
+            role: 'system',
+            type: 'status',
+            content: `❌ 发送失败：${res.message || '未知错误'}`,
+            createdAt: getCurrentFullTime(),
+          };
           set(state => ({
-            messages: state.messages.filter(m => m.id !== newUserMessage.id),
+            messages: [...state.messages, errorMsg],
             isProcessing: false,
           }));
         }
-      } catch (e) {
+      } catch (e: any) {
         console.error('[Store] 发送消息 HTTP 失败', e);
+        const errMsg = e.response?.data?.message || e.message || '网络请求失败';
+        const errorMsg: Message = {
+          id: createId('msg'),
+          conversationId: activeConversationId,
+          senderId: 'system',
+          senderName: '系统',
+          role: 'system',
+          type: 'status',
+          content: `❌ 发送失败：${errMsg}`,
+          createdAt: getCurrentFullTime(),
+        };
         set(state => ({
-          messages: state.messages.filter(m => m.id !== newUserMessage.id),
+          messages: [...state.messages, errorMsg],
           isProcessing: false,
         }));
       }
@@ -4365,6 +4411,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     // Trigger System-level notifications if enabled in settings
     const { enableNotifications, notifyOnTaskCompleted, notifyOnArtifactCreated, notifyOnAgentError } = get().settings;
     if (enableNotifications) {
+      if (eventType === 'step') return; // Do not trigger native system/OS-level popups for minor step completions to avoid spamming
       if (eventType === 'task' && !notifyOnTaskCompleted) return;
       if (eventType === 'artifact' && !notifyOnArtifactCreated) return;
       if (eventType === 'error' && !notifyOnAgentError) return;
@@ -4557,4 +4604,190 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     }
   },
 
+  addFloatingConversation: (id, x, y) => {
+    const { conversations, floatingConversations } = get();
+    if (floatingConversations.some(fc => fc.id === id)) {
+      set({
+        floatingConversations: floatingConversations.map(fc =>
+          fc.id === id ? { ...fc, isMinimized: false, isMaximized: false } : fc
+        )
+      });
+      return;
+    }
+    const newFloating: FloatingConversation = {
+      id,
+      x: x ?? 100,
+      y: y ?? 100,
+      width: 360,
+      height: 480,
+      isMinimized: false,
+      isMaximized: false,
+    };
+    set({
+      floatingConversations: [...floatingConversations, newFloating]
+    });
+  },
+
+  removeFloatingConversation: (id) => {
+    set(state => ({
+      floatingConversations: state.floatingConversations.filter(fc => fc.id !== id)
+    }));
+  },
+
+  updateFloatingConversation: (id, updates) => {
+    set(state => ({
+      floatingConversations: state.floatingConversations.map(fc =>
+        fc.id === id ? { ...fc, ...updates } : fc
+      )
+    }));
+  },
+
+  sendMessageToConversation: async (convId, content, attachments, targetAgentId, useSandbox) => {
+    const { useMockMode, conversations, agents } = get();
+    const activeConv = conversations.find(c => c.id === convId);
+    if (!activeConv) return;
+
+    const newUserMessage: Message = {
+      id: createId('msg'),
+      conversationId: convId,
+      senderId: 'user',
+      senderName: '用户',
+      role: 'user',
+      type: 'text',
+      content,
+      createdAt: getCurrentFullTime(),
+      attachments,
+    };
+
+    set(state => {
+      const currentMsgs = state.conversationMessages[convId] || [];
+      const newMsgs = [...currentMsgs, newUserMessage];
+      const syncActive = state.activeConversationId === convId;
+      return {
+        conversationMessages: {
+          ...state.conversationMessages,
+          [convId]: newMsgs
+        },
+        ...(syncActive ? { messages: newMsgs } : {}),
+        conversations: state.conversations.map(c =>
+          c.id === convId
+            ? { ...c, lastMessage: content, updatedAt: getCurrentFullTime() }
+            : c
+        )
+      };
+    });
+
+    if (useMockMode) {
+      setTimeout(() => {
+        const replyResult = generateMockReply({
+          conversation: activeConv,
+          agents,
+          userContent: content,
+        });
+        const replyMsg = replyResult.messages[0] || {
+          id: createId('msg'),
+          conversationId: convId,
+          senderId: activeConv.agentIds[0] || 'assistant',
+          senderName: agents.find(a => a.id === activeConv.agentIds[0])?.name || '智能体',
+          role: 'agent' as const,
+          type: 'text' as const,
+          content: '收到您的请求了，正在处理中...',
+          createdAt: getCurrentFullTime(),
+        };
+
+        const newBotMessage: Message = {
+          ...replyMsg,
+          role: replyMsg.role as any,
+          type: replyMsg.type as any,
+        };
+
+        set(state => {
+          const currentMsgs = state.conversationMessages[convId] || [];
+          const newMsgs = [...currentMsgs, newBotMessage];
+          const syncActive = state.activeConversationId === convId;
+          return {
+            conversationMessages: {
+              ...state.conversationMessages,
+              [convId]: newMsgs
+            },
+            ...(syncActive ? { messages: newMsgs } : {}),
+            conversations: state.conversations.map(c =>
+              c.id === convId
+                ? { ...c, lastMessage: newBotMessage.content, updatedAt: getCurrentFullTime() }
+                : c
+            )
+          };
+        });
+      }, 1000);
+    } else {
+      try {
+        await sendMessageNonStreaming(convId, { 
+          content,
+          attachments,
+          targetAgentId,
+          useSandbox: useSandbox ? true : undefined,
+          executionMode: useSandbox ? 'sandbox' : undefined,
+        });
+        const res = await getMessageList(convId);
+        let messagesData: Message[] = [];
+        if (res && (res as any).code === 0 && (res as any).data?.list) {
+          messagesData = (res as any).data.list.map((m: any) => mapMessageMetadata(m));
+        } else if (Array.isArray(res)) {
+          messagesData = res;
+        }
+        set(state => {
+          const syncActive = state.activeConversationId === convId;
+          return {
+            conversationMessages: {
+              ...state.conversationMessages,
+              [convId]: messagesData
+            },
+            ...(syncActive ? { messages: messagesData } : {})
+          };
+        });
+      } catch (e) {
+        console.error('[Store] 发送消息失败', e);
+      }
+    }
+  },
+
 }));
+
+// Auto-sync messages state of the active conversation to conversationMessages dictionary
+useAgentHubStore.subscribe((state, prevState) => {
+  const activeId = state.activeConversationId;
+  if (activeId && state.messages && state.messages !== prevState.messages) {
+    const cache = (useAgentHubStore.getState() as any).conversationMessages || {};
+    if (cache[activeId] !== state.messages) {
+      useAgentHubStore.setState((prev: any) => ({
+        conversationMessages: {
+          ...prev.conversationMessages,
+          [activeId]: state.messages
+        }
+      }));
+    }
+  }
+  if (activeId && state.artifacts && state.artifacts !== prevState.artifacts) {
+    const cache = (useAgentHubStore.getState() as any).conversationArtifacts || {};
+    if (cache[activeId] !== state.artifacts) {
+      useAgentHubStore.setState((prev: any) => ({
+        conversationArtifacts: {
+          ...prev.conversationArtifacts,
+          [activeId]: state.artifacts
+        }
+      }));
+    }
+  }
+  if (activeId && state.selectedArtifactId !== prevState.selectedArtifactId) {
+    const cache = (useAgentHubStore.getState() as any).conversationSelectedArtifactId || {};
+    if (cache[activeId] !== state.selectedArtifactId) {
+      useAgentHubStore.setState((prev: any) => ({
+        conversationSelectedArtifactId: {
+          ...prev.conversationSelectedArtifactId,
+          [activeId]: state.selectedArtifactId
+        }
+      }));
+    }
+  }
+});
+

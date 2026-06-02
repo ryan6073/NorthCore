@@ -175,3 +175,185 @@ html.dark body {
     pointer-events: auto !important;
   }
 }
+
+/* Premium Custom Markdown Styling (.prose) */
+.prose {
+  line-height: 1.625;
+  color: #1f2329;
+}
+
+.prose h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  color: #1f2329;
+}
+
+.prose h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid rgba(31, 35, 41, 0.1);
+  color: #1f2329;
+}
+
+.prose h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  color: #1f2329;
+}
+
+.prose p {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.prose ul {
+  list-style-type: disc;
+  padding-left: 1.5rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.prose ol {
+  list-style-type: decimal;
+  padding-left: 1.5rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.prose li {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.prose blockquote {
+  border-left: 4px solid #7c3aed;
+  background-color: rgba(124, 58, 237, 0.05);
+  padding: 0.5rem 1rem;
+  margin: 0.75rem 0;
+  border-radius: 0 8px 8px 0;
+  font-style: italic;
+  color: #4b5563;
+}
+
+.prose code {
+  font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
+  font-size: 0.85em;
+  background-color: rgba(31, 35, 41, 0.05);
+  padding: 0.2rem 0.4rem;
+  border-radius: 6px;
+  color: #d946ef;
+}
+
+.prose pre {
+  margin: 0.75rem 0;
+  overflow-x: auto;
+  border-radius: 8px;
+}
+
+.prose pre code {
+  background-color: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.875rem;
+}
+
+.prose th {
+  background-color: rgba(31, 35, 41, 0.04);
+  font-weight: 600;
+  border: 1px solid rgba(31, 35, 41, 0.1);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+
+.prose td {
+  border: 1px solid rgba(31, 35, 41, 0.1);
+  padding: 0.5rem 0.75rem;
+}
+
+.prose tr:nth-child(even) {
+  background-color: rgba(31, 35, 41, 0.02);
+}
+
+.prose a {
+  color: #3b82f6;
+  text-decoration: underline;
+  font-weight: 500;
+}
+
+.prose a:hover {
+  color: #2563eb;
+}
+
+.prose hr {
+  margin: 1.5rem 0;
+  border: 0;
+  border-top: 1px solid rgba(31, 35, 41, 0.1);
+}
+
+/* Dark Mode Invert Styles */
+.dark .prose {
+  color: #cbd5e1;
+}
+
+.dark .prose h1, .dark .prose h2, .dark .prose h3 {
+  color: #f1f5f9;
+}
+
+.dark .prose h2 {
+  border-bottom-color: rgba(255, 255, 255, 0.15);
+}
+
+.dark .prose blockquote {
+  border-left-color: #8b5cf6;
+  background-color: rgba(139, 92, 246, 0.1);
+  color: #94a3b8;
+}
+
+.dark .prose code {
+  background-color: rgba(255, 255, 255, 0.08);
+  color: #f472b6;
+}
+
+.dark .prose table {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.dark .prose th {
+  background-color: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.dark .prose td {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.dark .prose tr:nth-child(even) {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+.dark .prose a {
+  color: #60a5fa;
+}
+
+.dark .prose a:hover {
+  color: #93c5fd;
+}
+
+.dark .prose hr {
+  border-top-color: rgba(255, 255, 255, 0.15);
+}

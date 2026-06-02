@@ -495,6 +495,8 @@ export interface RunDag {
     status: AgentRunStepStatus;
     dependencies: string[];
   }[];
+  strategy?: 'native_dag' | 'platform_single_step' | 'group_orchestrator_dag' | string;
+  summary?: string;
 }
 
 export interface Sandbox {
@@ -520,6 +522,8 @@ export interface AgentRunStep {
   updatedAt: string;
   startedAt?: string | null;
   finishedAt?: string | null;
+  runtime?: string;
+  runtimeMetadata?: Record<string, any>;
 }
 
 export interface SandboxFile {

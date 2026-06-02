@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Message, Agent as AgentType } from '@/types';
 import { User, Bot, Sparkles, CornerUpLeft, Pin, Copy, Check, Navigation, FileCode, Globe } from 'lucide-react';
 import CodeBlock from './CodeBlock';
@@ -147,30 +149,42 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     }
   };
 
-  const formatMessageText = (text: string) => {
+  const prepareMarkdownContent = (text: string) => {
     if (!text) return '';
-    // Match @ followed by non-whitespace characters (including Chinese, letters, numbers, etc.)
-    const regex = /(@[^\s@\uff1a\uff0c\u3002:,.!?]+)/g;
-    const parts = text.split(regex);
-    
-    return parts.map((part, index) => {
-      if (part.startsWith('@')) {
-        const nameWithoutAt = part.substring(1);
-        const matchedAgent = allAgents.find(a => a.name.toLowerCase() === nameWithoutAt.toLowerCase());
-        if (matchedAgent) {
-          return (
-            <span 
-              key={index} 
-              onClick={() => openAgentProfile(matchedAgent.id)}
-              className="text-blue-600 dark:text-blue-400 font-semibold hover:underline cursor-pointer"
-            >
-              {part}
-            </span>
-          );
+    let result = text;
+    // Sort agent names by length descending to match longer names first
+    const sortedAgents = [...allAgents].sort((a, b) => b.name.length - a.name.length);
+    for (const agent of sortedAgents) {
+      const escapedName = agent.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`@${escapedName}\\b`, 'g');
+      result = result.replace(regex, `[@${agent.name}](mention:${agent.id})`);
+    }
+
+    // Ensure GFM tables have a blank line before and after them if missing
+    const lines = result.split('\n');
+    const processedLines: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const currentLine = lines[i].trim();
+      if (currentLine.startsWith('|')) {
+        if (i > 0) {
+          const prevLine = lines[i - 1].trim();
+          if (prevLine !== '' && !prevLine.startsWith('|')) {
+            processedLines.push(''); // insert blank line before table
+          }
+        }
+      } else if (currentLine !== '') {
+        if (i > 0) {
+          const prevLine = lines[i - 1].trim();
+          if (prevLine.startsWith('|')) {
+            processedLines.push(''); // insert blank line after table
+          }
         }
       }
-      return part;
-    });
+      processedLines.push(lines[i]);
+    }
+    result = processedLines.join('\n');
+
+    return result;
   };
 
   const renderContent = () => {
@@ -186,7 +200,38 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     if (message.type === 'artifact') {
       return <ArtifactMessage message={message} />;
     }
-    return <p className="text-sm leading-relaxed whitespace-pre-wrap">{formatMessageText(message.content)}</p>;
+    return (
+      <div className="prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed break-words overflow-x-auto select-text">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            a({ node, href, children, ...props }) {
+              if (href?.startsWith('mention:')) {
+                const agentId = href.split(':')[1];
+                return (
+                  <span
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openAgentProfile(agentId);
+                    }}
+                    className="text-blue-600 dark:text-blue-400 font-semibold hover:underline cursor-pointer select-none"
+                  >
+                    {children}
+                  </span>
+                );
+              }
+              return (
+                <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline" {...props}>
+                  {children}
+                </a>
+              );
+            }
+          }}
+        >
+          {prepareMarkdownContent(message.content)}
+        </ReactMarkdown>
+      </div>
+    );
   };
 
   const isBlockType = message.type === 'code' || message.type === 'task-plan' || message.type === 'artifact' || message.metadata?.isGroupedArtifacts;
@@ -374,7 +419,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
                     {renderContent()}
                   </div>
                 ) : (
-                  <div className={`px-4 py-2.5 rounded-xl text-sm leading-relaxed shadow-sm transition-all duration-300 ${
+                  <div className={`px-4 py-2.5 rounded-xl text-sm leading-relaxed shadow-sm transition-all duration-300 break-all ${
                     message.isPinned
                       ? `bg-amber-50/60 dark:bg-amber-950/15 border border-amber-300 dark:border-amber-900 text-lark-text-primary dark:text-amber-200 shadow-[0_0_12px_rgba(245,158,11,0.15)] ring-1 ring-amber-400/20 ${
                           isUser ? 'rounded-tr-none' : 'rounded-tl-none'

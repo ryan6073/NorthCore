@@ -179,7 +179,7 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
           <div className="space-y-1.5 pt-1">
             <div className="flex items-center justify-between">
               <label className="block text-[11px] font-semibold text-lark-text-secondary dark:text-slate-400">
-                绑定工作区 (可选)
+                绑定工作区 (必填)
               </label>
               {!showCreateWorkspace && (
                 <button
@@ -240,19 +240,24 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
                 </button>
               </div>
             ) : (
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-1.5">
                 <select
                   value={selectedWorkspaceId}
                   onChange={(e) => setSelectedWorkspaceId(e.target.value)}
                   className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-1 focus:ring-lark-primary transition-all font-medium cursor-pointer"
                 >
-                  <option value="">📁 未绑定工作区</option>
+                  <option value="">📁 请选择绑定的工作区 (必填)</option>
                   {workspaces.map((w) => (
                     <option key={w.id} value={w.id}>
                       📁 {w.name}
                     </option>
                   ))}
                 </select>
+                {workspaces.length === 0 && (
+                  <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                    ⚠️ 暂无可用工作区，请先点击“新建工作区”创建一个。
+                  </p>
+                )}
               </div>
             )}
           </div>
@@ -268,8 +273,8 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
             </button>
             <button
               type="submit"
-              disabled={selectedAgentIds.length === 0}
-              className={`flex-grow py-2 rounded-lg text-xs text-white font-semibold shadow-sm active:scale-95 transition-all ${selectedAgentIds.length === 0
+              disabled={selectedAgentIds.length === 0 || !selectedWorkspaceId}
+              className={`flex-grow py-2 rounded-lg text-xs text-white font-semibold shadow-sm active:scale-95 transition-all ${selectedAgentIds.length === 0 || !selectedWorkspaceId
                   ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-550 border border-transparent cursor-not-allowed shadow-none'
                   : mode === 'single'
                     ? 'bg-lark-primary hover:bg-lark-primary-hover'

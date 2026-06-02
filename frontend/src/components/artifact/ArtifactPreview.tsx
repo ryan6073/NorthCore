@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Artifact, ArtifactVersion } from '@/types';
 import { Copy, FileCode, FileText, Globe, Maximize2, GitCompare, RefreshCw, Edit3, Save, X, FolderOpen, ArrowDownToLine, History, Folder, Network } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
@@ -720,6 +721,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
             ) : (
               <article className="prose prose-sm dark:prose-invert max-w-none text-lark-text-primary dark:text-slate-200 bg-white dark:bg-slate-900 border border-lark-border dark:border-slate-800 p-6 rounded-2xl shadow-sm leading-relaxed">
                 <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
                   components={{
                     code({ node, className, children, ...props }) {
                       const match = /language-(\w+)/.exec(className || '');
@@ -751,7 +753,31 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
                     }
                   }}
                 >
-                  {currentVersion.content}
+                  {(() => {
+                    const content = currentVersion.content || '';
+                    const lines = content.split('\n');
+                    const processedLines: string[] = [];
+                    for (let i = 0; i < lines.length; i++) {
+                      const currentLine = lines[i].trim();
+                      if (currentLine.startsWith('|')) {
+                        if (i > 0) {
+                          const prevLine = lines[i - 1].trim();
+                          if (prevLine !== '' && !prevLine.startsWith('|')) {
+                            processedLines.push('');
+                          }
+                        }
+                      } else if (currentLine !== '') {
+                        if (i > 0) {
+                          const prevLine = lines[i - 1].trim();
+                          if (prevLine.startsWith('|')) {
+                            processedLines.push('');
+                          }
+                        }
+                      }
+                      processedLines.push(lines[i]);
+                    }
+                    return processedLines.join('\n');
+                  })()}
                 </ReactMarkdown>
               </article>
             )}

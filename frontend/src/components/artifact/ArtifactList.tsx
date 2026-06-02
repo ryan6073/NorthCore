@@ -21,6 +21,8 @@ interface ArtifactListProps {
   artifacts: Artifact[];
   onJumpToMessage: (artifactId: string) => void;
   onFullScreenPreview: (artifactId: string) => void;
+  customConversationId?: string;
+  onSelectTab?: (tab: 'artifacts' | 'sandbox') => void;
 }
 
 interface TreeFileNode {
@@ -34,13 +36,19 @@ interface TreeFileNode {
 const ArtifactList: React.FC<ArtifactListProps> = ({
   artifacts,
   onJumpToMessage,
-  onFullScreenPreview
+  onFullScreenPreview,
+  customConversationId,
+  onSelectTab
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({});
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   
-  const selectedArtifactId = useAgentHubStore(state => state.selectedArtifactId);
+  const globalSelectedArtifactId = useAgentHubStore(state => state.selectedArtifactId);
+  const cachedSelectedArtifactId = useAgentHubStore(state => 
+    customConversationId ? (state.conversationSelectedArtifactId[customConversationId] || null) : null
+  );
+  const selectedArtifactId = customConversationId ? cachedSelectedArtifactId : globalSelectedArtifactId;
 
   const toggleExpand = (dirPath: string) => {
     setExpandedDirs(prev => ({ 
@@ -169,7 +177,16 @@ const ArtifactList: React.FC<ArtifactListProps> = ({
               if (isFolder) {
                 toggleExpand(uniquePath);
               } else if (node.artifact) {
-                useAgentHubStore.getState().setSelectedArtifactId(node.artifact.id);
+                if (customConversationId) {
+                  useAgentHubStore.setState((state: any) => ({
+                    conversationSelectedArtifactId: {
+                      ...state.conversationSelectedArtifactId,
+                      [customConversationId]: node.artifact!.id
+                    }
+                  }));
+                } else {
+                  useAgentHubStore.getState().setSelectedArtifactId(node.artifact.id);
+                }
               }
             }}
           >
@@ -300,15 +317,18 @@ const ArtifactList: React.FC<ArtifactListProps> = ({
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();
-                          const activeConvId = useAgentHubStore.getState().activeConversationId;
-                          if (activeConvId) {
+                          const targetConvId = customConversationId || useAgentHubStore.getState().activeConversationId;
+                          if (targetConvId) {
                             useAgentHubStore.setState(state => ({
                               activeRunIdByConversationId: {
                                 ...state.activeRunIdByConversationId,
-                                [activeConvId]: group.id
+                                [targetConvId]: group.id
                               },
-                              rightPanelTab: 'sandbox'
+                              ...(customConversationId ? {} : { rightPanelTab: 'sandbox' })
                             }));
+                            if (customConversationId && onSelectTab) {
+                              onSelectTab('sandbox');
+                            }
                             await useAgentHubStore.getState().loadSandboxRunDetail(group.id);
                             await useAgentHubStore.getState().loadSandboxFiles(group.id);
                           }
