@@ -61,6 +61,21 @@ export async function getAgentContact(
   return await http.get(`/users/${userId}/agents/${agentId}/contact`);
 }
 
+export async function createAgentDefaultWorkspace(
+  agentId: string,
+  name?: string
+): Promise<BaseApiResponse<{ workspace: any; agent: any; defaultWorkspaceId: string }>> {
+  return await http.post(`/agents/${agentId}/default-workspace`, { name });
+}
+
+export async function createConversationAgentDefaultWorkspace(
+  conversationId: string,
+  agentId: string,
+  name?: string
+): Promise<BaseApiResponse<{ workspace: any; agent: any; defaultWorkspaceId: string }>> {
+  return await http.post(`/conversations/${conversationId}/agents/${agentId}/default-workspace`, { name });
+}
+
 const agentService = {
   getAgentList,
   getAgentDetail,
@@ -68,6 +83,8 @@ const agentService = {
   createAgent,
   deleteAgent,
   getAgentContact,
+  createAgentDefaultWorkspace,
+  createConversationAgentDefaultWorkspace,
 };
 
 export default agentService;

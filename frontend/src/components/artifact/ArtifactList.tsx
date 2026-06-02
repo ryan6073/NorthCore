@@ -296,6 +296,30 @@ const ArtifactList: React.FC<ArtifactListProps> = ({
                       <Play className="w-3.5 h-3.5 text-emerald-500 fill-emerald-500/10 flex-shrink-0" />
                     )}
                     <span className="flex-1 truncate">{group.name}</span>
+                    {group.id !== 'direct' && (
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const activeConvId = useAgentHubStore.getState().activeConversationId;
+                          if (activeConvId) {
+                            useAgentHubStore.setState(state => ({
+                              activeRunIdByConversationId: {
+                                ...state.activeRunIdByConversationId,
+                                [activeConvId]: group.id
+                              },
+                              rightPanelTab: 'sandbox'
+                            }));
+                            await useAgentHubStore.getState().loadSandboxRunDetail(group.id);
+                            await useAgentHubStore.getState().loadSandboxFiles(group.id);
+                          }
+                        }}
+                        className="px-2 py-0.5 bg-violet-600/80 dark:bg-indigo-650 hover:bg-violet-750 dark:hover:bg-indigo-600 active:scale-95 text-white text-[10px] rounded border border-transparent shadow-sm flex items-center gap-1 transition-all mr-1.5"
+                        title="进入此沙箱运行空间"
+                      >
+                        <Play className="w-2.5 h-2.5 fill-white text-white" />
+                        <span>进入沙箱</span>
+                      </button>
+                    )}
                     <span className="text-[9px] px-1.5 py-0.5 bg-slate-200/60 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-full scale-90">
                       {group.items.length} 个文件
                     </span>

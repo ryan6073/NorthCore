@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Agent, AgentProvider, AgentPermission } from '@/types';
-import { Save, X, Bot, FileText, Settings, Wrench, Shield, Check, Image, HelpCircle, AlertCircle, Globe, Cpu, Terminal } from 'lucide-react';
+import { Save, X, Bot, FileText, Settings, Wrench, Shield, Check, Image, HelpCircle, AlertCircle, Globe, Cpu, Terminal, Plus, Loader2 } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
+import agentService from '@/services/http/agentService';
 
 interface AgentConfigFormProps {
   agent: Agent;
@@ -18,6 +19,71 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
 
   const modelConfigs = useAgentHubStore(state => state.modelConfigs);
   const workspaces = useAgentHubStore(state => state.workspaces);
+  const activeConversationId = useAgentHubStore(state => state.activeConversationId);
+
+  const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
+  const [workspaceName, setWorkspaceName] = useState('');
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState('');
+
+  const handleCreateWorkspaceSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (creatingWorkspace) return;
+    setCreatingWorkspace(true);
+    setWorkspaceError('');
+    try {
+      const finalName = workspaceName.trim() || undefined;
+      let res;
+      if (isSessionLevel && activeConversationId) {
+        res = await agentService.createConversationAgentDefaultWorkspace(
+          activeConversationId,
+          form.id,
+          finalName
+        );
+      } else {
+        res = await agentService.createAgentDefaultWorkspace(
+          form.id,
+          finalName
+        );
+      }
+
+      if (res.code === 0 && res.data) {
+        const { workspace, agent: updatedAgent, defaultWorkspaceId } = res.data;
+        
+        // 1. Upsert workspace into global store
+        useAgentHubStore.setState((state) => {
+          const list = state.workspaces || [];
+          const exists = list.some(w => w.id === workspace.id);
+          const updatedList = exists
+            ? list.map(w => w.id === workspace.id ? workspace : w)
+            : [...list, workspace];
+          return { workspaces: updatedList };
+        });
+
+        // 2. Update local form state
+        setForm(prev => ({
+          ...prev,
+          ...updatedAgent,
+          runtimeConfig: {
+            ...(prev.runtimeConfig || {}),
+            ...updatedAgent.runtimeConfig,
+            default_workspace_id: defaultWorkspaceId
+          }
+        }));
+
+        // Close modal
+        setShowWorkspaceModal(false);
+        setWorkspaceName('');
+      } else {
+        setWorkspaceError(res.message || '创建并绑定默认工作区失败');
+      }
+    } catch (err: any) {
+      console.error('Failed to create default workspace:', err);
+      setWorkspaceError(err?.response?.data?.message || err?.message || '网络请求错误，请重试');
+    } finally {
+      setCreatingWorkspace(false);
+    }
+  };
 
   const handleSyncToGlobal = async () => {
     if (!onSyncToGlobal) return;
@@ -578,24 +644,34 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">绑定默认工作区 (default_workspace_id - 可选)</label>
-                          <select
-                            value={(form.runtimeConfig as any)?.default_workspace_id || ''}
-                            onChange={e => setForm(prev => ({
-                              ...prev,
-                              runtimeConfig: {
-                                ...(prev.runtimeConfig || {}),
-                                default_workspace_id: e.target.value || null
-                              }
-                            }))}
-                            className="w-full bg-slate-50 dark:bg-slate-955 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-850 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all font-semibold"
-                          >
-                            <option value="">📁 未选择默认工作区</option>
-                            {workspaces.map(w => (
-                              <option key={w.id} value={w.id}>
-                                📁 {w.name}
-                              </option>
-                            ))}
-                          </select>
+                          <div className="flex gap-2">
+                            <select
+                              value={(form.runtimeConfig as any)?.default_workspace_id || ''}
+                              onChange={e => setForm(prev => ({
+                                ...prev,
+                                runtimeConfig: {
+                                  ...(prev.runtimeConfig || {}),
+                                  default_workspace_id: e.target.value || null
+                                }
+                              }))}
+                              className="flex-1 bg-slate-50 dark:bg-slate-955 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-850 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all font-semibold cursor-pointer"
+                            >
+                              <option value="">📁 未选择默认工作区</option>
+                              {workspaces.map(w => (
+                                <option key={w.id} value={w.id}>
+                                  📁 {w.name}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => setShowWorkspaceModal(true)}
+                              className="px-3 py-2.5 bg-violet-600 hover:bg-violet-550 active:scale-95 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1 flex-shrink-0 shadow-sm border border-violet-500/20"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              新建工作区
+                            </button>
+                          </div>
                         </div>
 
                         <div>
@@ -766,6 +842,66 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
           </div>
         </div>
       </div>
+
+      {/* Workspace Creation Modal */}
+      {showWorkspaceModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs select-none animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-sm shadow-2xl p-5 space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+              <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                <Globe className="w-4 h-4 text-violet-500" />
+                新建并绑定工作区
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowWorkspaceModal(false)}
+                className="text-slate-400 hover:text-slate-650 dark:hover:text-slate-200 p-1 rounded-lg hover:bg-slate-550/20 transition-all"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateWorkspaceSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-350 block">工作区名称 (可选)</label>
+                <input
+                  type="text"
+                  value={workspaceName}
+                  onChange={e => setWorkspaceName(e.target.value)}
+                  placeholder={`${form.name} Workspace`}
+                  className="w-full text-xs px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-violet-500 placeholder:text-slate-400"
+                  autoFocus
+                />
+                <p className="text-[10px] text-slate-400 leading-normal">留空时，后端将自动根据当前智能体名称生成默认名称。</p>
+              </div>
+
+              {workspaceError && (
+                <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-500 text-[10px] leading-relaxed">
+                  {workspaceError}
+                </div>
+              )}
+
+              <div className="flex gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowWorkspaceModal(false)}
+                  className="flex-1 py-2 text-xs font-semibold border border-slate-200 dark:border-slate-850 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-650 dark:text-slate-300 rounded-xl transition-all"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingWorkspace}
+                  className="flex-1 py-2 text-xs font-bold bg-violet-600 hover:bg-violet-550 disabled:bg-violet-800/40 text-white rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md shadow-violet-600/10"
+                >
+                  {creatingWorkspace ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  确认创建
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
