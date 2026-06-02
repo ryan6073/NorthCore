@@ -8,6 +8,7 @@ import CodeEditorContainer from './CodeEditorContainer';
 import { platform } from '@/utils/platform';
 import ConflictResolveModal from '../modal/ConflictResolveModal';
 import mermaid from 'mermaid';
+import sandboxService from '@/services/http/sandboxService';
 
 interface ArtifactPreviewProps {
   artifact: Artifact | null;
@@ -103,6 +104,8 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   const [integratedHtml, setIntegratedHtml] = useState<string | undefined>(undefined);
   const [mermaidSvg, setMermaidSvg] = useState<string | null>(null);
   const [mermaidError, setMermaidError] = useState<string | null>(null);
+  const [serverPreviewHtml, setServerPreviewHtml] = useState<string | null>(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
 
   // Desktop integration states
   const [showHistory, setShowHistory] = useState(false);
@@ -274,16 +277,35 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     }
   }, [currentArtifact?.id, currentArtifact?.type, activeTab, currentVersion?.version, currentVersion?.content]);
 
-  // Inline multi-file HTML assets (CSS, JS) in frontend, ensure 100% matches user's latest edits
+  // Inline multi-file HTML assets (CSS, JS, Images) in frontend, ensure 100% matches user's latest edits
   const buildIntegratedHtml = (baseHtml: string): string => {
     let result = baseHtml;
     
+    const resolvePath = (relPath: string) => {
+      if (!currentArtifact) return relPath;
+      const baseParts = currentArtifact.title.replace(/\\/g, '/').split('/');
+      baseParts.pop(); // remove file name
+      
+      const relParts = relPath.replace(/\\/g, '/').split('/');
+      for (const part of relParts) {
+        if (part === '.' || part === '') continue;
+        if (part === '..') {
+          baseParts.pop();
+        } else {
+          baseParts.push(part);
+        }
+      }
+      return baseParts.join('/');
+    };
+
     // Inline CSS files: replace <link rel="stylesheet" href="xxx.css"> with <style>...</style>
     const cssLinkRegex = /<link[^>]*rel=["']?stylesheet["']?[^>]*href=["']([^"']+\.css)["'][^>]*>/gi;
     let cssMatch;
     while ((cssMatch = cssLinkRegex.exec(result)) !== null) {
       const filePath = cssMatch[1];
+      const targetPath = resolvePath(filePath).toLowerCase();
       const cssArtifact = allArtifacts?.find((a: any) => 
+        a.title.replace(/\\/g, '/').toLowerCase() === targetPath ||
         a.title.toLowerCase() === filePath.toLowerCase() || 
         a.title.toLowerCase().endsWith('/' + filePath.toLowerCase())
       );
@@ -298,7 +320,9 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     let jsMatch;
     while ((jsMatch = scriptSrcRegex.exec(result)) !== null) {
       const filePath = jsMatch[1];
+      const targetPath = resolvePath(filePath).toLowerCase();
       const jsArtifact = allArtifacts?.find((a: any) => 
+        a.title.replace(/\\/g, '/').toLowerCase() === targetPath ||
         a.title.toLowerCase() === filePath.toLowerCase() || 
         a.title.toLowerCase().endsWith('/' + filePath.toLowerCase())
       );
@@ -307,22 +331,151 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
         result = result.replace(jsMatch[0], `<script>${jsVersion.content}</script>`);
       }
     }
+
+    // Inline Images: replace image src with base64 data URI
+    const imgRegex = /<img[^>]*src=["']([^"']+\.(png|jpg|jpeg|gif|svg|webp|ico))["'][^>]*>/gi;
+    let imgMatch;
+    while ((imgMatch = imgRegex.exec(result)) !== null) {
+      const filePath = imgMatch[1];
+      const targetPath = resolvePath(filePath).toLowerCase();
+      const imgArtifact = allArtifacts?.find((a: any) => 
+        a.title.replace(/\\/g, '/').toLowerCase() === targetPath ||
+        a.title.toLowerCase() === filePath.toLowerCase() || 
+        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase())
+      );
+      const imgVersion = imgArtifact && artifactVersions[imgArtifact.id]?.find(v => v.id === imgArtifact.currentVersionId);
+      if (imgVersion?.content) {
+        let mimeType = 'image/png';
+        const ext = filePath.split('.').pop()?.toLowerCase();
+        if (ext === 'svg') mimeType = 'image/svg+xml';
+        else if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
+        else if (ext === 'gif') mimeType = 'image/gif';
+        else if (ext === 'webp') mimeType = 'image/webp';
+        else if (ext === 'ico') mimeType = 'image/x-icon';
+
+        const base64Content = imgVersion.content.startsWith('data:') 
+          ? imgVersion.content 
+          : `data:${mimeType};base64,${imgVersion.content}`;
+        
+        result = result.replace(imgMatch[1], base64Content);
+      }
+    }
     
+    return result;
+  };
+
+  const rewriteRelativeUrls = (html: string, runId: string): string => {
+    if (!html || !currentArtifact) return html;
+    let result = html;
+    
+    const resolvePath = (relPath: string) => {
+      const baseParts = currentArtifact.title.replace(/\\/g, '/').split('/');
+      baseParts.pop(); // remove file name
+      
+      const relParts = relPath.replace(/\\/g, '/').split('/');
+      for (const part of relParts) {
+        if (part === '.' || part === '') continue;
+        if (part === '..') {
+          baseParts.pop();
+        } else {
+          baseParts.push(part);
+        }
+      }
+      return baseParts.join('/');
+    };
+
+    let base = '';
+    try {
+      base = (import.meta as any).env?.VITE_API_BASE_URL || '';
+    } catch {
+      base = '';
+    }
+    if (base && !base.startsWith('http')) {
+      base = `${window.location.protocol}//${window.location.host}${base}`;
+    } else if (!base) {
+      base = `${window.location.protocol}//${window.location.host}/api/v1`;
+    }
+
+    // 1. Rewrite Images: <img src="xxx">
+    const imgRegex = /(<img[^>]*src=["'])([^"']+\.(png|jpg|jpeg|gif|svg|webp|ico))(["'][^>]*>)/gi;
+    result = result.replace(imgRegex, (match, prefix, filePath, ext, suffix) => {
+      const resolved = resolvePath(filePath);
+      const backendUrl = `${base}/runs/${runId}/preview/${encodeURIComponent(resolved)}`;
+      return `${prefix}${backendUrl}${suffix}`;
+    });
+
+    // 2. Rewrite CSS links: <link rel="stylesheet" href="xxx">
+    const cssRegex = /(<link[^>]*href=["'])([^"']+\.css)(["'][^>]*>)/gi;
+    result = result.replace(cssRegex, (match, prefix, filePath, suffix) => {
+      if (match.toLowerCase().includes('stylesheet')) {
+        const resolved = resolvePath(filePath);
+        const backendUrl = `${base}/runs/${runId}/preview/${encodeURIComponent(resolved)}`;
+        return `${prefix}${backendUrl}${suffix}`;
+      }
+      return match;
+    });
+
+    // 3. Rewrite Script tags: <script src="xxx">
+    const jsRegex = /(<script[^>]*src=["'])([^"']+\.js)(["'][^>]*>)/gi;
+    result = result.replace(jsRegex, (match, prefix, filePath, suffix) => {
+      const resolved = resolvePath(filePath);
+      const backendUrl = `${base}/runs/${runId}/preview/${encodeURIComponent(resolved)}`;
+      return `${prefix}${backendUrl}${suffix}`;
+    });
+
     return result;
   };
 
   // Process multi-file inline HTML for preview
   useEffect(() => {
+    let active = true;
     if (
       currentArtifact?.type === 'html' && 
       activeTab === 'preview' &&
       currentVersion?.content
     ) {
-      const fullyIntegrated = buildIntegratedHtml(currentVersion.content);
-      setIntegratedHtml(fullyIntegrated);
+      const { useMockMode } = useAgentHubStore.getState();
+      if (useMockMode) {
+        const fullyIntegrated = buildIntegratedHtml(currentVersion.content);
+        setIntegratedHtml(fullyIntegrated);
+        setServerPreviewHtml(null);
+      } else {
+        const runId = currentArtifact.runId && currentArtifact.runId !== 'direct' 
+          ? currentArtifact.runId 
+          : useAgentHubStore.getState().getActiveRunId(useAgentHubStore.getState().activeConversationId);
+        
+        if (runId) {
+          setIsPreviewLoading(true);
+          sandboxService.getSandboxHtmlPreview(runId, currentArtifact.title)
+            .then(res => {
+              if (active) {
+                if (res.code === 0 && res.data) {
+                  const resolvedHtml = rewriteRelativeUrls(res.data.html, runId);
+                  setServerPreviewHtml(resolvedHtml);
+                } else {
+                  setServerPreviewHtml(null);
+                }
+              }
+            })
+            .catch(err => {
+              console.error('Failed to get sandbox html preview:', err);
+              if (active) setServerPreviewHtml(null);
+            })
+            .finally(() => {
+              if (active) setIsPreviewLoading(false);
+            });
+        } else {
+          setServerPreviewHtml(null);
+        }
+      }
     } else {
       setIntegratedHtml(undefined);
+      setServerPreviewHtml(null);
     }
+
+    return () => {
+      active = false;
+    };
   }, [currentArtifact?.id, currentArtifact?.type, activeTab, currentVersion?.version, currentVersion?.content, allArtifacts, artifactVersions]);
 
 
@@ -638,14 +791,14 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
             </div>
             {/* Browser Content */}
             <div className="flex-1 min-h-0 border-l border-r border-b border-slate-200 dark:border-slate-800 rounded-b-xl bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
-              {(!previewHtml && !currentVersion) ? (
+              {(isPreviewLoading || (!previewHtml && !currentVersion)) ? (
                 <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
                   <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
                 </div>
               ) : (
                 <iframe
                   key={`html-preview-${currentVersion?.version || 1}-${currentArtifact?.id}`}
-                  srcDoc={previewHtml}
+                  srcDoc={useAgentHubStore.getState().useMockMode ? previewHtml : (serverPreviewHtml || '')}
                   className="w-full h-full bg-white"
                   title="HTML Preview"
                   sandbox="allow-scripts allow-same-origin"
