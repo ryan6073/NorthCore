@@ -55,6 +55,7 @@ function App() {
   const isFullScreenOpen = useAgentHubStore(state => state.isFullScreenOpen);
   const selectedAgentId = useAgentHubStore(state => state.selectedAgentId);
   const configuringAgentId = useAgentHubStore(state => state.configuringAgentId);
+  const configuringAgentIsSessionLevel = useAgentHubStore(state => state.configuringAgentIsSessionLevel);
   const leftSidebarViewMode = useAgentHubStore(state => state.leftSidebarViewMode);
   const useMockMode = useAgentHubStore(state => state.useMockMode);
   const currentUser = useAgentHubStore(state => state.currentUser);
@@ -176,7 +177,7 @@ function App() {
     return <LoginView />;
   }
 
-  const isSessionLevel = activeConversation && activeConversation.mode !== 'agent';
+  const isSessionLevel = configuringAgentIsSessionLevel;
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-white dark:bg-[#06070d]">

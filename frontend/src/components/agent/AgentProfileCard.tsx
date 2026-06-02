@@ -201,33 +201,61 @@ const AgentProfileCard: React.FC<AgentProfileCardProps> = ({ agent, onClose, onG
 
             {/* 模型配置 */}
             <div className="mb-5">
-              <h4 className="text-xs font-semibold text-slate-600 dark:text-slate-300 mb-2 flex items-center gap-1.5">
+              <h4 className="text-xs font-semibold text-slate-600 dark:text-slate-350 mb-2 flex items-center gap-1.5">
                 <span className="w-1 h-3 bg-indigo-500 rounded-full" />
-                模型配置
+                运行框架 & 模型配置
               </h4>
-              {(() => {
-                const config = agent.modelConfig || { provider: 'custom', modelName: 'gpt-4o', temperature: 0.7, maxTokens: 4096 };
-                return (
-                  <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden text-xs shadow-sm bg-slate-50/20 dark:bg-slate-950/20">
-                    <div className="grid grid-cols-2 border-b border-slate-200/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
-                      <span className="text-slate-500 dark:text-slate-400 font-medium">供应商</span>
-                      <span className="text-slate-700 dark:text-slate-200 font-mono text-right font-semibold">{config.provider}</span>
-                    </div>
-                    <div className="grid grid-cols-2 border-b border-slate-200/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
-                      <span className="text-slate-500 dark:text-slate-400 font-medium">模型名称</span>
-                      <span className="text-slate-700 dark:text-slate-200 font-mono text-right truncate font-semibold" title={config.modelName}>{config.modelName}</span>
-                    </div>
-                    <div className="grid grid-cols-2 border-b border-slate-200/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
-                      <span className="text-slate-500 dark:text-slate-400 font-medium">Temperature</span>
-                      <span className="text-slate-700 dark:text-slate-200 text-right font-semibold">{(config.temperature ?? 0.7).toFixed(1)}</span>
-                    </div>
-                    <div className="grid grid-cols-2 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
-                      <span className="text-slate-500 dark:text-slate-400 font-medium">最大 Tokens</span>
-                      <span className="text-slate-700 dark:text-slate-200 text-right font-semibold">{config.maxTokens ?? 4096}</span>
-                    </div>
-                  </div>
-                );
-              })()}
+              <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden text-xs shadow-sm bg-slate-50/20 dark:bg-slate-950/20">
+                <div className="grid grid-cols-2 border-b border-slate-200/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">执行模式 (Runtime)</span>
+                  <span className="text-slate-700 dark:text-slate-200 font-mono text-right font-bold uppercase">{agent.runtime || 'native'}</span>
+                </div>
+                {agent.modelConfigId ? (() => {
+                  const cfg = useAgentHubStore.getState().modelConfigs.find(c => c.id === agent.modelConfigId);
+                  return (
+                    <>
+                      <div className="grid grid-cols-2 border-b border-slate-200/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                        <span className="text-slate-500 dark:text-slate-400 font-medium">绑定模型配置</span>
+                        <span className="text-slate-700 dark:text-slate-200 font-mono text-right font-semibold">{cfg ? cfg.name : '未知配置'}</span>
+                      </div>
+                      {cfg && (
+                        <>
+                          <div className="grid grid-cols-2 border-b border-slate-200/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                            <span className="text-slate-500 dark:text-slate-400 font-medium">服务商 / 协议</span>
+                            <span className="text-slate-700 dark:text-slate-200 font-mono text-right truncate font-medium">{cfg.provider} / {cfg.protocol}</span>
+                          </div>
+                          <div className="grid grid-cols-2 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                            <span className="text-slate-500 dark:text-slate-400 font-medium">底座模型</span>
+                            <span className="text-slate-700 dark:text-slate-200 font-mono text-right truncate font-semibold">{cfg.modelName}</span>
+                          </div>
+                        </>
+                      )}
+                    </>
+                  );
+                })() : (() => {
+                  const config = agent.modelConfig || { provider: 'custom', modelName: 'gpt-4o', temperature: 0.7, maxTokens: 4096 };
+                  return (
+                    <>
+                      <div className="grid grid-cols-2 border-b border-slate-200/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                        <span className="text-slate-500 dark:text-slate-400 font-medium">供应商</span>
+                        <span className="text-slate-700 dark:text-slate-200 font-mono text-right font-semibold">{config.provider}</span>
+                      </div>
+                      <div className="grid grid-cols-2 border-b border-slate-200/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                        <span className="text-slate-500 dark:text-slate-400 font-medium">模型名称</span>
+                        <span className="text-slate-700 dark:text-slate-200 font-mono text-right truncate font-semibold" title={config.modelName}>{config.modelName}</span>
+                      </div>
+                      <div className="grid grid-cols-2 border-b border-slate-200/50 dark:border-slate-800/50 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                        <span className="text-slate-500 dark:text-slate-400 font-medium">Temperature</span>
+                        <span className="text-slate-700 dark:text-slate-200 text-right font-semibold">{(config.temperature ?? 0.7).toFixed(1)}</span>
+                      </div>
+                      <div className="grid grid-cols-2 p-2.5 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                        <span className="text-slate-500 dark:text-slate-400 font-medium">最大 Tokens</span>
+                        <span className="text-slate-700 dark:text-slate-200 text-right font-semibold">{config.maxTokens ?? 4096}</span>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
             </div>
 
             {/* 可用工具 */}

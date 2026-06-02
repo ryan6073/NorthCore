@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Agent, AgentProvider, AgentPermission } from '@/types';
-import { Save, X, Bot, FileText, Settings, Wrench, Shield, Check, Image, HelpCircle, AlertCircle, Globe } from 'lucide-react';
+import { Save, X, Bot, FileText, Settings, Wrench, Shield, Check, Image, HelpCircle, AlertCircle, Globe, Cpu, Terminal } from 'lucide-react';
+import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface AgentConfigFormProps {
   agent: Agent;
@@ -14,6 +15,9 @@ interface AgentConfigFormProps {
 const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, onSave, onClose, isSessionLevel = false, onSyncToGlobal }) => {
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced] = useState(false);
+
+  const modelConfigs = useAgentHubStore(state => state.modelConfigs);
+  const workspaces = useAgentHubStore(state => state.workspaces);
 
   const handleSyncToGlobal = async () => {
     if (!onSyncToGlobal) return;
@@ -31,6 +35,14 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
 
   const [form, setForm] = useState<Agent>(() => ({
     ...agent,
+    runtime: agent.runtime || 'native',
+    modelConfigId: agent.modelConfigId || '',
+    runtimeConfig: agent.runtimeConfig ? { ...agent.runtimeConfig } : {
+      opencode_bin: 'opencode',
+      approval_mode: 'manual',
+      default_workspace_id: '',
+      session_id: ''
+    },
     modelConfig: agent.modelConfig ? { ...agent.modelConfig } : {
       provider: 'custom' as any,
       modelName: 'gpt-4o',
@@ -335,96 +347,277 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
             {/* TAB 3: MODEL CONFIG */}
             {activeTab === 'model' && (
               <div className="space-y-5 animate-fade-in">
-                <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-slate-200/60 dark:border-slate-850 shadow-sm space-y-5">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Settings className="w-4 h-4 text-violet-500" />
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-400">大模型底座参数</span>
+                {/* Segmented control for execution mode */}
+                <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/60 dark:border-slate-855 shadow-sm space-y-4">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-350">智能体运行模式 (Execution Mode)</label>
+                  <div className="grid grid-cols-2 gap-2 p-1 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => setForm(prev => ({ ...prev, runtime: 'native' }))}
+                      className={`py-2 px-3 rounded-lg text-xs font-bold transition-all ${
+                        form.runtime === 'native'
+                          ? 'bg-violet-600 text-white shadow'
+                          : 'text-slate-500 hover:text-slate-850 dark:hover:text-white'
+                      }`}
+                    >
+                      自定义 Prompt (Native)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setForm(prev => ({ ...prev, runtime: 'opencode' }))}
+                      className={`py-2 px-3 rounded-lg text-xs font-bold transition-all ${
+                        form.runtime !== 'native'
+                          ? 'bg-violet-600 text-white shadow'
+                          : 'text-slate-500 hover:text-slate-850 dark:hover:text-white'
+                      }`}
+                    >
+                      平台 Agent (Platform)
+                    </button>
                   </div>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">服务供应商 (Provider)</label>
-                      <select
-                        value={form.modelConfig.provider}
-                        onChange={e => setForm(prev => ({ ...prev, modelConfig: { ...prev.modelConfig, provider: e.target.value as AgentProvider } }))}
-                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all cursor-pointer font-semibold"
-                      >
-                        {providers.map(p => (
-                          <option key={p} value={p}>{p}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">调用模型名称 (Model Name)</label>
-                      <input
-                        type="text"
-                        required
-                        value={form.modelConfig.modelName}
-                        onChange={e => setForm(prev => ({ ...prev, modelConfig: { ...prev.modelConfig, modelName: e.target.value } }))}
-                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all font-mono font-medium"
-                        placeholder="e.g. gpt-4o, claude-3-5-sonnet"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">API 代理端点 (API Base URL - 可选)</label>
-                    <input
-                      type="text"
-                      value={form.modelConfig.apiBaseUrl || ''}
-                      onChange={e => setForm(prev => ({ ...prev, modelConfig: { ...prev.modelConfig, apiBaseUrl: e.target.value } }))}
-                      placeholder="https://api.openai-proxy.com/v1"
-                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all font-mono"
-                    />
-                  </div>
-
-                  <div className="space-y-2 pt-2">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="font-bold text-slate-700 dark:text-slate-350">多样性倾向 (Temperature)</span>
-                      <span className="font-mono bg-violet-50 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400 px-2 py-0.5 rounded font-bold">{form.modelConfig.temperature.toFixed(1)}</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="2"
-                      step="0.1"
-                      value={form.modelConfig.temperature}
-                      onChange={e => setForm(prev => ({ ...prev, modelConfig: { ...prev.modelConfig, temperature: parseFloat(e.target.value) } }))}
-                      className="w-full h-1.5 bg-slate-100 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-violet-650"
-                    />
-                    <div className="flex justify-between text-[10px] text-slate-400 select-none">
-                      <span>严格/精确 (0.0)</span>
-                      <span>均衡 (1.0)</span>
-                      <span>创意/发散 (2.0)</span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                      <label className="text-xs font-bold text-slate-700 dark:text-slate-350">单次回答最大上限 (Max Tokens)</label>
-                      <span title="限制模型单词单次回复的 Token 数量上限。" className="cursor-help flex items-center">
-                        <HelpCircle className="w-3.5 h-3.5 text-slate-400" />
-                      </span>
-                    </div>
-                    <input
-                      type="number"
-                      value={form.modelConfig.maxTokens}
-                      onChange={e => setForm(prev => ({ ...prev, modelConfig: { ...prev.modelConfig, maxTokens: parseInt(e.target.value) || 4096 } }))}
-                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all font-semibold"
-                    />
-                    {isSessionLevel && globalAgent && globalAgent.modelConfig?.maxTokens !== form.modelConfig.maxTokens && (
-                      <span className="text-[10px] text-slate-400 dark:text-slate-550 mt-1 block">全局默认值: <span className="font-semibold">{globalAgent.modelConfig?.maxTokens}</span></span>
-                    )}
-                    {isSessionLevel && globalAgent && (globalAgent.modelConfig?.provider !== form.modelConfig.provider || globalAgent.modelConfig?.modelName !== form.modelConfig.modelName || globalAgent.modelConfig?.temperature !== form.modelConfig.temperature) && (
-                      <div className="p-3 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-850 rounded-xl text-[10.5px] text-slate-500 space-y-1">
-                        <div className="font-semibold text-slate-700 dark:text-slate-350">全局模型配置参考：</div>
-                        <div>提供商 / 模型名：<span className="font-semibold font-mono">{globalAgent.modelConfig?.provider} / {globalAgent.modelConfig?.modelName}</span></div>
-                        <div>Temperature (多样性)：<span className="font-semibold font-mono">{globalAgent.modelConfig?.temperature}</span></div>
-                      </div>
-                    )}
-                  </div>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-550">
+                    {form.runtime === 'native'
+                      ? '自定义 Prompt 模式下，智能体基于您设置 the System Prompt 和可用工具独立自主运行。'
+                      : '平台模式下，智能体将绑定特定的开发运行框架（如 OpenCode），以执行更高级的终端级协作任务。'}
+                  </p>
                 </div>
+
+                {/* Model Configuration Selector */}
+                <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-slate-200/60 dark:border-slate-855 shadow-sm space-y-5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Settings className="w-4 h-4 text-violet-500" />
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-400">大模型底座参数</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">选择模型配置 (Model Config)</label>
+                    <select
+                      value={form.modelConfigId || ''}
+                      onChange={e => setForm(prev => ({ ...prev, modelConfigId: e.target.value || null }))}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-850 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all cursor-pointer font-semibold"
+                    >
+                      <option value="">-- 请选择统一的模型配置 --</option>
+                      {modelConfigs.map(cfg => (
+                        <option key={cfg.id} value={cfg.id}>
+                          {cfg.name} ({cfg.provider} / {cfg.modelName})
+                        </option>
+                      ))}
+                    </select>
+                    {form.modelConfigId && (() => {
+                      const selectedConfig = modelConfigs.find(c => c.id === form.modelConfigId);
+                      if (selectedConfig) {
+                        return (
+                          <div className="mt-2.5 p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-[10px] text-slate-500 dark:text-slate-400 flex flex-wrap gap-x-4 gap-y-1 font-mono">
+                            <div>服务商: <span className="text-slate-800 dark:text-slate-200 font-semibold">{selectedConfig.provider}</span></div>
+                            <div>协议: <span className="text-slate-800 dark:text-slate-200 font-semibold">{selectedConfig.protocol}</span></div>
+                            <div>模型: <span className="text-slate-800 dark:text-slate-200 font-semibold">{selectedConfig.modelName}</span></div>
+                            {selectedConfig.baseUrl && <div>端点: <span className="text-slate-800 dark:text-slate-200 font-semibold">{selectedConfig.baseUrl}</span></div>}
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
+
+                  {/* Legacy Compatibility Collapsible Panel (Only for Native) */}
+                  {form.runtime === 'native' && (
+                    <details className="border-t border-slate-100 dark:border-slate-800/80 pt-4 outline-none cursor-pointer group">
+                      <summary className="text-[11px] font-semibold text-slate-400 hover:text-slate-650 dark:hover:text-slate-200 select-none">
+                        使用历史遗留模型配置作为 Fallback (兼容用)
+                      </summary>
+                      <div className="mt-4 space-y-4 cursor-default animate-fade-in" onClick={e => e.stopPropagation()}>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">服务供应商 (Provider)</label>
+                            <select
+                              value={form.modelConfig.provider}
+                              onChange={e => setForm(prev => ({ ...prev, modelConfig: { ...prev.modelConfig, provider: e.target.value as AgentProvider } }))}
+                              className="w-full bg-slate-50 dark:bg-slate-955 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all cursor-pointer font-semibold"
+                            >
+                              {providers.map(p => (
+                                <option key={p} value={p}>{p}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">调用模型名称 (Model Name)</label>
+                            <input
+                              type="text"
+                              required
+                              value={form.modelConfig.modelName}
+                              onChange={e => setForm(prev => ({ ...prev, modelConfig: { ...prev.modelConfig, modelName: e.target.value } }))}
+                              className="w-full bg-slate-50 dark:bg-slate-955 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all font-mono font-medium"
+                              placeholder="e.g. gpt-4o, claude-3-5-sonnet"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">API 代理端点 (API Base URL - 可选)</label>
+                          <input
+                            type="text"
+                            value={form.modelConfig.apiBaseUrl || ''}
+                            onChange={e => setForm(prev => ({ ...prev, modelConfig: { ...prev.modelConfig, apiBaseUrl: e.target.value } }))}
+                            placeholder="https://api.openai-proxy.com/v1"
+                            className="w-full bg-slate-50 dark:bg-slate-955 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all font-mono"
+                          />
+                        </div>
+
+                        <div className="space-y-2 pt-2">
+                          <div className="flex justify-between items-center text-xs">
+                            <span className="font-bold text-slate-700 dark:text-slate-350">多样性倾向 (Temperature)</span>
+                            <span className="font-mono bg-violet-50 dark:bg-violet-955/40 text-violet-600 dark:text-violet-400 px-2 py-0.5 rounded font-bold">{form.modelConfig.temperature.toFixed(1)}</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="2"
+                            step="0.1"
+                            value={form.modelConfig.temperature}
+                            onChange={e => setForm(prev => ({ ...prev, modelConfig: { ...prev.modelConfig, temperature: parseFloat(e.target.value) } }))}
+                            className="w-full h-1.5 bg-slate-100 dark:bg-slate-850 rounded-lg appearance-none cursor-pointer accent-violet-650"
+                          />
+                        </div>
+
+                        <div>
+                          <div className="flex items-center gap-1.5 mb-1.5">
+                            <label className="text-xs font-bold text-slate-700 dark:text-slate-350">单次回答最大上限 (Max Tokens)</label>
+                          </div>
+                          <input
+                            type="number"
+                            value={form.modelConfig.maxTokens}
+                            onChange={e => setForm(prev => ({ ...prev, modelConfig: { ...prev.modelConfig, maxTokens: parseInt(e.target.value) || 4096 } }))}
+                            className="w-full bg-slate-50 dark:bg-slate-955 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all font-semibold"
+                          />
+                        </div>
+                      </div>
+                    </details>
+                  )}
+                </div>
+
+                {/* Platform Runtime Config Panel */}
+                {form.runtime !== 'native' && (
+                  <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-slate-200/60 dark:border-slate-855 shadow-sm space-y-5 animate-fade-in">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Cpu className="w-4 h-4 text-violet-500" />
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-400">平台运行配置 (Platform Runtime Config)</span>
+                    </div>
+
+                    {/* Runtime Selection Card Grid */}
+                    <div className="space-y-2.5">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-350">选择运行框架 (Framework)</label>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div
+                          onClick={() => setForm(prev => ({ ...prev, runtime: 'opencode' }))}
+                          className={`p-3 rounded-xl border flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-200 select-none ${
+                            form.runtime === 'opencode'
+                              ? 'border-violet-500 bg-violet-50/15 dark:bg-violet-955/10 shadow-sm'
+                              : 'border-slate-200 dark:border-slate-800 bg-slate-50/20 hover:bg-slate-100/40 dark:hover:bg-slate-800/20'
+                          }`}
+                        >
+                          <Terminal className="w-5 h-5 text-violet-500 mb-1" />
+                          <span className="text-xs font-bold block">OpenCode</span>
+                          <span className="text-[9px] text-violet-600 bg-violet-100/60 px-1 rounded scale-90 mt-1 font-semibold">推荐</span>
+                        </div>
+
+                        <div className="p-3 rounded-xl border border-slate-100 dark:border-slate-900 bg-slate-50/5 opacity-40 cursor-not-allowed flex flex-col items-center justify-center text-center select-none">
+                          <Cpu className="w-5 h-5 text-slate-400 mb-1" />
+                          <span className="text-xs font-bold text-slate-400 block">Codex</span>
+                          <span className="text-[9px] text-slate-500 bg-slate-100 px-1 rounded scale-90 mt-1">暂未启用</span>
+                        </div>
+
+                        <div className="p-3 rounded-xl border border-slate-100 dark:border-slate-900 bg-slate-50/5 opacity-40 cursor-not-allowed flex flex-col items-center justify-center text-center select-none">
+                          <Cpu className="w-5 h-5 text-slate-400 mb-1" />
+                          <span className="text-xs font-bold text-slate-400 block">Claude Code</span>
+                          <span className="text-[9px] text-slate-500 bg-slate-100 px-1 rounded scale-90 mt-1">暂未启用</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Runtime Config Form Fields */}
+                    <div className="space-y-4 pt-3 border-t border-slate-100 dark:border-slate-800/80">
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">二进制执行路径 (opencode_bin)</label>
+                          <input
+                            type="text"
+                            required
+                            value={(form.runtimeConfig as any)?.opencode_bin || 'opencode'}
+                            onChange={e => setForm(prev => ({
+                              ...prev,
+                              runtimeConfig: {
+                                ...(prev.runtimeConfig || {}),
+                                opencode_bin: e.target.value
+                              }
+                            }))}
+                            className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all font-mono"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">审批模式 (Approval Mode)</label>
+                          <select
+                            value={(form.runtimeConfig as any)?.approval_mode || 'manual'}
+                            onChange={e => setForm(prev => ({
+                              ...prev,
+                              runtimeConfig: {
+                                ...(prev.runtimeConfig || {}),
+                                approval_mode: e.target.value
+                              }
+                            }))}
+                            className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all font-semibold"
+                          >
+                            <option value="manual">手动审核 (manual)</option>
+                            <option value="auto">自动运行 (auto)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">绑定默认工作区 (default_workspace_id - 可选)</label>
+                          <select
+                            value={(form.runtimeConfig as any)?.default_workspace_id || ''}
+                            onChange={e => setForm(prev => ({
+                              ...prev,
+                              runtimeConfig: {
+                                ...(prev.runtimeConfig || {}),
+                                default_workspace_id: e.target.value || null
+                              }
+                            }))}
+                            className="w-full bg-slate-50 dark:bg-slate-955 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-850 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all font-semibold"
+                          >
+                            <option value="">📁 未选择默认工作区</option>
+                            {workspaces.map(w => (
+                              <option key={w.id} value={w.id}>
+                                📁 {w.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">会话 ID (session_id - 可选)</label>
+                          <input
+                            type="text"
+                            value={(form.runtimeConfig as any)?.session_id || ''}
+                            onChange={e => setForm(prev => ({
+                              ...prev,
+                              runtimeConfig: {
+                                ...(prev.runtimeConfig || {}),
+                                session_id: e.target.value
+                              }
+                            }))}
+                            placeholder="自动生成的会话或自定义唯一标识"
+                            className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all font-mono"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

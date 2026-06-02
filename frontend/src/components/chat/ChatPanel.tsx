@@ -105,7 +105,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const togglePinMessage = useAgentHubStore(state => state.togglePinMessage);
   const setConfiguringAgentId = useAgentHubStore(state => state.setConfiguringAgentId);
   const allAgents = useAgentHubStore(state => state.agents);
-  const createSandboxRun = useAgentHubStore(state => state.createSandboxRun);
   
   // Desktop workspace context files
   const workspaceContextFiles = useAgentHubStore(state => state.workspaceContextFiles);
@@ -115,7 +114,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const workspaces = useAgentHubStore(state => state.workspaces);
   const loadWorkspaces = useAgentHubStore(state => state.loadWorkspaces);
   const bindConversationWorkspace = useAgentHubStore(state => state.bindConversationWorkspace);
-  const [isSandboxMode, setIsSandboxMode] = useState(false);
 
   useEffect(() => {
     if (conversation && conversation.mode !== 'agent') {
@@ -344,10 +342,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const handleSend = () => {
     const trimmed = inputValue.trim();
     if (!trimmed && pendingAttachments.length === 0) return;
-    
     const targetAgentId = parseTargetAgentId(trimmed);
-    onSendMessage(trimmed, pendingAttachments, targetAgentId || undefined, isSandboxMode);
-    setIsSandboxMode(false);
+    onSendMessage(trimmed, pendingAttachments, targetAgentId || undefined);
     setInputValue('');
     setPendingAttachments([]);
     setShowEmojiPicker(false);
@@ -962,11 +958,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         </div>
       ) : (
         <div className="flex-1 p-4 pt-1 border-t border-lark-border dark:border-slate-800 bg-white dark:bg-slate-900 h-full flex flex-col min-h-0 z-20 transition-colors">
-          <div className={`border rounded-xl bg-white dark:bg-slate-950 transition-all flex flex-col relative z-30 flex-1 min-h-0 overflow-hidden ${
-            isSandboxMode 
-              ? 'border-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.2)] dark:shadow-[0_0_12px_rgba(99,102,241,0.3)] ring-2 ring-indigo-500/10' 
-              : 'border-lark-border dark:border-slate-800 hover:border-lark-border/80 dark:hover:border-slate-700 focus-within:border-lark-primary dark:focus-within:border-violet-650 focus-within:ring-2 focus-within:ring-lark-primary/10 dark:focus-within:ring-violet-600/10'
-          }`}>
+          <div className="border rounded-xl bg-white dark:bg-slate-950 transition-all flex flex-col relative z-30 flex-1 min-h-0 overflow-hidden border-lark-border dark:border-slate-800 hover:border-lark-border/80 dark:hover:border-slate-700 focus-within:border-lark-primary dark:focus-within:border-violet-650 focus-within:ring-2 focus-within:ring-lark-primary/10 dark:focus-within:ring-violet-600/10">
             
             {replyContext && (
               <div className="flex items-center justify-between px-3.5 py-1.5 bg-slate-50 dark:bg-slate-900/60 border-b border-lark-border/40 dark:border-slate-800/40 text-[11px] text-slate-500 dark:text-slate-400 animate-slide-up flex-shrink-0 rounded-t-xl">
@@ -1173,11 +1165,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                       overlayRef.current.scrollLeft = e.currentTarget.scrollLeft;
                     }
                   }}
-                  placeholder={isSandboxMode ? "输入沙箱任务指令，例如：生成一个 README.md 文件说明这是沙箱测试..." : "输入消息，输入 @ 唤起 Agent 选择器..."}
-                  className={`absolute inset-0 w-full h-full px-2 py-1.5 text-sm font-sans leading-normal outline-none resize-none bg-transparent focus:ring-0 border border-transparent caret-slate-800 dark:caret-white ${
+                  placeholder="输入消息，输入 @ 唤起 Agent 选择器..."
+                  className={`absolute inset-0 w-full h-full px-2 py-1.5 text-sm font-sans leading-normal outline-none resize-none bg-transparent focus:ring-0 border border-transparent ${
                     inputValue ? 'text-transparent' : 'text-lark-text-primary dark:text-slate-150 placeholder:text-lark-text-tertiary dark:placeholder:text-slate-650'
                   }`}
-                  style={{ wordBreak: 'break-word' }}
+                  style={{ wordBreak: 'break-word', caretColor: '#7c3aed' }}
                 />
               </div>
               <button
@@ -1185,14 +1177,12 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                 disabled={!canSend}
                 className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all flex-shrink-0 active:scale-95 mb-0.5 ${
                   canSend
-                    ? isSandboxMode
-                      ? 'bg-indigo-600 hover:bg-indigo-550 text-white shadow-sm ring-2 ring-indigo-500/20'
-                      : 'bg-lark-primary text-white shadow-sm hover:bg-lark-primary-hover'
+                    ? 'bg-lark-primary text-white shadow-sm hover:bg-lark-primary-hover'
                     : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
                 }`}
-                title={isSandboxMode ? "提交沙箱执行任务" : "发送消息"}
+                title="发送消息"
               >
-                {isSandboxMode ? <Cpu className="w-4 h-4 text-indigo-200" /> : <Send className="w-4 h-4" />}
+                <Send className="w-4 h-4" />
               </button>
             </div>
           </div>

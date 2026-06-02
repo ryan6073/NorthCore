@@ -100,7 +100,6 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   const [activeTab, setActiveTab] = useState<'preview' | 'source' | 'diff'>('preview');
   const [copied, setCopied] = useState(false);
   const [splitView, setSplitView] = useState(true);
-  const [localArtifactId, setLocalArtifactId] = useState<string | null>(null);
   const [integratedHtml, setIntegratedHtml] = useState<string | undefined>(undefined);
   const [mermaidSvg, setMermaidSvg] = useState<string | null>(null);
   const [mermaidError, setMermaidError] = useState<string | null>(null);
@@ -182,19 +181,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   const selectedArtifactId = useAgentHubStore(state => state.selectedArtifactId);
   const selectedArtifactVersion = useAgentHubStore(state => state.selectedArtifactVersion);
 
-  // Sync local version state with the incoming prop
-  useEffect(() => {
-    if (artifact) {
-      setLocalArtifactId(artifact.id);
-    } else {
-      setLocalArtifactId(null);
-    }
-  }, [artifact]);
-
-  const currentArtifact = useMemo(() => {
-    if (!localArtifactId) return artifact;
-    return allArtifacts.find(a => a.id === localArtifactId) || artifact;
-  }, [localArtifactId, allArtifacts, artifact]);
+  const currentArtifact = artifact;
 
   // Group all versions of this artifact (sorted by version number ascending)
   const versions = useMemo(() => {
@@ -206,11 +193,11 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   // Active version that is currently selected or default currentVersionId
   const currentVersion: ArtifactVersion | null = useMemo(() => {
     if (!versions.length) return null;
-    if (selectedArtifactVersion !== null) {
+    if (selectedArtifactId && artifact && selectedArtifactId === artifact.id && selectedArtifactVersion !== null) {
       return versions.find(v => v.version === selectedArtifactVersion) || versions[versions.length - 1];
     }
     return versions.find(v => v.id === currentArtifact?.currentVersionId) || versions[versions.length - 1];
-  }, [versions, selectedArtifactVersion, currentArtifact]);
+  }, [versions, selectedArtifactId, selectedArtifactVersion, currentArtifact]);
 
   const currentVersionIndex = useMemo(() => {
     if (!currentVersion || !versions.length) return -1;
@@ -227,7 +214,6 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   // Sync when an artifact reference version is selected from message bubble click
   useEffect(() => {
     if (selectedArtifactId && artifact && selectedArtifactId === artifact.id) {
-      setLocalArtifactId(selectedArtifactId);
       if (selectedArtifactVersion !== null) {
         if ((window as any).__ag_from_message_bubble_click) {
           (window as any).__ag_from_message_bubble_click = false;

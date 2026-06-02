@@ -1,7 +1,9 @@
 // SettingsModal.tsx
 import React, { useState, useEffect } from 'react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
-import { X, User, Sliders, Settings, Eye, EyeOff, Check, Moon, Sun, Trash2, Folder, Bell, Terminal, Play, Square, RotateCw, ScrollText, Cpu } from 'lucide-react';
+import { X, User, Sliders, Settings, Eye, EyeOff, Check, Moon, Sun, Trash2, Folder, Bell, Terminal, Play, Square, RotateCw, ScrollText, Cpu, Key, Database, Activity, Sparkles, Plus, Edit3, Save, Globe } from 'lucide-react';
+import { testModelConfig } from '@/services/http/modelService';
+import type { ModelCredential, ModelConfig } from '@/types';
 
 const PRESET_AVATARS = [
   'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80',
@@ -22,6 +24,20 @@ export const SettingsModal: React.FC = () => {
   const useMockMode = useAgentHubStore(state => state.useMockMode);
   const setUseMockMode = useAgentHubStore(state => state.setUseMockMode);
 
+  // Model Config & Credential states & actions
+  const modelProviders = useAgentHubStore(state => state.modelProviders);
+  const modelCredentials = useAgentHubStore(state => state.modelCredentials);
+  const modelConfigs = useAgentHubStore(state => state.modelConfigs);
+  const loadModelProviders = useAgentHubStore(state => state.loadModelProviders);
+  const loadModelCredentials = useAgentHubStore(state => state.loadModelCredentials);
+  const loadModelConfigs = useAgentHubStore(state => state.loadModelConfigs);
+  const createModelCredential = useAgentHubStore(state => state.createModelCredential);
+  const updateModelCredential = useAgentHubStore(state => state.updateModelCredential);
+  const deleteModelCredential = useAgentHubStore(state => state.deleteModelCredential);
+  const createModelConfig = useAgentHubStore(state => state.createModelConfig);
+  const updateModelConfig = useAgentHubStore(state => state.updateModelConfig);
+  const deleteModelConfig = useAgentHubStore(state => state.deleteModelConfig);
+
   // Local agent process store states & actions
   const localAgentProcesses = useAgentHubStore(state => state.localAgentProcesses);
   const startLocalAgent = useAgentHubStore(state => state.startLocalAgent);
@@ -32,6 +48,31 @@ export const SettingsModal: React.FC = () => {
   const localAgentLoading = useAgentHubStore(state => state.localAgentLoading);
 
   const [activeTab, setActiveTab] = useState<'profile' | 'model' | 'permissions' | 'notifications' | 'agents' | 'system'>('profile');
+  
+  // Model sub-tab state
+  const [modelSubTab, setModelSubTab] = useState<'configs' | 'credentials' | 'providers'>('configs');
+
+  // Credential Form State
+  const [isCreatingCred, setIsCreatingCred] = useState(false);
+  const [editingCredId, setEditingCredId] = useState<string | null>(null);
+  const [credName, setCredName] = useState('');
+  const [credProvider, setCredProvider] = useState('openai');
+  const [credSecret, setCredSecret] = useState('');
+
+  // Config Form State
+  const [isCreatingConfig, setIsCreatingConfig] = useState(false);
+  const [editingConfigId, setEditingConfigId] = useState<string | null>(null);
+  const [configName, setConfigName] = useState('');
+  const [configProvider, setConfigProvider] = useState('openai');
+  const [configProtocol, setConfigProtocol] = useState('openai_chat_completions');
+  const [configModelName, setConfigModelName] = useState('gpt-4o');
+  const [configBaseUrl, setConfigBaseUrl] = useState('');
+  const [configCredentialRef, setConfigCredentialRef] = useState('');
+  const [configExtraConfig, setConfigExtraConfig] = useState('{}');
+
+  // Test Connection States
+  const [testingConfigId, setTestingConfigId] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, { success: boolean; latencyMs?: number; error?: string | null }>>({});
   
   // Profile form state
   const [profileName, setProfileName] = useState('');
@@ -95,6 +136,15 @@ export const SettingsModal: React.FC = () => {
     }
   }, [isOpen, currentUser, settings]);
 
+  // Load model providers, credentials and configs when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      loadModelProviders();
+      loadModelCredentials();
+      loadModelConfigs();
+    }
+  }, [isOpen]);
+
   // Sync selected agent configs
   useEffect(() => {
     if (isOpen) {
@@ -147,6 +197,123 @@ export const SettingsModal: React.FC = () => {
       maxTokens,
     });
     triggerNotice('模型参数已保存');
+  };
+
+  const handleSaveCredential = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!credName.trim()) return;
+    try {
+      if (editingCredId) {
+        await updateModelCredential(editingCredId, {
+          name: credName.trim(),
+          provider: credProvider,
+          secret: credSecret.trim() || undefined
+        });
+        triggerNotice('模型凭证已更新');
+      } else {
+        await createModelCredential({
+          name: credName.trim(),
+          provider: credProvider,
+          credentialType: 'api_key',
+          secret: credSecret.trim()
+        });
+        triggerNotice('模型凭证已新建');
+      }
+      setIsCreatingCred(false);
+      setEditingCredId(null);
+      setCredName('');
+      setCredSecret('');
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleEditCredential = (cred: ModelCredential) => {
+    setEditingCredId(cred.id);
+    setCredName(cred.name);
+    setCredProvider(cred.provider);
+    setCredSecret('');
+    setIsCreatingCred(true);
+  };
+
+  const handleSaveConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!configName.trim() || !configModelName.trim()) return;
+    let extra = {};
+    try {
+      extra = JSON.parse(configExtraConfig || '{}');
+    } catch (err) {
+      alert('附加参数 JSON 格式不合法，请检查！');
+      return;
+    }
+    try {
+      const payload = {
+        name: configName.trim(),
+        provider: configProvider,
+        protocol: configProtocol,
+        modelName: configModelName.trim(),
+        baseUrl: configBaseUrl.trim() || null,
+        credentialRef: configCredentialRef || null,
+        extraConfig: extra
+      };
+      if (editingConfigId) {
+        await updateModelConfig(editingConfigId, payload);
+        triggerNotice('模型配置已更新');
+      } else {
+        await createModelConfig(payload);
+        triggerNotice('模型配置已新建');
+      }
+      setIsCreatingConfig(false);
+      setEditingConfigId(null);
+      setConfigName('');
+      setConfigModelName('gpt-4o');
+      setConfigBaseUrl('');
+      setConfigCredentialRef('');
+      setConfigExtraConfig('{}');
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleEditConfig = (conf: ModelConfig) => {
+    setEditingConfigId(conf.id);
+    setConfigName(conf.name);
+    setConfigProvider(conf.provider);
+    setConfigProtocol(conf.protocol);
+    setConfigModelName(conf.modelName);
+    setConfigBaseUrl(conf.baseUrl || '');
+    setConfigCredentialRef(conf.credentialRef || '');
+    setConfigExtraConfig(JSON.stringify(conf.extraConfig || {}, null, 2));
+    setIsCreatingConfig(true);
+  };
+
+  const handleTestConfig = async (configId: string) => {
+    setTestingConfigId(configId);
+    try {
+      const res = await testModelConfig(configId);
+      if (res.code === 0 && res.data) {
+        setTestResults(prev => ({
+          ...prev,
+          [configId]: {
+            success: res.data.ok,
+            latencyMs: res.data.latencyMs,
+            error: res.data.error
+          }
+        }));
+      } else {
+        setTestResults(prev => ({
+          ...prev,
+          [configId]: { success: false, error: res.message || '网络测试失败' }
+        }));
+      }
+    } catch (err: any) {
+      setTestResults(prev => ({
+        ...prev,
+        [configId]: { success: false, error: err.message || '网络连接超时' }
+      }));
+    } finally {
+      setTestingConfigId(null);
+    }
   };
 
   const handleSavePermissions = (e: React.FormEvent) => {
@@ -385,104 +552,446 @@ export const SettingsModal: React.FC = () => {
 
           {/* TAB 2: MODEL SETTINGS */}
           {activeTab === 'model' && (
-            <form onSubmit={handleSaveModelSettings} className="space-y-5">
+            <div className="space-y-6 animate-fade-in">
               <div>
-                <h2 className="text-lg font-bold text-slate-800 dark:text-white">模型参数设置</h2>
-                <p className="text-slate-400 dark:text-slate-500 text-xs mt-0.5">配置您的智能体调用大模型时的全局请求配置与授权密钥。</p>
+                <h2 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                  <Sliders className="w-5 h-5 text-violet-650" />
+                  模型及运行配置
+                </h2>
+                <p className="text-slate-400 dark:text-slate-500 text-xs mt-0.5">配置开发模型凭证、可复用配置服务商以及平台的 Runtime 执行路由参数。</p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">API 供应商 (Provider)</label>
-                  <select
-                    value={provider}
-                    onChange={(e) => setProvider(e.target.value)}
-                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-violet-600 dark:focus:border-violet-500 transition-colors cursor-pointer cursor-pointer"
-                  >
-                    <option value="custom" className="dark:bg-slate-900 dark:text-slate-300">定制网关 / Local</option>
-                    <option value="openai" className="dark:bg-slate-900 dark:text-slate-300">OpenAI (GPT)</option>
-                    <option value="anthropic" className="dark:bg-slate-900 dark:text-slate-300">Anthropic (Claude)</option>
-                    <option value="deepseek" className="dark:bg-slate-900 dark:text-slate-300">DeepSeek AI</option>
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">默认调用模型 (Model Name)</label>
-                  <input
-                    type="text"
-                    value={modelName}
-                    onChange={(e) => setModelName(e.target.value)}
-                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-violet-600 dark:focus:border-violet-500 transition-colors"
-                    placeholder="gpt-4o"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">身份密钥 (API Key)</label>
-                <div className="relative">
-                  <input
-                    type={showApiKey ? 'text' : 'password'}
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl py-2.5 pl-4 pr-10 text-xs text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-650 outline-none focus:border-violet-600 transition-colors"
-                    placeholder="sk-................................"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowApiKey(!showApiKey)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-                  >
-                    {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-6 pt-1">
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center text-xs">
-                    <label className="font-bold text-slate-700 dark:text-slate-300">采样温度 (Temperature)</label>
-                    <span className="text-violet-600 dark:text-violet-400 font-mono font-semibold">{temperature}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0.0"
-                    max="2.0"
-                    step="0.1"
-                    value={temperature}
-                    onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                    className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-violet-600"
-                  />
-                  <div className="flex justify-between text-[9px] text-slate-450">
-                    <span>精确 (0.0)</span>
-                    <span>均衡 (1.0)</span>
-                    <span>创造力 (2.0)</span>
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">单次最大 Token (Max Tokens)</label>
-                  <select
-                    value={maxTokens}
-                    onChange={(e) => setMaxTokens(parseInt(e.target.value, 10))}
-                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-violet-600 dark:focus:border-violet-500 cursor-pointer cursor-pointer"
-                  >
-                    <option value={1024} className="dark:bg-slate-900 dark:text-slate-300">1024 (更短响应)</option>
-                    <option value={2048} className="dark:bg-slate-900 dark:text-slate-300">2048 (中等输出)</option>
-                    <option value={4096} className="dark:bg-slate-900 dark:text-slate-300">4096 (标准推荐)</option>
-                    <option value={8192} className="dark:bg-slate-900 dark:text-slate-300">8192 (长上下文)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="pt-2">
+              {/* Sub-tab selection */}
+              <div className="flex border-b border-slate-100 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-950/20 p-1.5 rounded-2xl gap-2 select-none flex-shrink-0">
                 <button
-                  type="submit"
-                  className="bg-violet-600 hover:bg-violet-500 text-white font-semibold text-xs px-4 py-2.5 rounded-xl transition-colors shadow-lg shadow-violet-500/10 active:scale-95"
+                  onClick={() => {
+                    setModelSubTab('configs');
+                    setIsCreatingConfig(false);
+                    setEditingConfigId(null);
+                  }}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-xl transition-all ${
+                    modelSubTab === 'configs'
+                      ? 'bg-white dark:bg-slate-900 text-violet-600 dark:text-violet-400 shadow-sm border border-slate-200/50 dark:border-slate-800/50'
+                      : 'text-slate-400 hover:text-slate-650 dark:hover:text-slate-350'
+                  }`}
                 >
-                  保存参数
+                  <Sliders className="w-3.5 h-3.5" />
+                  <span>模型配置 ({modelConfigs.length})</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setModelSubTab('credentials');
+                    setIsCreatingCred(false);
+                    setEditingCredId(null);
+                  }}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-xl transition-all ${
+                    modelSubTab === 'credentials'
+                      ? 'bg-white dark:bg-slate-900 text-violet-600 dark:text-violet-400 shadow-sm border border-slate-200/50 dark:border-slate-800/50'
+                      : 'text-slate-400 hover:text-slate-650 dark:hover:text-slate-350'
+                  }`}
+                >
+                  <Key className="w-3.5 h-3.5" />
+                  <span>模型凭证 ({modelCredentials.length})</span>
+                </button>
+                <button
+                  onClick={() => setModelSubTab('providers')}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-xl transition-all ${
+                    modelSubTab === 'providers'
+                      ? 'bg-white dark:bg-slate-900 text-violet-600 dark:text-violet-400 shadow-sm border border-slate-200/50 dark:border-slate-800/50'
+                      : 'text-slate-400 hover:text-slate-650 dark:hover:text-slate-350'
+                  }`}
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  <span>服务商清单 ({modelProviders.length})</span>
                 </button>
               </div>
-            </form>
+
+              {/* Sub-tab 1: Model Configs */}
+              {modelSubTab === 'configs' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-slate-700 dark:text-slate-350 uppercase tracking-wide">可复用大模型配置</h3>
+                    {!isCreatingConfig && (
+                      <button
+                        onClick={() => {
+                          setIsCreatingConfig(true);
+                          setEditingConfigId(null);
+                          setConfigName('');
+                          setConfigModelName('gpt-4o');
+                          setConfigBaseUrl('');
+                          setConfigCredentialRef('');
+                          setConfigExtraConfig('{}');
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-500 text-white rounded-xl text-xs font-bold transition-all shadow-sm active:scale-95"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        新建模型配置
+                      </button>
+                    )}
+                  </div>
+
+                  {isCreatingConfig && (
+                    <form onSubmit={handleSaveConfig} className="bg-slate-50/50 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-4 animate-scale-in relative">
+                      <h4 className="text-xs font-bold text-slate-850 dark:text-slate-200">{editingConfigId ? '编辑模型配置' : '新建模型配置'}</h4>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300">配置名称</label>
+                          <input
+                            type="text"
+                            value={configName}
+                            onChange={(e) => setConfigName(e.target.value)}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-violet-600"
+                            placeholder="e.g. DeepSeek V3"
+                            required
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300">调用模型名 (Model Name)</label>
+                          <input
+                            type="text"
+                            value={configModelName}
+                            onChange={(e) => setConfigModelName(e.target.value)}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-850 dark:text-slate-100 outline-none focus:border-violet-600"
+                            placeholder="e.g. deepseek-chat"
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300">供应商 (Provider)</label>
+                          <select
+                            value={configProvider}
+                            onChange={(e) => {
+                              setConfigProvider(e.target.value);
+                              const selected = modelProviders.find(p => p.id === e.target.value);
+                              if (selected) {
+                                setConfigProtocol(selected.protocol);
+                                setConfigBaseUrl(selected.defaultBaseUrl || '');
+                              }
+                            }}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs cursor-pointer outline-none text-slate-850 dark:text-slate-100"
+                          >
+                            {modelProviders.map(p => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300">关联凭证 (Credential)</label>
+                          <select
+                            value={configCredentialRef || ''}
+                            onChange={(e) => setConfigCredentialRef(e.target.value)}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs cursor-pointer outline-none text-slate-850 dark:text-slate-100"
+                          >
+                            <option value="">(不使用凭证/无授权)</option>
+                            {modelCredentials.filter(c => c.provider === configProvider || configProvider === 'openai_compatible').map(c => (
+                              <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300">API 终点网址 (Base URL)</label>
+                        <input
+                          type="text"
+                          value={configBaseUrl}
+                          onChange={(e) => setConfigBaseUrl(e.target.value)}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-850 dark:text-slate-100 outline-none focus:border-violet-600"
+                          placeholder="例如 https://api.deepseek.com/v1 (留空则默认内置地址)"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300">附加参数 JSON 配置 (Extra Config)</label>
+                        <textarea
+                          value={configExtraConfig}
+                          onChange={(e) => setConfigExtraConfig(e.target.value)}
+                          rows={3}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-850 dark:text-slate-100 outline-none font-mono focus:border-violet-600"
+                          placeholder="{}"
+                        />
+                      </div>
+
+                      <div className="flex gap-2.5 justify-end">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsCreatingConfig(false);
+                            setEditingConfigId(null);
+                          }}
+                          className="px-3.5 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-500 dark:text-slate-400 font-semibold"
+                        >
+                          取消
+                        </button>
+                        <button
+                          type="submit"
+                          className="px-3.5 py-1.5 bg-violet-600 hover:bg-violet-500 text-white rounded-xl text-xs font-bold shadow-sm"
+                        >
+                          {editingConfigId ? '保存配置' : '创建配置'}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {/* Config List */}
+                  {modelConfigs.length === 0 ? (
+                    <div className="text-center py-8 text-slate-400 dark:text-slate-500 text-xs border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl select-none">
+                      暂无配置，请点击右上角新建大模型配置。
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-4">
+                      {modelConfigs.map(c => {
+                        const isTesting = testingConfigId === c.id;
+                        const result = testResults[c.id];
+                        const providerName = modelProviders.find(p => p.id === c.provider)?.name || c.provider;
+                        const credName = modelCredentials.find(cred => cred.id === c.credentialRef)?.name;
+
+                        return (
+                          <div key={c.id} className="p-4 border border-slate-200 dark:border-slate-800/80 bg-slate-50/20 dark:bg-slate-950/20 rounded-2xl flex flex-col justify-between gap-3 shadow-sm hover:border-violet-600/35 transition-all relative group">
+                            <div className="flex justify-between items-start gap-1.5">
+                              <div className="min-w-0">
+                                <h4 className="text-xs font-bold text-slate-800 dark:text-slate-150 flex items-center gap-1.5 truncate">
+                                  <Sliders className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
+                                  <span className="truncate">{c.name}</span>
+                                </h4>
+                                <p className="text-[10px] text-slate-400 mt-1 flex items-center gap-1 truncate">
+                                  <Database className="w-2.5 h-2.5 text-slate-400 flex-shrink-0" />
+                                  <span className="truncate">{providerName} / {c.modelName}</span>
+                                </p>
+                                {c.baseUrl && (
+                                  <p className="text-[8px] font-mono text-slate-400 dark:text-slate-550 truncate mt-0.5 max-w-full" title={c.baseUrl}>{c.baseUrl}</p>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditConfig(c)}
+                                  className="p-1 hover:bg-slate-150 dark:hover:bg-slate-850 hover:text-violet-600 text-slate-400 rounded"
+                                >
+                                  <Edit3 className="w-3 h-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteModelConfig(c.id)}
+                                  className="p-1 hover:bg-red-50 dark:hover:bg-red-955/20 hover:text-red-500 text-slate-400 rounded"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between border-t border-slate-200/40 dark:border-slate-800/40 pt-2 flex-wrap gap-1.5 select-none">
+                              {credName ? (
+                                <span className="text-[9px] px-1.5 py-0.5 bg-amber-55/60 dark:bg-amber-950/20 text-amber-700 dark:text-amber-400 border border-amber-100/50 dark:border-amber-900/30 rounded-md font-medium truncate max-w-[100px]" title={credName}>{credName}</span>
+                              ) : (
+                                <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 rounded-md">未绑定凭证</span>
+                              )}
+
+                              <div className="flex items-center gap-1.5 ml-auto">
+                                {result && (
+                                  <span className={`text-[9px] font-semibold ${result.success ? 'text-emerald-600 dark:text-emerald-450' : 'text-red-500 dark:text-red-400'}`}>
+                                    {result.success ? `成功 ${result.latencyMs}ms` : '失败'}
+                                  </span>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleTestConfig(c.id)}
+                                  disabled={isTesting}
+                                  className={`px-2 py-0.5 border text-[9px] rounded-md transition-colors font-bold ${
+                                    isTesting 
+                                      ? 'bg-slate-100 border-slate-200 text-slate-400 animate-pulse' 
+                                      : 'bg-white dark:bg-slate-900 border-slate-250 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850 hover:text-emerald-500 text-slate-500'
+                                  }`}
+                                >
+                                  {isTesting ? '测试中...' : '测试连接'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Sub-tab 2: Model Credentials */}
+              {modelSubTab === 'credentials' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-slate-700 dark:text-slate-350 uppercase tracking-wide">服务商身份凭证 (API Keys)</h3>
+                    {!isCreatingCred && (
+                      <button
+                        onClick={() => {
+                          setIsCreatingCred(true);
+                          setEditingCredId(null);
+                          setCredName('');
+                          setCredSecret('');
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-500 text-white rounded-xl text-xs font-bold transition-all shadow-sm active:scale-95"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        新建授权凭证
+                      </button>
+                    )}
+                  </div>
+
+                  {isCreatingCred && (
+                    <form onSubmit={handleSaveCredential} className="bg-slate-50/50 dark:bg-slate-950/20 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl space-y-4 animate-scale-in relative">
+                      <h4 className="text-xs font-bold text-slate-850 dark:text-slate-200">{editingCredId ? '编辑授权凭证' : '新建授权凭证'}</h4>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300">凭证名称</label>
+                        <input
+                          type="text"
+                          value={credName}
+                          onChange={(e) => setCredName(e.target.value)}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-violet-600"
+                          placeholder="例如 OpenAI 个人 Key / DeepSeek 开发凭证"
+                          required
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300">适用服务商 (Provider)</label>
+                          <select
+                            value={credProvider}
+                            onChange={(e) => setCredProvider(e.target.value)}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs cursor-pointer outline-none text-slate-850 dark:text-slate-100"
+                          >
+                            {modelProviders.map(p => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300">凭证类别</label>
+                          <select
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs cursor-not-allowed outline-none text-slate-850 dark:text-slate-100"
+                            disabled
+                          >
+                            <option value="api_key">API Key (令牌密钥)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300">身份凭证密钥 (Secret Key)</label>
+                        <input
+                          type="password"
+                          value={credSecret}
+                          onChange={(e) => setCredSecret(e.target.value)}
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-850 dark:text-slate-100 outline-none font-mono focus:border-violet-600"
+                          placeholder={editingCredId ? "(留空不修改，输入以替换旧 Secret Key)" : "sk-................................"}
+                          required={!editingCredId}
+                        />
+                        <p className="text-[9px] text-slate-400 mt-1 select-none flex items-center gap-1.5">
+                          <span className="w-1 h-1 rounded bg-slate-400" />
+                          安全提示：平台不回显密钥明文，一次性安全传递并在服务器加密暂存。
+                        </p>
+                      </div>
+
+                      <div className="flex gap-2.5 justify-end">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsCreatingCred(false);
+                            setEditingCredId(null);
+                          }}
+                          className="px-3.5 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-500 dark:text-slate-400 font-semibold"
+                        >
+                          取消
+                        </button>
+                        <button
+                          type="submit"
+                          className="px-3.5 py-1.5 bg-violet-600 hover:bg-violet-500 text-white rounded-xl text-xs font-bold shadow-sm"
+                        >
+                          {editingCredId ? '保存修改' : '创建凭证'}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {/* Credentials List */}
+                  {modelCredentials.length === 0 ? (
+                    <div className="text-center py-8 text-slate-400 dark:text-slate-500 text-xs border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl select-none">
+                      暂无模型凭证，请点击右上角新建 API 授权凭证。
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-4">
+                      {modelCredentials.map(c => {
+                        const providerName = modelProviders.find(p => p.id === c.provider)?.name || c.provider;
+                        return (
+                          <div key={c.id} className="p-4 border border-slate-200 dark:border-slate-800/80 bg-slate-50/20 dark:bg-slate-950/20 rounded-2xl flex items-center justify-between shadow-sm hover:border-violet-600/35 transition-all relative group">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-8 h-8 rounded-lg bg-amber-50 dark:bg-amber-955/35 text-amber-500 border border-amber-100/50 dark:border-amber-900/30 flex items-center justify-center flex-shrink-0">
+                                <Key className="w-4 h-4" />
+                              </div>
+                              <div className="min-w-0">
+                                <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 truncate">{c.name}</h4>
+                                <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                                  <span className="text-[9px] text-slate-400">{providerName}</span>
+                                  <span className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-700" />
+                                  <span className="text-[9px] text-slate-400 font-mono">****</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleEditCredential(c)}
+                                className="p-1 hover:bg-slate-150 dark:hover:bg-slate-850 hover:text-violet-600 text-slate-400 rounded"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deleteModelCredential(c.id)}
+                                className="p-1 hover:bg-red-50 dark:hover:bg-red-955/20 hover:text-red-500 text-slate-400 rounded"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Sub-tab 3: Registry Providers */}
+              {modelSubTab === 'providers' && (
+                <div className="space-y-4">
+                  <h3 className="text-xs font-bold text-slate-700 dark:text-slate-350 uppercase tracking-wide">支持的模型服务商与协议</h3>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    {modelProviders.map(p => (
+                      <div key={p.id} className="p-4 border border-slate-200 dark:border-slate-800/80 bg-slate-50/10 dark:bg-slate-950/10 rounded-2xl flex flex-col gap-1.5 relative shadow-sm">
+                        <div className="flex items-center gap-2">
+                          <Globe className="w-4 h-4 text-emerald-500" />
+                          <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">{p.name}</h4>
+                          <span className="text-[8px] font-mono font-bold bg-slate-100 dark:bg-slate-850 text-slate-500 dark:text-slate-400 border border-slate-200/50 dark:border-slate-800/50 px-1.5 py-0.5 rounded ml-auto uppercase tracking-wider">{p.id}</span>
+                        </div>
+                        <p className="text-[10px] text-slate-405 mt-1 flex items-center gap-1 font-mono">
+                          <Activity className="w-3 h-3 text-slate-450" />
+                          协议: {p.protocol}
+                        </p>
+                        {p.requiresBaseUrl && (
+                          <div className="text-[9px] text-amber-600 dark:text-amber-500 bg-amber-500/10 border border-amber-500/15 rounded-md px-1.5 py-0.5 self-start mt-1 font-semibold">
+                            需指定 Base URL API 终点地址
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {/* TAB 3: FILE PERMISSIONS */}

@@ -81,6 +81,42 @@ export interface AgentModelConfig {
   maxTokens: number;
 }
 
+export type AgentRuntime = 'native' | 'opencode' | 'codex' | 'claude_code';
+
+export interface ModelProvider {
+  id: string;
+  name: string;
+  protocol: string;
+  requiresBaseUrl: boolean;
+  defaultBaseUrl?: string;
+  aliases?: string[];
+}
+
+export interface ModelCredential {
+  id: string;
+  ownerUserId: string;
+  name: string;
+  provider: string;
+  credentialType: string;
+  configured: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModelConfig {
+  id: string;
+  ownerUserId: string;
+  name: string;
+  provider: string;
+  protocol: string;
+  modelName: string;
+  baseUrl?: string | null;
+  credentialRef?: string | null;
+  extraConfig: Record<string, any>;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -98,6 +134,9 @@ export interface Agent {
   permissions: AgentPermission;
   ownerUserId?: string | null;
   owner_user_id?: string | null;
+  runtime?: AgentRuntime;
+  modelConfigId?: string | null;
+  runtimeConfig?: Record<string, any>;
 }
 
 export type AgentListItem = Agent;
@@ -493,6 +532,11 @@ export interface SandboxFile {
   artifactId?: string | null;
   createdAt: string;
   updatedAt: string;
+  mimeType?: string | null;
+  size?: number | null;
+  sha256?: string | null;
+  isText?: boolean;
+  contentPreview?: string | null;
 }
 
 export interface SandboxFileVersion {

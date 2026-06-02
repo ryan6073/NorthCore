@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem, MemoryCategory, SendMessageRequest, ContextUsage, AgentChat, AgentChatMessage, Workspace, WorkspaceTreeNode, AgentRunDetail, SandboxFile } from '@/types';
+import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem, MemoryCategory, SendMessageRequest, ContextUsage, AgentChat, AgentChatMessage, Workspace, WorkspaceTreeNode, AgentRunDetail, SandboxFile, ModelProvider, ModelCredential, ModelConfig } from '@/types';
 import { getAgentList, updateAgentDetail, createAgent as createAgentApi, deleteAgent as deleteAgentApi, getAgentContact } from '@/services/http/agentService';
 import { getConversationList, createConversation as createConversationApi, updateConversation, compressContext, pinMessage, unpinMessage, getPins, getMemories, deleteMemory, updateMemory, deleteConversation, getContextUsage as getContextUsageApi, pinConversation, archiveConversation, getConversationAgentConfig, updateConversationAgentConfig, addAgentToConversation, removeAgentFromConversation } from '@/services/http/conversationService';
 import { getMessageList, sendMessageNonStreaming } from '@/services/http/messageService';
@@ -14,6 +14,24 @@ import { healthCheck } from '@/services/http/healthService';
 import { registerApi, loginApi, loginAsGuestApi, getMeApi, logoutApi, updateProfileApi } from '@/services/http/authService';
 import sandboxService from '@/services/http/sandboxService';
 import { platform, FileNode, WorkspaceInfo, AgentProcessInfo } from '@/utils/platform';
+import modelService from '@/services/http/modelService';
+
+// Mock model data for offline/mock mode
+const mockModelProviders: ModelProvider[] = [
+  { id: 'openai', name: 'OpenAI (GPT)', protocol: 'openai_chat_completions', requiresBaseUrl: false },
+  { id: 'anthropic', name: 'Anthropic (Claude)', protocol: 'anthropic_messages', requiresBaseUrl: false },
+  { id: 'openai_compatible', name: 'OpenAI Compatible', protocol: 'openai_chat_completions', requiresBaseUrl: true, defaultBaseUrl: 'https://api.deepseek.com/v1' }
+];
+
+const initialMockModelCredentials: ModelCredential[] = [
+  { id: 'cred-1', ownerUserId: '1', name: 'DeepSeek API Key', provider: 'openai_compatible', credentialType: 'api_key', configured: true, createdAt: '2026-06-02 00:00:00', updatedAt: '2026-06-02 00:00:00' },
+  { id: 'cred-2', ownerUserId: '1', name: 'OpenAI Global Key', provider: 'openai', credentialType: 'api_key', configured: true, createdAt: '2026-06-02 00:00:00', updatedAt: '2026-06-02 00:00:00' }
+];
+
+const initialMockModelConfigs: ModelConfig[] = [
+  { id: 'config-1', ownerUserId: '1', name: 'DeepSeek V3 (Chat)', provider: 'openai_compatible', protocol: 'openai_chat_completions', modelName: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1', credentialRef: 'cred-1', extraConfig: {}, createdAt: '2026-06-02 00:00:00', updatedAt: '2026-06-02 00:00:00' },
+  { id: 'config-2', ownerUserId: '1', name: 'GPT-4o Standard', provider: 'openai', protocol: 'openai_chat_completions', modelName: 'gpt-4o', baseUrl: null, credentialRef: 'cred-2', extraConfig: {}, createdAt: '2026-06-02 00:00:00', updatedAt: '2026-06-02 00:00:00' }
+];
 
 // Helper functions to cache message-specific artifact references locally
 const saveArtifactRefToLocal = (messageId: string, ref: ArtifactReference): void => {
@@ -102,6 +120,9 @@ interface AgentHubStore {
   agents: Agent[];
   /** 管理用全量 Agent 列表（enabled=true，含 status="disabled"），用于管理/配置弹窗 */
   allAgents: Agent[];
+  modelProviders: ModelProvider[];
+  modelCredentials: ModelCredential[];
+  modelConfigs: ModelConfig[];
   messages: Message[];
   artifacts: Artifact[];
   artifactVersions: Record<string, ArtifactVersion[]>;
@@ -205,6 +226,16 @@ interface AgentHubStore {
   updateSettings: (settings: Partial<AgentHubStore['settings']>) => Promise<void>;
   setIsSettingsOpen: (open: boolean) => void;
   
+  loadModelProviders: () => Promise<void>;
+  loadModelCredentials: () => Promise<void>;
+  loadModelConfigs: () => Promise<void>;
+  createModelCredential: (payload: { name: string; provider: string; credentialType: string; secret: string }) => Promise<void>;
+  updateModelCredential: (id: string, payload: { name?: string; provider?: string; credentialType?: string; secret?: string }) => Promise<void>;
+  deleteModelCredential: (id: string) => Promise<void>;
+  createModelConfig: (payload: { name: string; provider: string; protocol: string; modelName: string; baseUrl?: string | null; credentialRef?: string | null; extraConfig: Record<string, any> }) => Promise<void>;
+  updateModelConfig: (id: string, payload: { name?: string; provider?: string; protocol?: string; modelName?: string; baseUrl?: string | null; credentialRef?: string | null; extraConfig?: Record<string, any> }) => Promise<void>;
+  deleteModelConfig: (id: string) => Promise<void>;
+
   loadConversationData: (convId: string) => Promise<void>;
   createConversation: (payload: CreateConversationPayload) => Promise<void>;
   getMentionAgents: (keyword?: string) => Promise<AgentMentionItem[]>;
@@ -309,6 +340,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   conversations: [],
   agents: [],
   allAgents: [],
+  modelProviders: [],
+  modelCredentials: [],
+  modelConfigs: [],
   messages: [],
   artifacts: [],
   artifactVersions: {},
@@ -407,6 +441,12 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           set({ activeConversationId: null, messages: [], pins: [], memories: [] });
         }
       }
+      
+      // Load new model-related items
+      await get().loadModelProviders();
+      await get().loadModelCredentials();
+      await get().loadModelConfigs();
+      
       await get().connectWS();
     } catch (e) {
       console.error('Failed to load business data', e);
@@ -522,6 +562,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           }, {} as Record<string, ArtifactVersion[]>),
           activeConversationId: mockConversations[0]?.id || null,
         });
+        await get().loadModelProviders();
+        await get().loadModelCredentials();
+        await get().loadModelConfigs();
         if (mockConversations[0]?.id) {
           await get().loadConversationData(mockConversations[0].id);
         }
@@ -547,6 +590,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         }, {} as Record<string, ArtifactVersion[]>),
         activeConversationId: mockConversations[0]?.id || null,
       });
+      await get().loadModelProviders();
+      await get().loadModelCredentials();
+      await get().loadModelConfigs();
       if (mockConversations[0]?.id) {
         await get().loadConversationData(mockConversations[0].id);
       }
@@ -643,6 +689,197 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       if (wsClient.isConnected() && !get().useMockMode) {
         wsClient.send('conversation.subscribe', { conversationId: id });
       }
+    }
+  },
+
+  loadModelProviders: async () => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      set({ modelProviders: mockModelProviders });
+      return;
+    }
+    try {
+      const res = await modelService.getModelProviders();
+      if (res.code === 0 && res.data) {
+        set({ modelProviders: res.data });
+      }
+    } catch (e) {
+      console.error('Failed to load model providers', e);
+    }
+  },
+
+  loadModelCredentials: async () => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      const cached = localStorage.getItem('mock_model_credentials');
+      if (cached) {
+        set({ modelCredentials: JSON.parse(cached) });
+      } else {
+        localStorage.setItem('mock_model_credentials', JSON.stringify(initialMockModelCredentials));
+        set({ modelCredentials: initialMockModelCredentials });
+      }
+      return;
+    }
+    try {
+      const res = await modelService.getModelCredentials();
+      if (res.code === 0 && res.data) {
+        set({ modelCredentials: res.data });
+      }
+    } catch (e) {
+      console.error('Failed to load model credentials', e);
+    }
+  },
+
+  loadModelConfigs: async () => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      const cached = localStorage.getItem('mock_model_configs');
+      if (cached) {
+        set({ modelConfigs: JSON.parse(cached) });
+      } else {
+        localStorage.setItem('mock_model_configs', JSON.stringify(initialMockModelConfigs));
+        set({ modelConfigs: initialMockModelConfigs });
+      }
+      return;
+    }
+    try {
+      const res = await modelService.getModelConfigs();
+      if (res.code === 0 && res.data) {
+        set({ modelConfigs: res.data });
+      }
+    } catch (e) {
+      console.error('Failed to load model configs', e);
+    }
+  },
+
+  createModelCredential: async (payload) => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      const newCred: ModelCredential = {
+        id: 'cred-' + Date.now(),
+        ownerUserId: '1',
+        name: payload.name,
+        provider: payload.provider,
+        credentialType: payload.credentialType,
+        configured: true,
+        createdAt: getCurrentFullTime(),
+        updatedAt: getCurrentFullTime()
+      };
+      const list = [...get().modelCredentials, newCred];
+      set({ modelCredentials: list });
+      localStorage.setItem('mock_model_credentials', JSON.stringify(list));
+      return;
+    }
+    try {
+      const res = await modelService.createModelCredential(payload);
+      if (res.code === 0) {
+        await get().loadModelCredentials();
+      }
+    } catch (e) {
+      console.error('Failed to create model credential', e);
+    }
+  },
+
+  updateModelCredential: async (id, payload) => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      const list = get().modelCredentials.map(c => c.id === id ? { ...c, ...payload, updatedAt: getCurrentFullTime() } : c);
+      set({ modelCredentials: list });
+      localStorage.setItem('mock_model_credentials', JSON.stringify(list));
+      return;
+    }
+    try {
+      const res = await modelService.updateModelCredential(id, payload);
+      if (res.code === 0) {
+        await get().loadModelCredentials();
+      }
+    } catch (e) {
+      console.error('Failed to update model credential', e);
+    }
+  },
+
+  deleteModelCredential: async (id) => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      const list = get().modelCredentials.filter(c => c.id !== id);
+      set({ modelCredentials: list });
+      localStorage.setItem('mock_model_credentials', JSON.stringify(list));
+      return;
+    }
+    try {
+      const res = await modelService.deleteModelCredential(id);
+      if (res.code === 0) {
+        await get().loadModelCredentials();
+      }
+    } catch (e) {
+      console.error('Failed to delete model credential', e);
+    }
+  },
+
+  createModelConfig: async (payload) => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      const newConfig: ModelConfig = {
+        id: 'config-' + Date.now(),
+        ownerUserId: '1',
+        name: payload.name,
+        provider: payload.provider,
+        protocol: payload.protocol,
+        modelName: payload.modelName,
+        baseUrl: payload.baseUrl,
+        credentialRef: payload.credentialRef,
+        extraConfig: payload.extraConfig,
+        createdAt: getCurrentFullTime(),
+        updatedAt: getCurrentFullTime()
+      };
+      const list = [...get().modelConfigs, newConfig];
+      set({ modelConfigs: list });
+      localStorage.setItem('mock_model_configs', JSON.stringify(list));
+      return;
+    }
+    try {
+      const res = await modelService.createModelConfig(payload);
+      if (res.code === 0) {
+        await get().loadModelConfigs();
+      }
+    } catch (e) {
+      console.error('Failed to create model config', e);
+    }
+  },
+
+  updateModelConfig: async (id, payload) => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      const list = get().modelConfigs.map(c => c.id === id ? { ...c, ...payload, updatedAt: getCurrentFullTime() } : c);
+      set({ modelConfigs: list });
+      localStorage.setItem('mock_model_configs', JSON.stringify(list));
+      return;
+    }
+    try {
+      const res = await modelService.updateModelConfig(id, payload);
+      if (res.code === 0) {
+        await get().loadModelConfigs();
+      }
+    } catch (e) {
+      console.error('Failed to update model config', e);
+    }
+  },
+
+  deleteModelConfig: async (id) => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      const list = get().modelConfigs.filter(c => c.id !== id);
+      set({ modelConfigs: list });
+      localStorage.setItem('mock_model_configs', JSON.stringify(list));
+      return;
+    }
+    try {
+      const res = await modelService.deleteModelConfig(id);
+      if (res.code === 0) {
+        await get().loadModelConfigs();
+      }
+    } catch (e) {
+      console.error('Failed to delete model config', e);
     }
   },
 

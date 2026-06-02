@@ -25,9 +25,27 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent }) => {
       <div className="flex-1 min-w-0">
         <h4 className="text-xs font-semibold text-lark-text-primary dark:text-slate-200 group-hover:text-slate-900 dark:group-hover:text-white transition-colors truncate">{agent.name}</h4>
         <p className="text-[11px] text-lark-text-secondary dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-300 transition-colors truncate mt-0.5">{agent.description}</p>
-        <div className="flex gap-1 mt-1 flex-wrap">
-          {(agent.tags || []).slice(0, 3).map((tag, idx) => (
-            <span key={idx} className="text-[9px] px-1.5 py-0.5 bg-lark-primary-light dark:bg-violet-950/50 text-lark-primary dark:text-violet-300 rounded font-medium border border-lark-primary/10 dark:border-violet-800/30">
+        <div className="flex gap-1 mt-1 flex-wrap items-center">
+          <span className={`text-[8px] px-1 py-0.2 rounded font-mono font-extrabold uppercase tracking-wider ${
+            agent.runtime && agent.runtime !== 'native'
+              ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/25'
+              : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-450 border border-emerald-500/25'
+          }`}>
+            {agent.runtime || 'native'}
+          </span>
+          {agent.modelConfigId && (() => {
+            const cfg = useAgentHubStore.getState().modelConfigs.find(c => c.id === agent.modelConfigId);
+            if (cfg) {
+              return (
+                <span className="text-[8px] px-1 py-0.2 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded font-semibold border border-slate-200/50 dark:border-slate-850/50 max-w-[80px] truncate" title={cfg.name}>
+                  {cfg.name}
+                </span>
+              );
+            }
+            return null;
+          })()}
+          {(agent.tags || []).slice(0, 1).map((tag, idx) => (
+            <span key={idx} className="text-[8px] px-1 py-0.2 bg-lark-primary-light dark:bg-violet-950/50 text-lark-primary dark:text-violet-300 rounded font-medium border border-lark-primary/10 dark:border-violet-800/30">
               {tag}
             </span>
           ))}
