@@ -3420,7 +3420,18 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     if (!activeConversationId) return;
 
     const conversation = conversations.find(c => c.id === activeConversationId);
-    const workspaceId = conversation?.workspaceId || undefined;
+    if (conversation) {
+      if (conversation.mode === 'agent') {
+        alert('智能体联系人会话不支持沙箱任务，请创建单聊或群聊会话并选择/新建工作区。');
+        return;
+      }
+      if (!conversation.workspaceId && !environmentProfile?.workspaceId) {
+        alert('请先选择或新建工作区。');
+        return;
+      }
+    }
+
+    const workspaceId = conversation?.workspaceId || environmentProfile?.workspaceId || undefined;
 
     if (!useMockMode) {
       try {
