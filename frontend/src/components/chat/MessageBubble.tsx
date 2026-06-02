@@ -5,6 +5,7 @@ import CodeBlock from './CodeBlock';
 import TaskPlanCard from './TaskPlanCard';
 import ArtifactMessage from './ArtifactMessage';
 import AttachmentCard from './AttachmentCard';
+import GroupedArtifactsCard from './GroupedArtifactsCard';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface MessageBubbleProps {
@@ -173,6 +174,9 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
   };
 
   const renderContent = () => {
+    if (message.metadata?.isGroupedArtifacts) {
+      return <GroupedArtifactsCard message={message} />;
+    }
     if (message.type === 'code') {
       return <CodeBlock code={message.content} language={message.language} />;
     }
@@ -185,7 +189,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     return <p className="text-sm leading-relaxed whitespace-pre-wrap">{formatMessageText(message.content)}</p>;
   };
 
-  const isBlockType = message.type === 'code' || message.type === 'task-plan' || message.type === 'artifact';
+  const isBlockType = message.type === 'code' || message.type === 'task-plan' || message.type === 'artifact' || message.metadata?.isGroupedArtifacts;
   const hasContent = message.content && message.content.trim().length > 0;
   const hasAttachments = message.attachments && message.attachments.length > 0;
   const shouldShowBubble = isBlockType || hasContent;

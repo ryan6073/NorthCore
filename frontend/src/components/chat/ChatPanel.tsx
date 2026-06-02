@@ -438,7 +438,44 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const renderMessageList = () => {
     let lastDateLabel = '';
     
-    return messages.map((msg) => {
+    // Group artifact messages by senderId (starts with run-)
+    const groupedMessagesList: Message[] = [];
+    const runGroups: Record<string, Message[]> = {};
+    
+    messages.forEach(msg => {
+      if (msg.senderId && msg.senderId.startsWith('run-') && msg.type === 'artifact') {
+        if (!runGroups[msg.senderId]) {
+          runGroups[msg.senderId] = [];
+        }
+        runGroups[msg.senderId].push(msg);
+      }
+    });
+    
+    const processedRunIds = new Set<string>();
+    messages.forEach(msg => {
+      if (msg.senderId && msg.senderId.startsWith('run-') && msg.type === 'artifact') {
+        if (!processedRunIds.has(msg.senderId)) {
+          processedRunIds.add(msg.senderId);
+          const group = runGroups[msg.senderId];
+          if (group.length > 1) {
+            groupedMessagesList.push({
+              ...msg,
+              metadata: {
+                ...msg.metadata,
+                isGroupedArtifacts: true,
+                groupedMessages: group,
+              }
+            });
+          } else {
+            groupedMessagesList.push(msg);
+          }
+        }
+      } else {
+        groupedMessagesList.push(msg);
+      }
+    });
+
+    return groupedMessagesList.map((msg) => {
       const msgDateLabel = msg.createdAt ? normalizeDatePart(msg.createdAt) : '';
       const showDivider = msgDateLabel && msgDateLabel !== lastDateLabel;
       if (showDivider) {
