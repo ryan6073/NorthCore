@@ -1088,20 +1088,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
               <div className="w-[1px] h-3 bg-lark-border/60 dark:bg-slate-800 mx-1" />
               <span className="text-[10px] text-lark-text-tertiary dark:text-slate-500">Shift + Enter 换行</span>
 
-              <div className="w-[1px] h-3 bg-lark-border/60 dark:bg-slate-800 mx-1" />
-              <button
-                type="button"
-                onClick={() => setIsSandboxMode(!isSandboxMode)}
-                className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-bold transition-all border ${
-                  isSandboxMode
-                    ? 'bg-indigo-500/15 text-indigo-400 border-indigo-500/35 ring-1 ring-indigo-500/20'
-                    : 'text-slate-400 dark:text-slate-400 hover:text-indigo-400 hover:bg-indigo-500/5 border-transparent'
-                }`}
-                title="在隔离 Docker 容器中以沙箱方式执行指令"
-              >
-                <Terminal className="w-3.5 h-3.5 mr-0.5" />
-                沙箱运行
-              </button>
 
               <div className="w-[1px] h-3 bg-lark-border/60 dark:bg-slate-800 mx-1" />
               <button
@@ -1188,7 +1174,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                     }
                   }}
                   placeholder={isSandboxMode ? "输入沙箱任务指令，例如：生成一个 README.md 文件说明这是沙箱测试..." : "输入消息，输入 @ 唤起 Agent 选择器..."}
-                  className={`absolute inset-0 w-full h-full px-2 py-1.5 text-sm font-sans leading-normal outline-none resize-none bg-transparent focus:ring-0 border border-transparent caret-slate-850 dark:caret-white ${
+                  className={`absolute inset-0 w-full h-full px-2 py-1.5 text-sm font-sans leading-normal outline-none resize-none bg-transparent focus:ring-0 border border-transparent caret-slate-800 dark:caret-white ${
                     inputValue ? 'text-transparent' : 'text-lark-text-primary dark:text-slate-150 placeholder:text-lark-text-tertiary dark:placeholder:text-slate-650'
                   }`}
                   style={{ wordBreak: 'break-word' }}

@@ -916,6 +916,8 @@ Thumbs.db
   }
 ];
 
+import webSearchMockData from './webSearchMockData';
+
 export const mockSandboxNormalScenarios = {
   sandboxMockScenarios,
   createNormalCompleteSandboxRun: sandboxMockScenarios.createNormalCompleteSandboxRun,
@@ -924,4 +926,12 @@ export const mockSandboxNormalScenarios = {
   createCancelledScenarioSandboxRun: sandboxMockScenarios.createCancelledScenarioSandboxRun,
   getMockFileContent: sandboxMockScenarios.getMockFileContent,
   createMockHtmlPreview: sandboxMockScenarios.createMockHtmlPreview
+};
+
+export const mockWebSearchScenarios = {
+  ...webSearchMockData,
+  webSearchMockData,
+  mockWebSearchResults: webSearchMockData.mockWebSearchResults,
+  createMockWebSearchMetadata: webSearchMockData.createMockWebSearchMetadata,
+  webSearchTestScenarios: webSearchMockData.webSearchTestScenarios
 };

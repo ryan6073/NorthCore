@@ -1,7 +1,7 @@
 # AgentHub API 协作契约
 
-**版本**: v3.0.0  
-**更新日期**: 2026-05-26  
+**版本**: v4.4.0  
+**更新日期**: 2026-06-01  
 **状态**: 正式发布版
 
 ---
@@ -186,10 +186,51 @@ interface AgentPermission {
   canRunCommands: boolean;
   canGenerateArtifacts: boolean;
   canDeploy: boolean;
+  canWebSearch?: boolean;
 }
 ```
 
-### 3.5 Conversation
+### 3.5 WebSearchResult
+联网搜索的单条结果条目：
+
+```typescript
+interface WebSearchResult {
+  title: string;
+  body: string;
+  href: string;
+}
+```
+
+### 3.6 WebSearchMetadata
+联网搜索的完整元数据对象，记录 Agent 的联网决策过程和搜索结果：
+
+```typescript
+interface WebSearchMetadata {
+  shouldSearch: boolean;
+  decisionReason: string;
+  mode: 'auto' | 'force' | 'off';
+  used: boolean;
+  provider: 'ddgs' | 'serpapi' | string;
+  query: string;
+  cacheHit: boolean;
+  results: WebSearchResult[];
+  error: string | null;
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| shouldSearch | 模型决策是否需要联网 |
+| decisionReason | 模型做出这个决策的理由 |
+| mode | 用户指定的联网模式：auto=自动决策, force=强制联网, off=禁止联网 |
+| used | 实际是否执行了联网操作 |
+| provider | 使用的联网搜索引擎提供商 |
+| query | 实际执行的搜索关键词 |
+| cacheHit | 搜索结果是否命中缓存 |
+| results | 搜索结果数组 |
+| error | 联网过程中发生的错误，成功时为 null |
+
+### 3.7 Conversation
 聊天窗口/任务上下文对象。
 
 ```typescript
@@ -216,7 +257,7 @@ interface Conversation {
 | createdAt | 会话创建时间 | 详情面板展示 |
 | contextUsage | 上下文使用统计 | 右上角环形进度展示 |
 
-### 3.6 ContextUsage
+### 3.8 ContextUsage
 上下文 Token/字符数使用统计：
 
 ```typescript
@@ -227,7 +268,7 @@ interface ContextUsage {
 }
 ```
 
-### 3.7 Message
+### 3.9 Message
 聊天消息记录对象。
 
 ```typescript
@@ -250,6 +291,7 @@ interface Message {
   };
   artifactRef?: ArtifactReference;
   isPinned?: boolean;
+  webSearchMetadata?: WebSearchMetadata;
 }
 ```
 
@@ -269,8 +311,9 @@ interface Message {
 | quotedMessage | 引用消息 | 回复时展示被引用内容 |
 | artifactRef | 产物引用详情 | 代码片段关联 |
 | isPinned | 是否已被 Pin | 置顶消息高亮标识 |
+| webSearchMetadata | 该消息对应的联网搜索元数据 | 展示联网决策、搜索结果、来源引用 |
 
-### 3.8 MessageAttachment
+### 3.10 MessageAttachment
 用户上传的图片/文件附件：
 
 ```typescript
@@ -288,7 +331,7 @@ interface MessageAttachment {
 }
 ```
 
-### 3.9 ArtifactReference
+### 3.11 ArtifactReference
 消息中的产物引用：
 
 ```typescript
@@ -302,7 +345,7 @@ interface ArtifactReference {
 }
 ```
 
-### 3.10 Artifact
+### 3.12 Artifact
 产物元数据对象（不含完整内容）。
 
 ```typescript
@@ -321,7 +364,7 @@ interface Artifact {
 }
 ```
 
-### 3.11 ArtifactVersion
+### 3.13 ArtifactVersion
 产物的版本快照。
 
 ```typescript
@@ -341,7 +384,7 @@ interface ArtifactVersion {
 }
 ```
 
-### 3.12 ArtifactDetail
+### 3.14 ArtifactDetail
 产物详情对象，包含当前版本完整内容。
 
 ```typescript
@@ -352,7 +395,7 @@ interface ArtifactDetail extends Artifact {
 }
 ```
 
-### 3.13 SendMessageResponse
+### 3.15 SendMessageResponse
 发送消息非流式返回结果。
 
 ```typescript
@@ -361,10 +404,11 @@ interface SendMessageResponse {
   agentMessages: Message[];
   artifacts: Artifact[];
   contextUsage?: ContextUsage;
+  webSearchMetadata?: WebSearchMetadata;
 }
 ```
 
-### 3.14 CompressContextResult
+### 3.16 CompressContextResult
 上下文压缩执行结果。
 
 ```typescript
@@ -375,7 +419,7 @@ interface CompressContextResult {
 }
 ```
 
-### 3.15 ConversationSummary
+### 3.17 ConversationSummary
 会话摘要对象。
 
 ```typescript
@@ -391,7 +435,7 @@ interface ConversationSummary {
 }
 ```
 
-### 3.16 MemoryItem
+### 3.18 MemoryItem
 长期记忆条目。
 
 ```typescript
@@ -408,7 +452,7 @@ interface MemoryItem {
 }
 ```
 
-### 3.17 PinItem
+### 3.19 PinItem
 置顶消息记录。
 
 ```typescript
@@ -421,7 +465,7 @@ interface PinItem {
 }
 ```
 
-### 3.18 HealthCheckData
+### 3.20 HealthCheckData
 健康检查返回数据。
 
 ```typescript
@@ -432,7 +476,7 @@ interface HealthCheckData {
 }
 ```
 
-### 3.19 AgentRunStepStatus
+### 3.21 AgentRunStepStatus
 沙箱执行步骤状态。
 
 ```typescript
@@ -445,7 +489,7 @@ type AgentRunStepStatus =
   | 'blocked';
 ```
 
-### 3.20 AgentRunStep
+### 3.22 AgentRunStep
 沙箱执行步骤详情。
 
 ```typescript
@@ -465,7 +509,7 @@ interface AgentRunStep {
 }
 ```
 
-### 3.21 RunDag
+### 3.23 RunDag
 沙箱任务步骤的有向无环图 (DAG) 结构。
 
 ```typescript
@@ -480,7 +524,7 @@ interface RunDag {
 }
 ```
 
-### 3.22 Sandbox
+### 3.24 Sandbox
 沙箱容器环境元数据。
 
 ```typescript
@@ -493,7 +537,7 @@ interface Sandbox {
 }
 ```
 
-### 3.23 SandboxFile
+### 3.25 SandboxFile
 沙箱生成/修改的文件。
 
 ```typescript
@@ -510,7 +554,7 @@ interface SandboxFile {
 }
 ```
 
-### 3.24 SandboxFileVersion
+### 3.26 SandboxFileVersion
 沙箱内文件的具体版本快照。
 
 ```typescript
@@ -523,7 +567,7 @@ interface SandboxFileVersion {
 }
 ```
 
-### 3.25 SandboxFileDetail
+### 3.27 SandboxFileDetail
 沙箱内文件的详细内容（继承自 SandboxFile）。
 
 ```typescript
@@ -533,7 +577,7 @@ interface SandboxFileDetail extends SandboxFile {
 }
 ```
 
-### 3.26 SandboxConflict
+### 3.28 SandboxConflict
 沙箱文件写冲突记录。
 
 ```typescript
@@ -555,7 +599,7 @@ interface SandboxConflict {
 }
 ```
 
-### 3.27 AgentRunDetail
+### 3.29 AgentRunDetail
 沙箱任务执行 (Run) 的完整详情。
 
 ```typescript
@@ -757,7 +801,8 @@ GET /api/v1/agents/agent-claude-code
       "canWriteFiles": true,
       "canRunCommands": false,
       "canGenerateArtifacts": true,
-      "canDeploy": false
+      "canDeploy": false,
+      "canWebSearch": true
     }
   }
 }
@@ -841,7 +886,8 @@ GET /api/v1/agents/agent-claude-code
     "canWriteFiles": true,
     "canRunCommands": true,
     "canGenerateArtifacts": true,
-    "canDeploy": false
+    "canDeploy": false,
+    "canWebSearch": true
   }
 }
 ```
@@ -1239,9 +1285,9 @@ GET /api/v1/conversations?page=1&pageSize=20
       "message": {
         "id": "msg-8",
         "conversationId": "conv-xxx",
-        "senderId": "agent-codex",
-        "senderName": "Codex",
-        "role": "agent",
+        "senderId": "agent-orchestrator",
+        "senderName": "Orchestrator",
+        "role": "orchestrator",
         "type": "text",
         "content": "核心架构决定采用前后端分离...",
         "createdAt": "2026-05-22 14:35"
@@ -1305,7 +1351,7 @@ GET /api/v1/conversations?page=1&pageSize=20
 **接口用途**: 向指定多聊会话中添加一个新的参与智能体。
 
 **使用场景**:
-1. 用户在多聊会话的成员管理面板中选择未参与的智能体并点击“添加”。
+1. 用户在多聊会话的成员管理面板中选择未参与的智能体并点击"添加"。
 
 **路径参数**:
 
@@ -1350,7 +1396,7 @@ GET /api/v1/conversations?page=1&pageSize=20
 **接口用途**: 从指定多聊会话中移除一个参与智能体。注意，此操作并非删除该智能体本身。
 
 **使用场景**:
-1. 用户在多聊会话的成员管理面板中点击某个智能体旁的“移除”按钮。
+1. 用户在多聊会话的成员管理面板中点击某个智能体旁的"移除"按钮。
 
 **路径参数**:
 
@@ -1484,24 +1530,25 @@ GET /api/v1/conversations/conv-xxx/messages?page=1&pageSize=50&beforeId=msg-100
 
 #### POST /conversations/{conversationId}/messages
 
-**接口名称**: 发送消息（非流式）
+**接口名称**: 发送消息（非流式，支持联网模式）
 
-**接口用途**: 发送用户消息，后端同步处理完成后一次性返回所有结果。
+**接口用途**: 发送用户消息，后端同步处理完成后一次性返回所有结果。支持三种联网模式：auto=自动决策是否联网，force=强制联网，off=完全禁止联网。
 
 **使用场景**:
 1. 在 WebSocket 不可用时的降级方案
-2. 不需要逐字流式输出，希望直接获取完整回答
+2. 用户明确指定"强制联网"来获取实时信息
 
 **路径参数**: conversationId
 
 **请求体示例**:
 ```json
 {
-  "content": "帮我生成一个React登录页",
+  "content": "2026年6月最新的 React 版本是多少？",
   "targetAgentId": "agent-claude-code",
   "quotedMessageId": "msg-12",
   "artifactRef": null,
-  "attachments": []
+  "attachments": [],
+  "webSearchMode": "auto"
 }
 ```
 
@@ -1512,6 +1559,7 @@ GET /api/v1/conversations/conv-xxx/messages?page=1&pageSize=50&beforeId=msg-100
 | quotedMessageId | 可选，引用/回复的消息 ID |
 | artifactRef | 可选，消息中关联的产物片段引用 |
 | attachments | 可选，附带上传的附件列表 |
+| webSearchMode | 可选，联网模式：auto=自动决策, force=强制联网, off=禁止联网，默认 auto |
 
 **响应体示例**:
 ```json
@@ -1526,8 +1574,8 @@ GET /api/v1/conversations/conv-xxx/messages?page=1&pageSize=50&beforeId=msg-100
       "senderName": "用户",
       "role": "user",
       "type": "text",
-      "content": "帮我生成一个React登录页",
-      "createdAt": "2026-05-22 14:28"
+      "content": "2026年6月最新的 React 版本是多少？",
+      "createdAt": "2026-06-01 10:00"
     },
     "agentMessages": [
       {
@@ -1537,20 +1585,33 @@ GET /api/v1/conversations/conv-xxx/messages?page=1&pageSize=50&beforeId=msg-100
         "senderName": "Claude Code",
         "role": "agent",
         "type": "text",
-        "content": "好的，下面为您生成一个完整的React登录页面组件...",
-        "createdAt": "2026-05-22 14:29"
+        "content": "根据搜索结果，2026年6月 React 的最新稳定版本是 React 19.2.1，于2026年5月下旬发布。本次联网共找到 5 条相关结果...",
+        "createdAt": "2026-06-01 10:01",
+        "webSearchMetadata": {
+          "shouldSearch": true,
+          "decisionReason": "问题询问的是2026年6月的实时版本信息，属于动态最新数据，无法仅凭训练知识回答，因此决定联网搜索",
+          "mode": "auto",
+          "used": true,
+          "provider": "ddgs",
+          "query": "React latest stable version 2026 June",
+          "cacheHit": false,
+          "results": [
+            {
+              "title": "React 官方博客 - 发布 React 19.2.1",
+              "body": "React 团队很高兴地宣布 React 19.2.1 现已发布。这是一个包含重要性能优化和 bug 修复的稳定更新。本次更新重点改进了 Concurrent Mode 下的渲染性能...",
+              "href": "https://react.dev/blog/2026/05/28/react-19-2-1"
+            },
+            {
+              "title": "React Releases - GitHub 标签页",
+              "body": "最新的 React 发布版本：v19.2.1 (2026-05-28), v19.2.0 (2026-05-15)...",
+              "href": "https://github.com/facebook/react/releases"
+            }
+          ],
+          "error": null
+        }
       }
     ],
-    "artifacts": [
-      {
-        "id": "art-login-page",
-        "conversationId": "conv-xxx",
-        "title": "LoginPage.tsx",
-        "type": "code",
-        "createdAt": "2026-05-22 14:30",
-        "updatedAt": "2026-05-22 14:30"
-      }
-    ],
+    "artifacts": [],
     "contextUsage": {
       "contextUsagePercent": 45,
       "contextUsageChars": 45000,
@@ -1710,11 +1771,6 @@ GET /api/v1/conversations/conv-xxx/messages?page=1&pageSize=50&beforeId=msg-100
 }
 ```
 
-| 字段 | 必填 | 说明 |
-|---|---|---|
-| content | 是 | 修改后的产物完整内容 |
-| changeSummary | 否 | 本次变更的简短说明 |
-
 **响应体示例**: 返回更新后的 ArtifactDetail 对象（结构同 GET /artifacts/{artifactId}）
 
 **优先级**: P0
@@ -1844,7 +1900,7 @@ GET /api/v1/conversations/conv-xxx/messages?page=1&pageSize=50&beforeId=msg-100
 **接口用途**: 一键游客体验，免密直接登录。
 
 **使用场景**:
-1. 用户在登录页点击“一键访客体验”按钮
+1. 用户在登录页点击"一键访客体验"按钮
 
 **请求参数**: 无
 
@@ -1923,7 +1979,7 @@ GET /api/v1/conversations/conv-xxx/messages?page=1&pageSize=50&beforeId=msg-100
 **接口用途**: 销毁服务端的当前登录会话并废弃 token。
 
 **使用场景**:
-1. 用户在设置或侧边栏点击“退出登录”
+1. 用户在设置或侧边栏点击"退出登录"
 
 **请求参数**: 无
 
@@ -1938,8 +1994,6 @@ GET /api/v1/conversations/conv-xxx/messages?page=1&pageSize=50&beforeId=msg-100
   "data": true
 }
 ```
-
-**错误情况**: 无
 
 **优先级**: P0
 
@@ -1996,7 +2050,8 @@ GET /api/v1/conversations/conv-group-1/agents/agent-claude-code/config
       "canWriteFiles": false,
       "canRunCommands": false,
       "canGenerateArtifacts": true,
-      "canDeploy": false
+      "canDeploy": false,
+      "canWebSearch": true
     }
   }
 }
@@ -2044,7 +2099,69 @@ GET /api/v1/conversations/conv-group-1/agents/agent-claude-code/config
 
 ---
 
-### 4.8 沙箱任务管理接口
+### 4.8 Agent 联网(Web Search) 专属测试接口
+
+#### POST /web-search/test
+
+**接口名称**: 执行联网搜索测试
+
+**接口用途**: 提供直接测试 Agent 联网功能的专属接口，用于验证搜索引擎可用性、联网结果正确性和延迟性能。
+
+**使用场景**:
+1. Agent 配置面板中"联网测试"按钮，快速验证当前联网配置是否正常
+2. Mock 模式下直接运行各种联网搜索场景进行演示和测试
+
+**请求体示例**:
+```json
+{
+  "query": "2026年6月 最新技术趋势",
+  "provider": "ddgs",
+  "forceRefresh": false
+}
+```
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| query | 是 | 要搜索的关键词 |
+| provider | 否 | 指定搜索引擎提供商，默认 ddgs |
+| forceRefresh | 否 | 是否强制刷新，忽略缓存，默认 false |
+
+**响应体示例**:
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "shouldSearch": true,
+    "decisionReason": "用户主动发起的联网测试请求，因此强制进行联网搜索",
+    "mode": "force",
+    "used": true,
+    "provider": "ddgs",
+    "query": "2026年6月 最新技术趋势",
+    "cacheHit": false,
+    "results": [
+      {
+        "title": "2026 年大前端技术趋势深度解析 - 知乎",
+        "body": "2026 年最值得关注的技术趋势包括：React 19 生态全面普及，AI 辅助编程成为生产环境标配，边缘计算与 WebAssembly 深度结合...",
+        "href": "https://zhihu.com/xxx/2026-frontend-trends"
+      },
+      {
+        "title": "2026 全球 AI 开发者大会核心要点",
+        "body": "生成式 AI 应用框架迎来新一轮爆发，多模态 Agent 协作成为主流开发范式...",
+        "href": "https://ai-dev-conference-2026.example.com/keynotes"
+      }
+    ],
+    "error": null,
+    "latencyMs": 856
+  }
+}
+```
+
+**优先级**: P1
+
+---
+
+### 4.9 沙箱任务管理接口
 
 ---
 
@@ -2055,7 +2172,7 @@ GET /api/v1/conversations/conv-group-1/agents/agent-claude-code/config
 **接口用途**: 针对指定会话，在后台启动一个 Docker 容器并初始化任务，返回初始化后的任务详情。
 
 **使用场景**:
-1. 用户在会话中点击“沙箱执行”或发送任务指令。
+1. 用户在会话中点击"沙箱执行"或发送任务指令。
 2. 前端发起请求，后端在后台异步调度执行，前端拿到任务 ID 后进行 WebSocket 或轮询状态监控。
 
 **路径参数**:
@@ -2132,1266 +2249,4 @@ GET /api/v1/conversations/conv-group-1/agents/agent-claude-code/config
 
 **使用场景**:
 1. 页面刷新后，获取当前会话历史沙箱任务。
-2. 前端取第一条作为右侧面板默认展示的最近 run。
-
-**路径参数**:
-
-| 参数名 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| conversationId | string | 是 | 会话唯一标识 ID |
-
-**Query 参数**:
-- `page` (number, 可选): 页码，默认 1
-- `pageSize` (number, 可选): 每页条数，默认 20
-
-**响应体示例**:
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "list": [
-      {
-        "id": "run-xxxxxx",
-        "sandboxId": "sb-xxxxxx",
-        "conversationId": "conv-xxxxxx",
-        "ownerUserId": "user-xxxxxx",
-        "status": "running",
-        "prompt": "创建一个 README.md，内容说明这是沙箱测试",
-        "dag": {
-          "nodes": []
-        },
-        "summary": "创建沙箱测试说明文档",
-        "createdAt": "2026-05-29 15:30:00",
-        "updatedAt": "2026-05-29 15:30:05",
-        "startedAt": "2026-05-29 15:30:02",
-        "steps": [],
-        "files": [],
-        "conflicts": []
-      }
-    ],
-    "total": 1,
-    "page": 1,
-    "pageSize": 20,
-    "hasMore": false
-  }
-}
-```
-
-**优先级**: P0
-
----
-
-#### GET /runs/{runId}/preview/{filePath}
-
-**接口名称**: HTML 多文件预览 Bundle
-
-**接口用途**: 给沙箱生成的 HTML Artifact 组装多文件预览，后端只从 `sandbox_files/sandbox_file_versions` 读取 tracked 文件。
-
-**使用场景**:
-1. 当前 Artifact `type = html` 且 metadata 中存在 `sourceRunId/sourceFilePath` 时调用。
-2. 返回的 HTML 放入 iframe `srcDoc` 进行预览。
-
-**路径参数**:
-
-| 参数名 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| runId | string | 是 | 运行任务唯一标识 ID |
-| filePath | string | 是 | 沙箱内相对文件路径（需 URL 编码） |
-
-**响应体示例**:
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "html": "<html>...</html>",
-    "sourceFilePath": "index.html",
-    "resolvedAssets": [
-      {
-        "ref": "styles.css",
-        "path": "styles.css",
-        "kind": "stylesheet"
-      }
-    ],
-    "missingAssets": [],
-    "warnings": []
-  }
-}
-```
-
-**字段说明**:
-- `<link rel="stylesheet" href="styles.css">` 会被替换成内联 `<style>`
-- `<script src="app.js"></script>` 会被替换成内联 `<script>`
-- 跳过外部 URL、绝对路径、`data:`、`blob:`、`http(s):`、`//cdn...`，原因写入 `warnings`
-
-**优先级**: P0
-
----
-
-#### GET /runs/{runId}
-
-**接口名称**: 获取沙箱运行任务 (Run) 详情
-
-**接口用途**: 获取指定运行任务的最新状态、执行步骤 (DAG)、输出文件及冲突情况。
-
-**使用场景**:
-1. 打开历史沙箱任务页面时加载任务状态。
-2. 对正在运行的任务进行轮询兜底，确保前端界面状态同步。
-
-**路径参数**:
-
-| 参数名 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| runId | string | 是 | 运行任务唯一标识 ID |
-
-**响应体示例**:
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "id": "run-xxxxxx",
-    "sandboxId": "sb-xxxxxx",
-    "conversationId": "conv-xxxxxx",
-    "ownerUserId": "user-xxxxxx",
-    "status": "running",
-    "prompt": "创建一个 README.md，内容说明这是沙箱测试",
-    "dag": {
-      "nodes": [
-        {
-          "id": "step-1",
-          "label": "编写 README",
-          "agentId": "agent-claude-code",
-          "status": "running",
-          "dependencies": []
-        }
-      ]
-    },
-    "summary": "创建沙箱测试说明文档",
-    "createdAt": "2026-05-29 15:30:00",
-    "updatedAt": "2026-05-29 15:30:05",
-    "startedAt": "2026-05-29 15:30:02",
-    "steps": [
-      {
-        "id": "step-1",
-        "runId": "run-xxxxxx",
-        "agentId": "agent-claude-code",
-        "agentName": "Claude Code",
-        "status": "running",
-        "description": "正在生成并编写 README.md 文件...",
-        "createdAt": "2026-05-29 15:30:02",
-        "updatedAt": "2026-05-29 15:30:05",
-        "startedAt": "2026-05-29 15:30:02"
-      }
-    ],
-    "files": [],
-    "conflicts": []
-  }
-}
-```
-
-**优先级**: P0
-
----
-
-#### GET /runs/{runId}/files
-
-**接口名称**: 获取沙箱内输出的文件列表
-
-**接口用途**: 查询沙箱当前已生成的所有文件。
-
-**使用场景**:
-1. 在沙箱任务文件树面板展示生成的所有代码/文档文件。
-
-**路径参数**:
-
-| 参数名 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| runId | string | 是 | 运行任务唯一标识 ID |
-
-**响应体示例**:
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": [
-    {
-      "id": "file-xxxxxx",
-      "sandboxId": "sb-xxxxxx",
-      "runId": "run-xxxxxx",
-      "path": "README.md",
-      "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "currentVersion": 1,
-      "artifactId": null,
-      "createdAt": "2026-05-29 15:30:10",
-      "updatedAt": "2026-05-29 15:30:10"
-    }
-  ]
-}
-```
-
-**优先级**: P0
-
----
-
-#### GET /runs/{runId}/files/{filePath}
-
-**接口名称**: 读取沙箱内文件内容
-
-**接口用途**: 读取沙箱生成或修改的指定文件的详细内容及版本信息。
-
-**使用场景**:
-1. 用户在沙箱文件树上点击某文件，前端预览具体代码内容。
-
-**路径参数**:
-
-| 参数名 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| runId | string | 是 | 运行任务唯一标识 ID |
-| filePath | string | 是 | 沙箱内相对文件路径（需 URL 编码，例如 `src%2FApp.tsx`） |
-
-**响应体示例**:
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "id": "file-xxxxxx",
-    "sandboxId": "sb-xxxxxx",
-    "runId": "run-xxxxxx",
-    "path": "README.md",
-    "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "currentVersion": 1,
-    "artifactId": null,
-    "createdAt": "2026-05-29 15:30:10",
-    "updatedAt": "2026-05-29 15:30:10",
-    "content": "# Sandbox Test\n这是沙箱测试说明文件",
-    "version": {
-      "id": "ver-xxxxxx",
-      "fileId": "file-xxxxxx",
-      "version": 1,
-      "content": "# Sandbox Test\n这是沙箱测试说明文件",
-      "createdAt": "2026-05-29 15:30:10"
-    }
-  }
-}
-```
-
-**优先级**: P0
-
----
-
-#### GET /runs/{runId}/conflicts
-
-**接口名称**: 获取冲突列表
-
-**接口用途**: 查询当前任务在向工作区提交代码时产生的所有未解决冲突。
-
-**使用场景**:
-1. 当任务进入 `conflict` 状态，或 WebSocket 收到 `run.step.conflict` 事件时，拉取冲突列表进行冲突处理。
-
-**路径参数**:
-
-| 参数名 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| runId | string | 是 | 运行任务唯一标识 ID |
-
-**响应体示例**:
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": [
-    {
-      "id": "conf-xxxxxx",
-      "runId": "run-xxxxxx",
-      "sandboxId": "sb-xxxxxx",
-      "fileId": "file-xxxxxx",
-      "filePath": "README.md",
-      "baseVersion": 1,
-      "currentVersion": 2,
-      "incomingContent": "# Sandbox Test\n这是大模型在沙箱中新增和修改的内容",
-      "incomingHash": "f4c8996fb92427ae41e4649b934ca495991b7852b855e3b0c44298fc1c149afb",
-      "createdByStepId": "step-1",
-      "status": "open",
-      "resolution": null,
-      "createdAt": "2026-05-29 15:30:15"
-    }
-  ]
-}
-```
-
-**优先级**: P0
-
----
-
-#### POST /runs/{runId}/conflicts/{conflictId}/resolve
-
-**接口名称**: 解决文件冲突
-
-**接口用途**: 对冲突文件提交合并决策（支持保留现有、采用传入、或手动合并编辑后的内容）。
-
-**使用场景**:
-1. 用户在冲突解决面板中，点击“保留当前”、“采用传入”或“手动修改”后提交。
-
-**路径参数**:
-
-| 参数名 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| runId | string | 是 | 运行任务唯一标识 ID |
-| conflictId | string | 是 | 冲突项唯一标识 ID |
-
-**请求参数**:
-
-| 参数名 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| resolution | string | 是 | 冲突解决策略：`current` (保留当前)、`incoming` (采用传入新内容)、`manual` (手动编辑) |
-| content | string | 否 | 当 `resolution` 为 `manual` 时，必填。表示手动合并后的完整文件内容 |
-
-**请求示例**:
-```json
-{
-  "resolution": "incoming"
-}
-```
-
-**响应体示例**:
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "id": "conf-xxxxxx",
-    "runId": "run-xxxxxx",
-    "sandboxId": "sb-xxxxxx",
-    "fileId": "file-xxxxxx",
-    "filePath": "README.md",
-    "baseVersion": 1,
-    "currentVersion": 3,
-    "incomingContent": "# Sandbox Test\n这是大模型在沙箱中新增和修改的内容",
-    "incomingHash": "f4c8996fb92427ae41e4649b934ca495991b7852b855e3b0c44298fc1c149afb",
-    "createdByStepId": "step-1",
-    "status": "resolved",
-    "resolution": "incoming",
-    "createdAt": "2026-05-29 15:30:15",
-    "resolvedAt": "2026-05-29 15:31:00"
-  }
-}
-```
-
-**优先级**: P0
-
----
-
-#### POST /runs/{runId}/cancel
-
-**接口名称**: 取消运行中的任务
-
-**接口用途**: 强行停止正在运行的沙箱容器，并将任务状态置为 `cancelled`。
-
-**使用场景**:
-1. 任务卡住或用户改变主意时，点击“取消”按钮。
-
-**路径参数**:
-
-| 参数名 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| runId | string | 是 | 运行任务唯一标识 ID |
-
-**响应体示例**:
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "id": "run-xxxxxx",
-    "status": "cancelled",
-    "updatedAt": "2026-05-29 15:32:00",
-    "finishedAt": "2026-05-29 15:32:00"
-  }
-}
-```
-
-**优先级**: P0
-
----
-
-## 5. WebSocket 事件文档
-
-### 5.1 WebSocket 连接地址
-
-```
-ws://localhost:8000/ws
-```
-
-### 5.2 事件统一结构
-所有 WebSocket 事件使用统一格式：
-```json
-{
-  "type": "event.name",
-  "eventId": "evt_xxx",
-  "data": {}
-}
-```
-
----
-
-### 5.1 connected
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: WebSocket 连接成功后，服务端立即主动推送该事件，通知客户端连接已建立。
-
-**payload 示例**:
-```json
-{
-  "type": "connected",
-  "sessionId": "agenthub-session-001",
-  "serverTime": "2026-05-26 10:30:00",
-  "version": "1.0.0"
-}
-```
-
-**字段说明**:
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| sessionId | string | 本次 WebSocket 会话唯一标识 |
-| serverTime | string | 服务端当前时间 |
-| version | string | 服务端版本号 |
-
-**触发时机**: 客户端刚建立 WebSocket 连接，握手完成后立即推送。
-
-**前端处理方式**:
-- 将 sessionId 存入状态
-- 标记连接状态为已连接
-- 恢复发送待队列中的消息
-
-**优先级**: P1
-
----
-
-### 5.2 ping
-
-**事件方向**: 客户端 → 服务端
-
-**事件用途**: 客户端主动发送心跳探测，维持长连接存活。
-
-**payload 示例**:
-```json
-{
-  "type": "ping"
-}
-```
-
-**前端处理方式**:
-- 设置 30 秒定时器自动发送 ping
-- 超过 60 秒未收到 pong 则尝试重连
-
-**优先级**: P1
-
----
-
-### 5.3 pong
-
-**事件方向**: 服务端 → 客户端
-
-**事件用途**: 服务端响应客户端的 ping 心跳。
-
-**payload 示例**:
-```json
-{
-  "type": "pong",
-  "timestamp": 1716695400000
-}
-```
-
-**字段说明**: timestamp 是 Unix 时间戳（毫秒）
-
-**优先级**: P1
-
----
-
-### 5.4 conversation.message.create
-
-**事件方向**: 客户端 → 服务端
-
-**事件用途**: 客户端通过 WebSocket 发起流式消息发送，启动整个消息的流式生成流程。
-
-**payload 示例**:
-```json
-{
-  "type": "conversation.message.create",
-  "eventId": "evt-001",
-  "data": {
-    "conversationId": "conv-xxx",
-    "content": "帮我生成一个React登录页面"
-  }
-}
-```
-
-**字段说明**:
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| eventId | string | 本次请求的唯一事件 ID，用于追踪后续相关事件 |
-| conversationId | string | 目标会话 ID |
-| content | string | 用户消息文本内容 |
-
-**优先级**: P1
-
----
-
-### 5.5 conversation.message.user_created
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: 服务端成功创建用户消息，立即通知前端，前端可以先渲染这条用户消息。
-
-**payload 示例**:
-```json
-{
-  "type": "conversation.message.user_created",
-  "eventId": "evt-001",
-  "data": {
-    "message": {
-      "id": "msg-user-001",
-      "conversationId": "conv-xxx",
-      "senderId": "user",
-      "senderName": "用户",
-      "role": "user",
-      "type": "text",
-      "content": "帮我生成一个React登录页面",
-      "createdAt": "2026-05-26 10:30:00"
-    }
-  }
-}
-```
-
-**优先级**: P1
-
----
-
-### 5.6 agent.status.changed
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: 通知客户端某个 Agent 的运行状态发生了变化（如进入 thinking 状态）。
-
-**payload 示例**:
-```json
-{
-  "type": "agent.status.changed",
-  "data": {
-    "agentId": "agent-claude-code",
-    "newStatus": "thinking",
-    "timestamp": "2026-05-26 10:30:05"
-  }
-}
-```
-
-**字段说明**:
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| agentId | string | 状态发生变化的 Agent ID |
-| newStatus | string | 新状态值（online/offline/thinking...） |
-| timestamp | string | 状态变更时间 |
-
-**使用场景**: 左侧 Agent 联系人卡片显示思考中动画，状态指示器变化
-
-**优先级**: P1
-
----
-
-### 5.7 agent.thinking.started
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: 专门通知指定 Agent 已开始执行任务、正在思考。
-
-**payload 示例**:
-```json
-{
-  "type": "agent.thinking.started",
-  "eventId": "evt-001",
-  "data": {
-    "conversationId": "conv-xxx",
-    "agentId": "agent-claude-code",
-    "agentName": "Claude Code"
-  }
-}
-```
-
-**优先级**: P1
-
----
-
-### 5.8 conversation.message.chunk
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: 模型流式输出的内容片段，逐字/逐段返回给前端进行追加渲染。
-
-**payload 示例**:
-```json
-{
-  "type": "conversation.message.chunk",
-  "eventId": "evt-001",
-  "data": {
-    "messageId": "msg-agent-001",
-    "conversationId": "conv-xxx",
-    "senderId": "agent-claude-code",
-    "senderName": "Claude Code",
-    "role": "agent",
-    "messageType": "text",
-    "language": "",
-    "chunk": "好的，下面",
-    "sequence": 1,
-    "isFullContent": false
-  }
-}
-```
-
-**字段说明**:
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| messageId | string | 该 Agent 消息的唯一 ID |
-| chunk | string | 本次输出的内容片段 |
-| sequence | number | 片段序列号，用于排序防乱序 |
-| isFullContent | boolean | 该 chunk 是否包含完整内容（最后一个大段时为 true） |
-
-**前端处理方式**:
-- 找到对应 messageId 的消息气泡
-- 将 chunk 内容 append 到末尾
-- 消息区域自动滚动到底部
-
-**优先级**: P1
-
----
-
-### 5.9 conversation.message.completed
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: 单条 Agent 消息全部输出完毕，通知前端该消息生成结束。
-
-**payload 示例**:
-```json
-{
-  "type": "conversation.message.completed",
-  "eventId": "evt-001",
-  "data": {
-    "messageId": "msg-agent-001",
-    "finishReason": "stop",
-    "fullMessage": {
-      "id": "msg-agent-001",
-      "conversationId": "conv-xxx",
-      "senderId": "agent-claude-code",
-      "senderName": "Claude Code",
-      "role": "agent",
-      "type": "text",
-      "content": "好的，下面为您生成一个完整的React登录页面组件...",
-      "createdAt": "2026-05-26 10:30:10"
-    }
-  }
-}
-```
-
-**finishReason 取值**:
-- stop: 正常完成
-- length: 输出达到最大长度截断
-- tool_calls: 触发工具调用
-- error: 生成出错
-
-**优先级**: P1
-
----
-
-### 5.10 artifact.created
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: Agent 在本次消息处理过程中生成了一个新产物，通知前端新增产物。
-
-**payload 示例**:
-```json
-{
-  "type": "artifact.created",
-  "eventId": "evt-001",
-  "data": {
-    "artifact": {
-      "id": "art-login-page",
-      "conversationId": "conv-xxx",
-      "title": "LoginPage.tsx",
-      "type": "code",
-      "createdAt": "2026-05-26 10:30:15"
-    }
-  }
-}
-```
-
-**前端处理方式**:
-- 将新 artifact 添加到状态管理中
-- 右侧产物列表面板自动刷新展示
-- 可选播放一个生成成功的提示动画
-
-**优先级**: P1
-
----
-
-### 5.11 conversation.all_tasks.completed
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: 本次由 conversation.message.create 触发的所有任务（所有 Agent 回复、所有产物生成）全部完成，标记整个流程结束。
-
-**payload 示例**:
-```json
-{
-  "type": "conversation.all_tasks.completed",
-  "eventId": "evt-001",
-  "data": {
-    "conversationId": "conv-xxx",
-    "summary": "本次任务生成了1个React登录页组件产物...",
-    "totalMessages": 3,
-    "totalArtifacts": 1,
-    "contextUsage": {
-      "contextUsagePercent": 45,
-      "contextUsageChars": 45000,
-      "contextLimitChars": 100000
-    }
-  }
-}
-```
-
-**前端处理方式**:
-- 将流式生成状态标记为 idle 空闲
-- 更新上下文使用统计环形图
-- 恢复输入框可输入状态
-
-**优先级**: P1
-
----
-
-### 5.12 error
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: WebSocket 协议层面或业务逻辑出错时，推送错误事件通知前端。
-
-**payload 示例**:
-```json
-{
-  "type": "error",
-  "eventId": "evt-001",
-  "data": {
-    "code": 50001,
-    "message": "Agent 调用失败"
-  }
-}
-```
-
-**优先级**: P1
-
----
-
-### 5.13 run.created
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: 沙箱任务创建并初始化完成，通知前端。
-
-**payload 示例**:
-```json
-{
-  "type": "run.created",
-  "eventId": "evt-001",
-  "data": {
-    "conversationId": "conv-xxx",
-    "runId": "run-xxx",
-    "run": {
-      "id": "run-xxx",
-      "status": "pending",
-      "prompt": "创建一个 README.md"
-    }
-  }
-}
-```
-
-**字段说明**:
-- 所有 `run.*` 事件都带 `conversationId` 和 `runId`，用于归属判断
-
-**前端处理方式**:
-- 创建/更新对应 conversation 的 run
-- 设为该 conversation 的 active run
-
-**优先级**: P1
-
----
-
-### 5.14 run.step.started
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: 某个沙箱步骤开始执行。
-
-**payload 示例**:
-```json
-{
-  "type": "run.step.started",
-  "eventId": "evt-001",
-  "data": {
-    "conversationId": "conv-xxx",
-    "runId": "run-xxx",
-    "stepId": "step-1",
-    "status": "running"
-  }
-}
-```
-
-**前端处理方式**:
-- 把对应 step 标记为 running
-- 使用事件里的 `run/steps` 合并本地状态
-
-**优先级**: P1
-
----
-
-### 5.15 run.step.tool.started
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: Agent 在某 step 中开始调用具体工具。
-
-**payload 示例**:
-```json
-{
-  "type": "run.step.tool.started",
-  "eventId": "evt-001",
-  "data": {
-    "conversationId": "conv-xxx",
-    "runId": "run-xxx",
-    "stepId": "step-1",
-    "toolName": "write_file"
-  }
-}
-```
-
-**前端处理方式**:
-- 展示 Agent 正在调用的工具
-
-**优先级**: P1
-
----
-
-### 5.16 run.step.tool.completed
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: Agent 在某 step 中完成了工具调用。
-
-**payload 示例**:
-```json
-{
-  "type": "run.step.tool.completed",
-  "eventId": "evt-001",
-  "data": {
-    "conversationId": "conv-xxx",
-    "runId": "run-xxx",
-    "stepId": "step-1",
-    "toolName": "write_file"
-  }
-}
-```
-
-**前端处理方式**:
-- 追加工具结果
-- 刷新文件树或 step output
-
-**优先级**: P1
-
----
-
-### 5.17 run.step.tool.failed
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: Agent 在某 step 中的工具调用失败。
-
-**payload 示例**:
-```json
-{
-  "type": "run.step.tool.failed",
-  "eventId": "evt-001",
-  "data": {
-    "conversationId": "conv-xxx",
-    "runId": "run-xxx",
-    "stepId": "step-1",
-    "toolName": "write_file",
-    "error": "Permission denied"
-  }
-}
-```
-
-**前端处理方式**:
-- 展示工具错误
-- 如果是写文件冲突，刷新冲突列表
-
-**优先级**: P1
-
----
-
-### 5.18 run.step.log
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: 实时追加沙箱步骤日志输出。
-
-**payload 示例**:
-```json
-{
-  "type": "run.step.log",
-  "eventId": "evt-001",
-  "data": {
-    "conversationId": "conv-xxx",
-    "runId": "run-xxx",
-    "stepId": "step-1",
-    "log": "[Agent] Writing file README.md..."
-  }
-}
-```
-
-**前端处理方式**:
-- 直接追加到 `runId + stepId` 对应日志区
-- 不要等轮询刷新
-
-**优先级**: P1
-
----
-
-### 5.19 run.step.completed
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: 沙箱步骤执行完成。
-
-**payload 示例**:
-```json
-{
-  "type": "run.step.completed",
-  "eventId": "evt-001",
-  "data": {
-    "conversationId": "conv-xxx",
-    "runId": "run-xxx",
-    "stepId": "step-1",
-    "status": "completed",
-    "steps": []
-  }
-}
-```
-
-**前端处理方式**:
-- 把 step 标记为 completed
-- 合并事件里的 run 快照
-
-**优先级**: P1
-
----
-
-### 5.20 run.step.failed
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: 沙箱步骤执行失败。
-
-**payload 示例**:
-```json
-{
-  "type": "run.step.failed",
-  "eventId": "evt-001",
-  "data": {
-    "conversationId": "conv-xxx",
-    "runId": "run-xxx",
-    "stepId": "step-1",
-    "status": "failed",
-    "error": "Command exit code 1"
-  }
-}
-```
-
-**前端处理方式**:
-- 把 step 标记为 failed 或 blocked
-- 展示 error
-
-**优先级**: P1
-
----
-
-### 5.21 run.step.conflict
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: 沙箱步骤产生文件冲突。
-
-**payload 示例**:
-```json
-{
-  "type": "run.step.conflict",
-  "eventId": "evt-001",
-  "data": {
-    "conversationId": "conv-xxx",
-    "runId": "run-xxx",
-    "conflicts": []
-  }
-}
-```
-
-**前端处理方式**:
-- 刷新对应 run 的冲突列表
-
-**优先级**: P1
-
----
-
-### 5.22 run.completed
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: 整个沙箱任务执行完成。
-
-**payload 示例**:
-```json
-{
-  "type": "run.completed",
-  "eventId": "evt-001",
-  "data": {
-    "conversationId": "conv-xxx",
-    "runId": "run-xxx",
-    "run": {}
-  }
-}
-```
-
-**前端处理方式**:
-- 刷新 run 详情、文件列表、Artifact 列表
-
-**优先级**: P1
-
----
-
-### 5.23 run.failed
-
-**事件方向**: 服务端推送 → 客户端
-
-**事件用途**: 整个沙箱任务执行失败。
-
-**payload 示例**:
-```json
-{
-  "type": "run.failed",
-  "eventId": "evt-001",
-  "data": {
-    "conversationId": "conv-xxx",
-    "runId": "run-xxx",
-    "error": "Docker container timed out"
-  }
-}
-```
-
-**前端处理方式**:
-- 展示失败原因
-- 如果 status 是 `conflict`，引导用户去冲突面板
-
-**优先级**: P1
-
----
-
-## 6. 错误码表
-
-| 错误码 | message | 说明 |
-|---|---|---|
-| 0 | success | 业务操作成功 |
-| 40000 | 请求参数错误 | 客户端传入的参数不合法 |
-| 40001 | 资源不存在 | 请求的 Agent/Conversation/Message/Artifact ID 找不到 |
-| 40002 | 当前状态不允许操作 | Agent 已禁用或会话已锁定，无法执行该操作 |
-| 40003 | Agent 已禁用 | 尝试使用一个被禁用的 Agent |
-| 40100 | 未授权 | （预留）需要用户登录认证 |
-| 40300 | 权限不足 | 用户没有权限执行该操作 |
-| 50000 | 服务端内部错误 | 服务器通用异常 |
-| 50001 | Agent 调用失败 | 调用大模型服务商 API 返回失败 |
-| 50002 | Agent 执行超时 | Agent 处理请求超过设定的超时时间 |
-| 50003 | WebSocket 事件处理失败 | 处理 WebSocket 消息时发生异常 |
-
----
-
-## 7. 版本历史
-
-| 版本 | 日期 | 更新内容 |
-|---|---|---|
-| v1.0.0 | 2026-05-24 | 初始基础接口定义 |
-| v2.0.0 | 2026-05-25 | 新增 mention、compress 上下文、长期记忆、Pin 消息 等接口 |
-| v3.0.0 | 2026-05-26 | 完全重构完整文档，所有接口补充使用场景、完整示例、字段说明，对齐前端全部实际使用代码 |
-| v4.0.0 | 2026-05-27 | 接入用户登录/注册系统，支持多用户资源隔离，引入预置 Agent 安全管理策略 |
-| v4.2.0 | 2026-05-29 | [新增] 补充群聊和单聊的会话级 Agent 配置管理接口；支持多聊中添加/删除成员智能体操作 |
-| v4.3.0 | 2026-05-29 | [新增] 补充沙箱运行任务 (Sandbox Run) 相关类型定义及 HTTP API，并标识其为待后端实现接口 |
-
----
-
-## 8. 前后端 API 差异及待开发 API
-
-### 8.1 前后端 API 差异说明
-
-1. **删除 Agent (DELETE /agents/{agentId}) 行为差异**：
-   - **前端原设计**：预期为永久物理删除。
-   - **后端契约**：实现为软删除（禁用状态，`enabled = false`，`status = "disabled"`），这使得已删除 Agent 的历史对话消息在前端依然可以正常显示。
-2. **会话分类模式 (ConversationMode) 差异**：
-   - **前端实现**：支持 `single` (普通单聊)、`group` (多智能体群聊)、`agent` (一对一智能体专属持久会话)。
-   - **后端契约**：仅声明 `single` 与 `group` 两种模式。目前前端的 `agent` 专属会话在后端是以 `mode = "single"` 或者通过前缀规则进行持久化存储的。
-3. **长期记忆与 Pin 消息逻辑归属**：
-   - **前端实现**：为保持向后兼容和体验完整性，对于新注册用户在 Mock 模式下，记忆与 Pinned Message 在前端本地有完整隔离实现。
-   - **后端契约**：当 API 模式激活时，上述资源通过 `conversationId` 间接关联到 `ownerUserId` 进行用户级隔离。
-
-### 8.2 后端需实现但目前尚未实现的前端所需 API
-
-1. **WebSocket 连接级别的多房间/多用户会话安全隔离**：
-   - **现状**：目前 WebSocket 支持通过 url 携带 token 建立连接。
-   - **前端诉求**：后端在向群聊广播消息或分发事件时，需要确保在 WebSocket 服务端建立严格的 Channel 订阅鉴权。即使在同一 WebSocket 服务器下，用户 A 也绝不能接收到用户 B 的 `conversation.message.chunk` 等推送事件，完全杜绝越权信息泄露。
-2. **多用户自建智能体的大模型 Key (API-Key) 安全托管与代充值代理 API**：
-   - **现状**：自建 Agent 允许用户自定义 modelConfig (如模型名称、供应商)。
-   - **前端诉求**：后端需要设计安全的 API-Key 加密托管机制，或者提供统一的代调用中转/代理鉴权层，避免前端在 `modelConfig` 中直接将敏感的 `apiKey` 明文传递给后端。
-3. **用户个人资料修改接口 (PUT /auth/profile) [v4.1.0 新增需求]**：
-   - **现状**：前端“设置”面板中支持用户修改昵称、更换头像。
-   - **前端诉求**：后端提供修改当前用户头像和昵称的 API，修改成功后持久化至数据库。
-     - **请求方法**：`PUT`
-     - **请求路径**：`/auth/profile`
-     - **请求体**：
-       ```json
-       {
-         "name": "string",
-         "email": "string",
-         "avatar": "string"
-       }
-       ```
-     - **响应体**：`BaseApiResponse<UserInfo>`（包含修改后的用户最新资料数据）
-4. **会话置顶/取消置顶接口 (PUT /conversations/{conversationId}/pin) [v4.1.0 新增需求]**：
-   - **现状**：前端已实现置顶/取消置顶交互，但目前仅在 localStorage 中保存状态。
-   - **前端诉求**：后端需要提供置顶/取消置顶接口以支持多端同步与状态持久化。
-     - **请求方法**：`PUT`
-     - **请求路径**：`/conversations/{conversationId}/pin`
-     - **请求体**：`{ "isPinned": boolean }`
-     - **响应体**：返回更新后的会话对象 `Conversation`
-5. **会话归档/激活接口 (PUT /conversations/{conversationId}/archive) [v4.1.0 新增需求]**：
-   - **现状**：前端已实现会话归档与重新激活（移出归档）的交互。
-   - **前端诉求**：后端提供归档状态持久化接口。
-     - **请求方法**：`PUT`
-     - **请求路径**：`/conversations/{conversationId}/archive`
-     - **请求体**：`{ "isArchived": boolean }`
-     - **响应体**：返回更新后的会话对象 `Conversation`
-6. **获取智能体专属一对一会话接口 (GET /users/{userId}/agents/{agentId}/contact) [v4.1.0 新增需求]**：
-   - **现状**：点击智能体进行专属一对一聊天时，前端在 API 模式下需要拉取该用户与该智能体的专属聊天会话。前端不负责创建该会话，直接由后端按需匹配/返回。
-   - **前端诉求**：后端提供获取个人专属联系人会话接口。
-     - **请求方法**：`GET`
-     - **请求路径**：`/users/{userId}/agents/{agentId}/contact`
-     - **响应体**：`BaseApiResponse<AgentContactResponse>`，其中 `data` 结构为：
-       ```typescript
-       interface AgentContactResponse {
-         contactId: string;
-         conversationId: string;
-         conversation: Conversation;
-       }
-       ```
-7. **修改长期记忆接口 (PUT /conversations/{conversationId}/memories/{memoryId}) [v4.1.0 新增需求]**：
-   - **现状**：前端“提取的记忆”面板中支持用户对提取的记忆进行修改和类别变更。
-   - **前端诉求**：后端提供更新指定长期记忆的 API，支持修改内容（content）、分类（category）或状态（active）。
-     - **请求方法**：`PUT`
-     - **请求路径**：`/conversations/{conversationId}/memories/{memoryId}`
-     - **请求体**：
-       ```json
-       {
-         "content": "string",
-         "category": "preference",
-         "active": true
-       }
-       ```
-     - **响应体**：`BaseApiResponse<MemoryItem>`（包含更新后的完整记忆条目）
-8. **获取/修改会话级别的智能体专属配置接口 [v4.2.0 新增需求]**：
-   - **现状**：前端增加了群聊和单聊的会话级别 Agent 配置界面，目前支持 localStorage 存储 overriding 配置，并支持一键同步至全局。
-   - **前端诉求**：后端提供保存和拉取会话级别智能体专属配置的 API，以保持多端同步并支持持久化。
-     - **获取会话级别配置**：
-       - **请求方法**：`GET`
-       - **请求路径**：`/conversations/{conversationId}/agents/{agentId}/config`
-       - **响应体**：`BaseApiResponse<Agent>`
-     - **修改会话级别配置**：
-       - **请求方法**：`PUT`
-       - **请求路径**：`/conversations/{conversationId}/agents/{agentId}/config`
-       - **请求体**：`Partial<Agent>`
-       - **响应体**：`BaseApiResponse<Agent>`
- 9. **多聊中添加和删除成员智能体接口 [v4.2.0 新增需求] [待实现]**：
-    - **现状**：前端支持在群聊中添加和删除参与智能体，目前支持 Mock 状态和本地状态同步。
-    - **前端诉求**：后端提供添加/删除群聊中参与智能体的 REST API。
-      - **添加成员智能体**：
-        - **请求方法**：`POST`
-        - **请求路径**：`/conversations/{conversationId}/agents`
-        - **请求体**：`{ "agentId": string }`
-        - **响应体**：`BaseApiResponse<Conversation>`
-      - **删除成员智能体**：
-        - **请求方法**：`DELETE`
-        - **请求路径**：`/conversations/{conversationId}/agents/{agentId}`
-        - **响应体**：`BaseApiResponse<Conversation>`
- 10. **创建并启动沙箱运行任务 [v4.3.0 新增需求] [待实现]**：
-     - **现状**：前端支持启动沙箱任务并展示任务状态/DAG。
-     - **前端诉求**：后端提供启动 Docker 容器并初始化沙箱运行任务的 API。
-       - **请求方法**：`POST`
-       - **请求路径**：`/conversations/{conversationId}/runs`
-       - **请求体**：`{ "prompt": string }`
-       - **响应体**：`BaseApiResponse<AgentRunDetail>`
- 11. **获取沙箱运行任务详情 [v4.3.0 新增需求] [待实现]**：
-     - **现状**：前端支持查看沙箱任务详细步骤和文件信息。
-     - **前端诉求**：后端提供获取运行任务最新状态、DAG、文件和冲突列表的 API。
-       - **请求方法**：`GET`
-       - **请求路径**：`/runs/{runId}`
-       - **响应体**：`BaseApiResponse<AgentRunDetail>`
- 12. **获取沙箱内输出的文件列表 [v4.3.0 新增需求] [待实现]**：
-     - **现状**：前端支持渲染沙箱输出的文件树。
-     - **前端诉求**：后端提供查询沙箱当前生成的所有文件元数据的 API。
-       - **请求方法**：`GET`
-       - **请求路径**：`/runs/{runId}/files`
-       - **响应体**：`BaseApiResponse<SandboxFile[]>`
- 13. **读取沙箱内文件内容 [v4.3.0 新增需求] [待实现]**：
-     - **现状**：前端支持预览沙箱文件的最新代码或文档内容。
-     - **前端诉求**：后端提供读取指定沙箱文件详情及特定版本快照的 API。
-       - **请求方法**：`GET`
-       - **请求路径**：`/runs/{runId}/files/{filePath}` （注：`filePath` 需要 URL 编码）
-       - **响应体**：`BaseApiResponse<SandboxFileDetail>`
- 14. **获取冲突列表 [v4.3.0 新增需求] [待实现]**：
-     - **现状**：当任务状态为 `conflict` 时，前端支持渲染冲突列表。
-     - **前端诉求**：后端提供查询工作区提交代码时产生的所有未解决冲突的 API。
-       - **请求方法**：`GET`
-       - **请求路径**：`/runs/{runId}/conflicts`
-       - **响应体**：`BaseApiResponse<SandboxConflict[]>`
- 15. **解决文件冲突 [v4.3.0 新增需求] [待实现]**：
-     - **现状**：前端提供了人工解决冲突并选择 `current`、`incoming` 或 `manual` 策略的面板。
-     - **前端诉求**：后端提供提交决策并写成新文件版本的冲突解决 API。
-       - **请求方法**：`POST`
-       - **请求路径**：`/runs/{runId}/conflicts/{conflictId}/resolve`
-       - **请求体**：
-         ```json
-         {
-           "resolution": "current" | "incoming" | "manual",
-           "content": "string" // 仅在 resolution 为 manual 时必填
-         }
-         ```
-       - **响应体**：`BaseApiResponse<SandboxConflict>`
- 16. **取消运行中的任务 [v4.3.0 新增需求] [待实现]**：
-     - **现状**：用户在沙箱面板点击取消任务。
-     - **前端诉求**：后端提供停止容器并将任务标记为 `cancelled` 的 API。
-       - **请求方法**：`POST`
-       - **请求路径**：`/runs/{runId}/cancel`
-       - **响应体**：`BaseApiResponse<AgentRunDetail>`
-
----
-
-
+2. 前端取第一条作为

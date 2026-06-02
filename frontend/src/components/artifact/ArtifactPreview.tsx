@@ -226,7 +226,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
   // Sync when an artifact reference version is selected from message bubble click
   useEffect(() => {
-    if (selectedArtifactId) {
+    if (selectedArtifactId && artifact && selectedArtifactId === artifact.id) {
       setLocalArtifactId(selectedArtifactId);
       if (selectedArtifactVersion !== null) {
         if ((window as any).__ag_from_message_bubble_click) {
@@ -235,7 +235,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
         }
       }
     }
-  }, [selectedArtifactId, selectedArtifactVersion]);
+  }, [selectedArtifactId, selectedArtifactVersion, artifact]);
 
   // Proactively load current artifact content if missing
   useEffect(() => {
