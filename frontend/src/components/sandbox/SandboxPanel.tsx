@@ -3,9 +3,10 @@ import { useAgentHubStore } from '../../store/useAgentHubStore';
 import {
   CheckCircle2, AlertTriangle, Loader2, Terminal,
   FileText, GitMerge, ArrowLeft, Ban, ShieldAlert,
-  ChevronRight, FileCode, Check, Edit2, Undo
+  ChevronRight, FileCode, Check, Edit2, Undo, Globe
 } from 'lucide-react';
 import { AgentRunStep, SandboxFile, SandboxConflict } from '../../types';
+import { DeploymentView } from './DeploymentView';
 
 export const SandboxPanel: React.FC = () => {
   const {
@@ -22,7 +23,8 @@ export const SandboxPanel: React.FC = () => {
     resolveSandboxConflict,
     cancelSandboxRun,
     setSelectedSandboxFilePath,
-    getSelectedSandboxFilePath
+    getSelectedSandboxFilePath,
+    conversations
   } = useAgentHubStore();
 
   const activeRunId = getActiveRunId(activeConversationId);
@@ -31,7 +33,10 @@ export const SandboxPanel: React.FC = () => {
   const runConflicts = activeRunId ? (runConflictsByRunId[activeRunId] || []) : [];
   const selectedSandboxFilePath = getSelectedSandboxFilePath(activeRunId);
 
-  const [activeTab, setActiveTab] = useState<'workflow' | 'files' | 'conflicts'>('workflow');
+  const activeConversation = conversations.find(c => c.id === activeConversationId);
+  const workspaceId = activeRun?.workspaceId || activeConversation?.workspaceId;
+
+  const [activeTab, setActiveTab] = useState<'workflow' | 'files' | 'conflicts' | 'deployment'>('workflow');
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
 
   const [editingConflict, setEditingConflict] = useState<SandboxConflict | null>(null);
@@ -242,6 +247,18 @@ export const SandboxPanel: React.FC = () => {
               </span>
             )}
           </button>
+          {workspaceId && (
+            <button
+              onClick={() => setActiveTab('deployment')}
+              className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === 'deployment'
+                  ? 'bg-slate-800 text-indigo-400 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+                }`}
+            >
+              <Globe className="w-3.5 h-3.5 mr-1" />
+              一键部署
+            </button>
+          )}
         </div>
       </div>
 
@@ -558,6 +575,14 @@ export const SandboxPanel: React.FC = () => {
               </div>
             )}
           </div>
+        )}
+
+        {activeTab === 'deployment' && workspaceId && (
+          <DeploymentView
+            workspaceId={workspaceId}
+            conversationId={activeConversationId || undefined}
+            runId={activeRunId || undefined}
+          />
         )}
 
       </div>
