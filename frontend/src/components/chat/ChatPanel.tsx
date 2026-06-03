@@ -424,7 +424,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         type,
         url,
         size: file.size,
-        meta: type === 'pdf' ? { pages: Math.floor(Math.random() * 20) + 5 } : undefined
+        meta: type === 'pdf' ? { pages: Math.floor(Math.random() * 20) + 5 } : undefined,
+        file
       };
     });
     

@@ -2,10 +2,12 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Artifact, ArtifactVersion } from '@/types';
-import { X, Copy, FileCode, FileText, Globe, GitCompare, RefreshCw, Edit3, Save, Network } from 'lucide-react';
+import { X, Copy, FileCode, FileText, Globe, GitCompare, RefreshCw, Edit3, Save, Network, Presentation } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 import CodeDiffViewer from '../artifact/CodeDiffViewer';
 import CodeEditorContainer from '../artifact/CodeEditorContainer';
+import DocPreview from '../artifact/DocPreview';
+import PptPreview from '../artifact/PptPreview';
 import { getSandboxHtmlPreview } from '@/services/http/sandboxService';
 import mermaid from 'mermaid';
 
@@ -606,6 +608,50 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
       );
     }
 
+    if (artifact.type === 'document') {
+      if (activeTab === 'preview') {
+        return (
+          <DocPreview
+            content={currentVersion?.content || ''}
+            title={artifact.title}
+          />
+        );
+      }
+      return (
+        <div className="h-full p-6 overflow-auto bg-slate-950 relative">
+          {!currentVersion ? (
+            <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
+            </div>
+          ) : (
+            renderCodeLines(currentVersion.content)
+          )}
+        </div>
+      );
+    }
+
+    if (artifact.type === 'ppt') {
+      if (activeTab === 'preview') {
+        return (
+          <PptPreview
+            content={currentVersion?.content || ''}
+            title={artifact.title}
+          />
+        );
+      }
+      return (
+        <div className="h-full p-6 overflow-auto bg-slate-950 relative">
+          {!currentVersion ? (
+            <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
+            </div>
+          ) : (
+            renderCodeLines(currentVersion.content)
+          )}
+        </div>
+      );
+    }
+
     if (artifact.type === 'code') {
       return (
         <div className="h-full p-6 overflow-auto bg-slate-950 relative">
@@ -830,10 +876,12 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
     if (artifact.type === 'html') return <Globe className="w-5 h-5" />;
     if (artifact.type === 'image') return <Globe className="w-5 h-5" />;
     if (artifact.type === 'mermaid') return <Network className="w-5 h-5" />;
+    if (artifact.type === 'document') return <FileText className="w-5 h-5" />;
+    if (artifact.type === 'ppt') return <Presentation className="w-5 h-5" />;
     return <FileText className="w-5 h-5" />;
   };
 
-  const needTabs = artifact.type !== undefined && ['code', 'markdown', 'html', 'image', 'mermaid'].includes(artifact.type);
+  const needTabs = artifact.type !== undefined && ['code', 'markdown', 'html', 'image', 'mermaid', 'document', 'ppt'].includes(artifact.type);
   const isEditable = artifact.type !== 'image';
 
   return (

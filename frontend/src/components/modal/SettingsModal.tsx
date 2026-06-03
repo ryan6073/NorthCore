@@ -687,7 +687,11 @@ export const SettingsModal: React.FC = () => {
                             className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs cursor-pointer outline-none text-slate-850 dark:text-slate-100"
                           >
                             <option value="">(不使用凭证/无授权)</option>
-                            {modelCredentials.filter(c => c.provider === configProvider || configProvider === 'openai_compatible').map(c => (
+                            {modelCredentials.filter(c => 
+                              c.provider === configProvider || 
+                              configProvider === 'openai_compatible' ||
+                              (configProvider.includes('chatanywhere') && c.provider.includes('chatanywhere'))
+                            ).map(c => (
                               <option key={c.id} value={c.id}>{c.name}</option>
                             ))}
                           </select>

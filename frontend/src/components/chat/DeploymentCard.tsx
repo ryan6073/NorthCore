@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Server, ExternalLink, AlertTriangle, Terminal, CheckCircle2, Loader2, Copy, Check, RefreshCw } from 'lucide-react';
+import { Server, ExternalLink, AlertTriangle, Terminal, CheckCircle2, Loader2, Copy, Check, RefreshCw, Square } from 'lucide-react';
+import { useDeploymentStore } from '@/store/useDeploymentStore';
 
 interface ServiceUrls {
   [key: string]: string;
@@ -30,6 +31,7 @@ const DeploymentCard: React.FC<DeploymentCardProps> = ({ metadata }) => {
   const {
     status,
     deploymentId,
+    workspaceId,
     attempt = 1,
     maxRetryAttempts = 3,
     projectType = 'web_app',
@@ -39,6 +41,7 @@ const DeploymentCard: React.FC<DeploymentCardProps> = ({ metadata }) => {
   } = metadata;
 
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const [isStopping, setIsStopping] = useState(false);
 
   const copyToClipboard = (url: string) => {
     navigator.clipboard.writeText(url);
@@ -143,6 +146,23 @@ const DeploymentCard: React.FC<DeploymentCardProps> = ({ metadata }) => {
               {status === 'running' && '拉取代码并准备容器环境...'}
               {status === 'retrying' && `第 ${attempt} 次尝试部署中...`}
             </p>
+            <button
+              onClick={async () => {
+                try {
+                  setIsStopping(true);
+                  await useDeploymentStore.getState().stopDeploy(deploymentId, workspaceId);
+                } catch (e) {
+                  console.error('Failed to stop deployment', e);
+                } finally {
+                  setIsStopping(false);
+                }
+              }}
+              disabled={isStopping}
+              className="mt-2 w-full py-1.5 bg-slate-50 hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/25 text-slate-600 dark:text-slate-450 hover:text-rose-500 border border-slate-200 dark:border-slate-700 hover:border-rose-250 dark:hover:border-rose-900/40 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isStopping ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
+              停止部署
+            </button>
           </div>
         )}
 

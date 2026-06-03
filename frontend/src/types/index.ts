@@ -22,6 +22,7 @@ export interface MessageAttachment {
     height?: number;
     pages?: number;
   };
+  file?: any;
 }
 
 export interface ArtifactReference {
@@ -33,7 +34,7 @@ export interface ArtifactReference {
   endLine?: number;
 }
 
-export type ArtifactType = 'code' | 'html' | 'markdown' | 'diff' | 'deploy' | 'image' | 'mermaid';
+export type ArtifactType = 'code' | 'html' | 'markdown' | 'diff' | 'deploy' | 'image' | 'mermaid' | 'document' | 'ppt';
 
 export type AgentProvider =
   | 'mock'
@@ -90,6 +91,9 @@ export interface ModelProvider {
   requiresBaseUrl: boolean;
   defaultBaseUrl?: string;
   aliases?: string[];
+  supportedRuntimes?: string[];
+  runtimeDefaults?: Record<string, any>;
+  runtimeNotes?: string;
 }
 
 export interface ModelCredential {
@@ -194,21 +198,6 @@ export interface Message {
   };
   artifactRef?: ArtifactReference;
   isPinned?: boolean;
-  metadata?: Record<string, any>;
-}
-
-export interface Artifact {
-  id: string;
-  conversationId: string;
-  runId?: string;
-  title: string;
-  type: ArtifactType;
-  description?: string;
-  tags?: string[];
-  currentVersionId: string;
-  latestVersion: number;
-  createdAt: string;
-  updatedAt: string;
   metadata?: Record<string, any>;
 }
 
@@ -548,6 +537,45 @@ export interface SandboxFile {
   sha256?: string | null;
   isText?: boolean;
   contentPreview?: string | null;
+}
+
+export interface RunFile {
+  id: string;
+  path: string;
+  mimeType: string;
+  size: number;
+  sha256: string;
+  isText: boolean;
+  contentPreview: string;
+  artifactId?: string;
+}
+
+export interface RunFileDetail extends RunFile {
+  content: string;
+}
+
+export interface Artifact {
+  id: string;
+  conversationId: string;
+  runId?: string;
+  title: string;
+  type: ArtifactType;
+  description?: string;
+  tags?: string[];
+  currentVersionId: string;
+  latestVersion: number;
+  createdAt: string;
+  updatedAt: string;
+  metadata?: Record<string, any>;
+  filePath?: string;
+  sourceFilePath?: string;
+  mimeType?: string;
+  size?: number;
+  sha256?: string;
+  isText?: boolean;
+  contentPreview?: string;
+  downloadUrl?: string;
+  previewable?: boolean;
 }
 
 export interface SandboxFileVersion {

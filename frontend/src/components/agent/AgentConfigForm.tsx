@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Agent, AgentProvider, AgentPermission } from '@/types';
 import { Save, X, Bot, FileText, Settings, Wrench, Shield, Check, Image, HelpCircle, AlertCircle, Globe, Cpu, Terminal, Plus, Loader2 } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';

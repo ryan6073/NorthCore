@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Artifact, ArtifactVersion } from '@/types';
-import { Copy, FileCode, FileText, Globe, Maximize2, GitCompare, RefreshCw, Edit3, Save, X, FolderOpen, ArrowDownToLine, History, Folder, Network } from 'lucide-react';
+import { Copy, FileCode, FileText, Globe, Maximize2, GitCompare, RefreshCw, Edit3, Save, X, FolderOpen, ArrowDownToLine, History, Folder, Network, Presentation } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 import CodeDiffViewer from './CodeDiffViewer';
 import CodeEditorContainer from './CodeEditorContainer';
@@ -10,6 +10,8 @@ import { platform } from '@/utils/platform';
 import ConflictResolveModal from '../modal/ConflictResolveModal';
 import mermaid from 'mermaid';
 import sandboxService from '@/services/http/sandboxService';
+import DocPreview from './DocPreview';
+import PptPreview from './PptPreview';
 
 interface ArtifactPreviewProps {
   artifact: Artifact | null;
@@ -694,6 +696,50 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       );
     }
 
+    if (currentArtifact.type === 'document') {
+      if (activeTab === 'preview') {
+        return (
+          <DocPreview
+            content={currentVersion?.content || ''}
+            title={currentArtifact.title}
+          />
+        );
+      }
+      return (
+        <div className="h-full w-full overflow-y-auto p-4 bg-slate-950 relative">
+          {!currentVersion ? (
+            <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
+            </div>
+          ) : (
+            renderCodeLines(currentVersion.content)
+          )}
+        </div>
+      );
+    }
+
+    if (currentArtifact.type === 'ppt') {
+      if (activeTab === 'preview') {
+        return (
+          <PptPreview
+            content={currentVersion?.content || ''}
+            title={currentArtifact.title}
+          />
+        );
+      }
+      return (
+        <div className="h-full w-full overflow-y-auto p-4 bg-slate-950 relative">
+          {!currentVersion ? (
+            <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
+            </div>
+          ) : (
+            renderCodeLines(currentVersion.content)
+          )}
+        </div>
+      );
+    }
+
     if (currentArtifact.type === 'code') {
       return (
         <div 
@@ -936,10 +982,12 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     if (currentArtifact.type === 'html') return <Globe className="w-4 h-4 text-orange-500" />;
     if (currentArtifact.type === 'image') return <Globe className="w-4 h-4 text-purple-500" />;
     if (currentArtifact.type === 'mermaid') return <Network className="w-4 h-4 text-cyan-500" />;
+    if (currentArtifact.type === 'document') return <FileText className="w-4 h-4 text-blue-600" />;
+    if (currentArtifact.type === 'ppt') return <Presentation className="w-4 h-4 text-orange-500" />;
     return <FileText className="w-4 h-4 text-slate-500" />;
   };
 
-  const needTabs = currentArtifact.type !== undefined && ['code', 'markdown', 'html', 'image', 'mermaid'].includes(currentArtifact.type);
+  const needTabs = currentArtifact.type !== undefined && ['code', 'markdown', 'html', 'image', 'mermaid', 'document', 'ppt'].includes(currentArtifact.type);
   const isReadOnly = currentArtifact.metadata?.readOnly === true;
   const isEditable = currentArtifact.type !== 'image' && !isReadOnly;
 

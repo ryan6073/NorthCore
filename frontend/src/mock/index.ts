@@ -409,6 +409,28 @@ export const mockMessages: Message[] = [
     createdAt: '2026-05-22 15:19'
   },
   {
+    id: 'msg-doc-artifact',
+    conversationId: 'conv-group-website',
+    senderId: 'agent-doc',
+    senderName: 'DocAgent',
+    role: 'agent',
+    type: 'artifact',
+    artifactId: 'art-demo-document-1',
+    content: '生成产物 NorthCore需求设计文档.doc',
+    createdAt: '2026-05-22 15:19'
+  },
+  {
+    id: 'msg-ppt-artifact',
+    conversationId: 'conv-group-website',
+    senderId: 'agent-design',
+    senderName: 'DesignAgent',
+    role: 'agent',
+    type: 'artifact',
+    artifactId: 'art-demo-ppt-1',
+    content: '生成产物 项目汇报.ppt',
+    createdAt: '2026-05-22 15:19'
+  },
+  {
     id: 'msg-g8',
     conversationId: 'conv-group-website',
     senderId: 'agent-orchestrator',
@@ -579,6 +601,28 @@ export const mockArtifacts: Artifact[] = [
     latestVersion: 1,
     createdAt: '2026-06-01 16:15',
     updatedAt: '2026-06-01 16:15'
+  },
+  {
+    id: 'art-demo-document-1',
+    conversationId: 'conv-group-website',
+    title: 'NorthCore需求设计文档.doc',
+    type: 'document',
+    description: '项目核心需求及架构设计文档',
+    currentVersionId: 'ver-demo-doc-1',
+    latestVersion: 1,
+    createdAt: '2026-06-01 16:20',
+    updatedAt: '2026-06-01 16:20'
+  },
+  {
+    id: 'art-demo-ppt-1',
+    conversationId: 'conv-group-website',
+    title: '项目汇报.ppt',
+    type: 'ppt',
+    description: '项目中期进展及后续规划汇报PPT',
+    currentVersionId: 'ver-demo-ppt-1',
+    latestVersion: 1,
+    createdAt: '2026-06-01 16:25',
+    updatedAt: '2026-06-01 16:25'
   }
 ];
 
@@ -913,6 +957,81 @@ Thumbs.db
     createdBy: 'agent-orchestrator',
     createdByType: 'agent',
     createdAt: '2026-06-01 16:15'
+  },
+  {
+    id: 'ver-demo-doc-1',
+    artifactId: 'art-demo-document-1',
+    version: 1,
+    content: `# NorthCore 核心架构与功能设计规范
+
+本文档详述了 NorthCore 平台多智能体协作、沙箱隔离以及自动化部署的整体架构方案与接口规范。
+
+## 1. 概述与核心特性
+NorthCore 提供一站式的大语言模型协作环境，包含以下核心能力：
+
+- **安全沙箱系统 (Secure Sandbox)**: 支持在隔离的轻量容器中安全运行命令及查看输出。
+- **多智能体编排 (Orchestration)**: 集中路由及计划分解。
+- **一键部署系统 (Chat Deployment)**: 从聊天上下文直接预览应用。
+
+## 2. 系统核心业务流程
+下面展示了当用户提出“部署应用”请求时，系统内部的处理流程：
+
+1. **用户输入**：用户发送请求（例如：“部署一下当前应用”）。
+2. **编排引擎路由**：Orchestrator 将任务拆解，并生成任务计划 \`task-plan\`。
+3. **协作执行**：各个子 Agent（Codex/DesignAgent/ReviewAgent 等）按计划依次运行。
+4. **沙箱构建**：执行部署指令并在前台输出实时日志。
+5. **产物生成**：生成文档、PPT 汇报等交付件。
+
+---
+
+# 需求说明与 API 设计变更记录
+
+| 接口名称 | 请求方式 | 变更内容说明 | 版本 |
+| :--- | :--- | :--- | :--- |
+| \`/api/v1/conversations/{id}/messages\` | POST | 新增 \`executionMode\` 及 \`deploymentConfig\` 支持 | v1.1.0 |
+| WebSocket - \`conversation.message.completed\` | WS | 支持推送 \`type: status\` 状态消息 | v1.1.0 |
+| WebSocket - \`conversation.all_tasks.completed\` | WS | 通知客户端所有任务运行结束 | v1.1.0 |
+`,
+    size: 1520,
+    createdBy: 'agent-doc',
+    createdByType: 'agent',
+    createdAt: '2026-06-01 16:20'
+  },
+  {
+    id: 'ver-demo-ppt-1',
+    artifactId: 'art-demo-ppt-1',
+    version: 1,
+    content: `# NorthCore 智能协作平台汇报
+- **报告人**：Orchestrator 与协作智能体
+- **日期**：2026年6月3日
+
+---
+
+# 项目阶段性核心工作进展
+- **协同架构**：成功上线 Group Chat Collaboration，实现多 Agent 并发与流水线作业。
+- **沙箱隔离**：隔离的虚拟工作空间，支持实时命令执行、安全沙箱检测与冲突检测。
+- **系统安全**：实现客户端 40002 错误拦截及安全消息创建策略，全面提升应用抗风险能力。
+- **预览增强**：完成 Word/PPT 富文本格式解析渲染支持，极大丰富了产物的展示形态。
+
+---
+
+# 核心业务技术架构图
+- **Orchestration Layer** (基于大语言模型的编排层)
+- **Agent Layer** (Codex / DesignAgent / ReviewAgent 等专业智能体)
+- **Execution Layer** (Secure Sandbox 安全隔离的本地/容器化运行沙箱)
+- **Delivery Layer** (自动渲染预览的多媒体产物套件)
+
+---
+
+# 后续迭代与发展规划
+- **性能调优**：通过流式块分段聚合与预热机制降低多智能体协同感知时延。
+- **扩展格式支持**：计划下阶段支持 PDF 格式预览、多版本富文本一键导出与对比。
+- **安全加固**：细化沙箱内文件系统读写权限控制，进一步融合本地安全审计。
+`,
+    size: 1250,
+    createdBy: 'agent-design',
+    createdByType: 'agent',
+    createdAt: '2026-06-01 16:25'
   }
 ];
 

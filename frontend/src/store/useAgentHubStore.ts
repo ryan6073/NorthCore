@@ -16,6 +16,220 @@ import sandboxService from '@/services/http/sandboxService';
 import { platform, FileNode, WorkspaceInfo, AgentProcessInfo } from '@/utils/platform';
 import modelService from '@/services/http/modelService';
 
+const generateMockDocContent = (fileName: string, fileSize: number) => {
+  const formattedSize = fileSize > 1024 * 1024 
+    ? `${(fileSize / (1024 * 1024)).toFixed(2)} MB` 
+    : `${(fileSize / 1024).toFixed(2)} KB`;
+  return `# NorthCore 文档解析器: ${fileName}
+
+本文档是通过 NorthCore 安全沙箱的本地文档解析服务自动转换生成的预览版本。
+
+## 1. 文件元数据 (File Metadata)
+- **文件名 (File Name)**: ${fileName}
+- **文件大小 (File Size)**: ${formattedSize}
+- **转换时间 (Conversion Time)**: ${new Date().toLocaleString()}
+- **安全检查 (Security Scan)**: 通行 (PASS)
+
+## 2. 自动转换预览说明
+NorthCore 自动检测并提取了该文档中的段落、标题与列表，并以 Markdown 结构呈现，以提供最流畅的在线渲染。由于该文件为二进制 Word 文档格式，我们已提取核心文本段落并重构了格式。
+
+## 3. 提取出的主要内容概要 (Document Content Overview)
+- **文档核心议题**: 本文件包含关于项目实施或设计文档的纲要。
+- **系统接口适配**: 
+  - 前端支持对同一条用户消息返回多个 Agent 回复；
+  - 聊天流实时渲染 \`role="agent" + type="status"\` 系统状态气泡；
+  - 接入沙箱部署卡片并实现 40002 错误码拦截回滚。
+- **流程控制规范**:
+  - 所有子智能体协作流程遵循 Orchestrator 制定的 Task Plan 树状拓扑图。
+  - 用户消息乐观插入后在 WS 确认事件到达时自动更正 ID 以去重。
+
+## 4. 结论与下一步行动
+文档分析完毕，未发现敏感信息泄露，已成功将文档注册进当前会话的产物文件树，您可以在左侧或右侧的“生成产物树”中随时查看它。
+`;
+};
+
+const generateMockPptContent = (fileName: string, fileSize: number) => {
+  const formattedSize = fileSize > 1024 * 1024 
+    ? `${(fileSize / (1024 * 1024)).toFixed(2)} MB` 
+    : `${(fileSize / 1024).toFixed(2)} KB`;
+  return `# NorthCore 演示文稿解析: ${fileName}
+- **文件名**: ${fileName}
+- **文件大小**: ${formattedSize}
+- **解析引擎**: NorthCore PPTX Parser v1.0
+- **安全沙箱状态**: 绿色安全通过 (PASS)
+
+---
+
+# 第一页：文稿转换概要
+- 本演示文稿是从上传的本地二进制 PPT/PPTX 文件自动转换而成的预览版。
+- 检测到该 PPT 包含页面框架、文本框与多媒体组件。
+- 已自动提取主要标题及幻灯片正文，转化为自适应的 Markdown 幻灯片。
+
+---
+
+# 第二页：智能协同与前端适配
+- **协同架构**：支持 Group Chat Collaboration 工作流。
+- **消息适配**：支持一问多答、status 状态气泡、以及 Orchestrator 总结卡片的富文本渲染。
+- **部署配置**：支持 \`executionMode: "deployment"\` 及部署配置表单实时显示。
+
+---
+
+# 第三页：转换完成提示
+- 文件转换百分百成功，沙箱状态安全无虞。
+- 您可以通过点击左右控制按钮进行幻灯片翻页导航。
+- 您也可以随时点击“全屏预览”放大在此页面中进行演示展示。
+`;
+};
+
+const handleMockFileAttachments = async (
+  activeConversationId: string,
+  attachments: MessageAttachment[] | undefined,
+  set: any,
+  get: any
+): Promise<boolean> => {
+  if (!attachments || attachments.length === 0) return false;
+  
+  const docPptAttachments = attachments.filter(a => 
+    a.type === 'ppt' || 
+    a.name.endsWith('.ppt') || 
+    a.name.endsWith('.pptx') || 
+    a.name.endsWith('.doc') || 
+    a.name.endsWith('.docx')
+  );
+
+  if (docPptAttachments.length === 0) return false;
+
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  
+  for (const attach of docPptAttachments) {
+    const isPpt = attach.type === 'ppt' || attach.name.endsWith('.ppt') || attach.name.endsWith('.pptx');
+    const typeLabel = isPpt ? 'PPT演示文稿' : 'Word文档';
+    
+    // 1. Send status message indicating conversion starting
+    const statusMsg1: Message = {
+      id: createId('msg'),
+      conversationId: activeConversationId,
+      senderId: 'system',
+      senderName: '系统',
+      role: 'system',
+      type: 'status',
+      content: `检测到本地上传文件 ${attach.name}，正在启动安全沙箱文档解析器并将其转换为预览产物...`,
+      createdAt: getCurrentFullTime()
+    };
+    
+    set((state: any) => {
+      const currentMsgs = state.conversationMessages[activeConversationId] || state.messages || [];
+      const newMsgs = [...currentMsgs, statusMsg1];
+      const isSyncActive = state.activeConversationId === activeConversationId;
+      return {
+        messages: isSyncActive ? newMsgs : state.messages,
+        conversationMessages: {
+          ...state.conversationMessages,
+          [activeConversationId]: newMsgs
+        },
+        isProcessing: true
+      };
+    });
+    
+    await delay(1200);
+
+    let contentStr = '';
+    if (attach.file) {
+      try {
+        const text = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (e) => resolve((e.target?.result as string) || '');
+          reader.onerror = () => resolve('');
+          reader.readAsText(attach.file);
+        });
+        
+        if (text && !text.startsWith('PK') && !text.includes('\x00')) {
+          contentStr = text;
+        }
+      } catch (e) {
+        console.error('Error reading uploaded file as text', e);
+      }
+    }
+
+    if (!contentStr) {
+      contentStr = isPpt 
+        ? generateMockPptContent(attach.name, attach.size || 10240)
+        : generateMockDocContent(attach.name, attach.size || 10240);
+    }
+
+    const newArtId = `art-upload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const newVerId = `ver-upload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    const newArtifact: Artifact = {
+      id: newArtId,
+      conversationId: activeConversationId,
+      title: attach.name,
+      type: isPpt ? 'ppt' : 'document',
+      description: `从上传 of 本地文件 ${attach.name} 转换生成的预览产物`,
+      currentVersionId: newVerId,
+      latestVersion: 1,
+      createdAt: getCurrentFullTime(),
+      updatedAt: getCurrentFullTime()
+    };
+
+    const newVersion: ArtifactVersion = {
+      id: newVerId,
+      artifactId: newArtId,
+      version: 1,
+      content: contentStr,
+      size: contentStr.length,
+      createdBy: 'system',
+      createdByType: 'orchestrator',
+      createdAt: getCurrentFullTime()
+    };
+
+    set((state: any) => {
+      const updatedVersions = { ...state.artifactVersions };
+      updatedVersions[newArtId] = [newVersion];
+      return {
+        artifacts: [...state.artifacts, newArtifact],
+        artifactVersions: updatedVersions,
+        selectedArtifactId: newArtId,
+        conversationSelectedArtifactId: {
+          ...state.conversationSelectedArtifactId,
+          [activeConversationId]: newArtId
+        }
+      };
+    });
+
+    // 3. Send final message from Agent indicating success
+    const successMsg: Message = {
+      id: createId('msg'),
+      conversationId: activeConversationId,
+      senderId: 'agent-doc',
+      senderName: 'DocAgent',
+      role: 'agent',
+      type: 'artifact',
+      artifactId: newArtId,
+      content: `已成功将上传的 ${typeLabel} 转换为预览产物: ${attach.name}`,
+      createdAt: getCurrentFullTime()
+    };
+
+    set((state: any) => {
+      const currentMsgs = state.conversationMessages[activeConversationId] || state.messages || [];
+      const newMsgs = [...currentMsgs, successMsg];
+      const isSyncActive = state.activeConversationId === activeConversationId;
+      return {
+        messages: isSyncActive ? newMsgs : state.messages,
+        conversationMessages: {
+          ...state.conversationMessages,
+          [activeConversationId]: newMsgs
+        },
+        isProcessing: false
+      };
+    });
+
+    await delay(500);
+  }
+  
+  return true;
+};
+
 export interface FloatingConversation {
   id: string;
   x: number;
@@ -29,10 +243,26 @@ export interface FloatingConversation {
 
 // Mock model data for offline/mock mode
 const mockModelProviders: ModelProvider[] = [
-  { id: 'openai', name: 'OpenAI (GPT)', protocol: 'openai_chat_completions', requiresBaseUrl: false },
-  { id: 'anthropic', name: 'Anthropic (Claude)', protocol: 'anthropic_messages', requiresBaseUrl: false },
-  { id: 'openai_compatible', name: 'OpenAI Compatible', protocol: 'openai_chat_completions', requiresBaseUrl: true, defaultBaseUrl: 'https://api.deepseek.com/v1' },
-  { id: 'anthropic_compatible', name: 'Anthropic-compatible / Claude Code Router', protocol: 'anthropic_messages', requiresBaseUrl: true, defaultBaseUrl: 'http://localhost:3000' }
+  { id: 'openai', name: 'OpenAI (GPT)', protocol: 'openai_chat_completions', requiresBaseUrl: false, supportedRuntimes: ['codex', 'opencode'] },
+  { id: 'anthropic', name: 'Anthropic (Claude)', protocol: 'anthropic_messages', requiresBaseUrl: false, supportedRuntimes: ['claude_code', 'opencode'] },
+  { id: 'openai_compatible', name: 'OpenAI Compatible', protocol: 'openai_chat_completions', requiresBaseUrl: true, defaultBaseUrl: 'https://api.deepseek.com/v1', supportedRuntimes: ['opencode'] },
+  { id: 'anthropic_compatible', name: 'Anthropic-compatible / Claude Code Router', protocol: 'anthropic_messages', requiresBaseUrl: true, defaultBaseUrl: 'http://localhost:3000', supportedRuntimes: ['claude_code', 'opencode'] },
+  {
+    id: "chatanywhere_codex",
+    name: "ChatAnywhere / Codex",
+    protocol: "openai_responses",
+    requiresBaseUrl: false,
+    defaultBaseUrl: "https://api.chatanywhere.tech/v1",
+    supportedRuntimes: ["codex"]
+  },
+  {
+    id: "chatanywhere_claude_code",
+    name: "ChatAnywhere / Claude Code",
+    protocol: "anthropic_messages",
+    requiresBaseUrl: false,
+    defaultBaseUrl: "https://api.chatanywhere.tech",
+    supportedRuntimes: ["claude_code"]
+  }
 ];
 
 const initialMockModelCredentials: ModelCredential[] = [
@@ -1508,6 +1738,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     get().clearFileContext();
 
     if (useMockMode) {
+      const handled = await handleMockFileAttachments(activeConversationId, attachments, set, get);
+      if (handled) return;
+
       const isSandboxRequest = content.includes('登录') || content.includes('注册') || content.includes('页面') || content.includes('sandbox') || useSandbox;
 
       if (isSandboxRequest) {
@@ -5501,47 +5734,52 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     });
 
     if (useMockMode) {
-      setTimeout(() => {
-        const replyResult = generateMockReply({
-          conversation: activeConv,
-          agents,
-          userContent: content,
-        });
-        const replyMsg = replyResult.messages[0] || {
-          id: createId('msg'),
-          conversationId: convId,
-          senderId: activeConv.agentIds[0] || 'assistant',
-          senderName: agents.find(a => a.id === activeConv.agentIds[0])?.name || '智能体',
-          role: 'agent' as const,
-          type: 'text' as const,
-          content: '收到您的请求了，正在处理中...',
-          createdAt: getCurrentFullTime(),
-        };
+      (async () => {
+        const handled = await handleMockFileAttachments(convId, attachments, set, get);
+        if (handled) return;
 
-        const newBotMessage: Message = {
-          ...replyMsg,
-          role: replyMsg.role as any,
-          type: replyMsg.type as any,
-        };
-
-        set(state => {
-          const currentMsgs = state.conversationMessages[convId] || [];
-          const newMsgs = [...currentMsgs, newBotMessage];
-          const syncActive = state.activeConversationId === convId;
-          return {
-            conversationMessages: {
-              ...state.conversationMessages,
-              [convId]: newMsgs
-            },
-            ...(syncActive ? { messages: newMsgs } : {}),
-            conversations: state.conversations.map(c =>
-              c.id === convId
-                ? { ...c, lastMessage: newBotMessage.content, updatedAt: getCurrentFullTime() }
-                : c
-            )
+        setTimeout(() => {
+          const replyResult = generateMockReply({
+            conversation: activeConv,
+            agents,
+            userContent: content,
+          });
+          const replyMsg = replyResult.messages[0] || {
+            id: createId('msg'),
+            conversationId: convId,
+            senderId: activeConv.agentIds[0] || 'assistant',
+            senderName: agents.find(a => a.id === activeConv.agentIds[0])?.name || '智能体',
+            role: 'agent' as const,
+            type: 'text' as const,
+            content: '收到您的请求了，正在处理中...',
+            createdAt: getCurrentFullTime(),
           };
-        });
-      }, 1000);
+
+          const newBotMessage: Message = {
+            ...replyMsg,
+            role: replyMsg.role as any,
+            type: replyMsg.type as any,
+          };
+
+          set(state => {
+            const currentMsgs = state.conversationMessages[convId] || [];
+            const newMsgs = [...currentMsgs, newBotMessage];
+            const syncActive = state.activeConversationId === convId;
+            return {
+              conversationMessages: {
+                ...state.conversationMessages,
+                [convId]: newMsgs
+              },
+              ...(syncActive ? { messages: newMsgs } : {}),
+              conversations: state.conversations.map(c =>
+                c.id === convId
+                  ? { ...c, lastMessage: newBotMessage.content, updatedAt: getCurrentFullTime() }
+                  : c
+              )
+            };
+          });
+        }, 1000);
+      })();
     } else {
       try {
         const sendRes = await sendMessageNonStreaming(convId, { 

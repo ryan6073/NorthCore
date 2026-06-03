@@ -35,6 +35,18 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     ? agents.find(a => a.name === message.senderName) 
     : null;
 
+  const allMessages = useAgentHubStore(state => 
+    state.conversationMessages[message.conversationId] || state.messages
+  );
+
+  if (message.metadata?.source === 'chatDeployment') {
+    const deploymentMessages = allMessages.filter(m => m.metadata?.source === 'chatDeployment');
+    const isLatestDeployment = deploymentMessages.length > 0 && deploymentMessages[deploymentMessages.length - 1].id === message.id;
+    if (!isLatestDeployment) {
+      return null;
+    }
+  }
+
   if (message.metadata?.source === 'sandboxRunProgress') {
     const timeText = getPreciseTime(message.createdAt);
     return (

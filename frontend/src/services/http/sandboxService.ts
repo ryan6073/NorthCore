@@ -10,7 +10,9 @@ import type {
   PaginatedData,
   Workspace,
   WorkspaceTreeNode,
-  RetryRunResponse
+  RetryRunResponse,
+  RunFile,
+  RunFileDetail
 } from '@/types';
 
 export async function createSandboxRun(
@@ -105,6 +107,42 @@ export async function getSandboxFileTree(runId: string): Promise<BaseApiResponse
   return await http.get(`/runs/${runId}/files/tree`);
 }
 
+function encodeFilePath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
+
+export function canDownload(
+  fileOrArtifact: {
+    downloadUrl?: string;
+    path?: string;
+    filePath?: string;
+    runId?: string;
+  }
+): boolean {
+  return Boolean(
+    fileOrArtifact.downloadUrl ||
+      (fileOrArtifact.runId && (fileOrArtifact.filePath || fileOrArtifact.path))
+  );
+}
+
+export function getDownloadUrl(item: any, apiBaseUrl?: string): string {
+  if (item.downloadUrl) {
+    if (apiBaseUrl && !item.downloadUrl.startsWith('http')) {
+      return `${apiBaseUrl}${item.downloadUrl.startsWith('/') ? '' : '/'}${item.downloadUrl}`;
+    }
+    return item.downloadUrl;
+  }
+  const path = item.filePath || item.path;
+  return `/api/v1/runs/${item.runId}/files/${encodeFilePath(path)}/download`;
+}
+
+export async function downloadSandboxFile(runId: string, filePath: string): Promise<Blob> {
+  const encodedPath = encodeFilePath(filePath);
+  return await http.get(`/runs/${runId}/files/${encodedPath}/download`, {
+    responseType: 'blob'
+  });
+}
+
 const sandboxService = {
   createSandboxRun,
   getSandboxRunList,
@@ -120,6 +158,10 @@ const sandboxService = {
   getWorkspaces,
   createWorkspace,
   getSandboxFileTree,
+  downloadSandboxFile,
+  encodeFilePath,
+  canDownload,
+  getDownloadUrl,
 };
 
 export default sandboxService;
