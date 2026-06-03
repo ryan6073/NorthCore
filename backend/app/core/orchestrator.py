@@ -24,7 +24,12 @@ AGENT_CONFIGS = {
         "system": "你是一个资深的架构师和代码审查（Code Review）专家。你的任务是分析、评审其他 Agent 生成的代码或方案。请用严谨、专业的学术及工程语言，指出其优缺点，并给出优化建议。"
     },
     "Orchestrator": {
-        "system": "你是一个高层任务协调器。你的职责是将用户复杂的开发需求拆解，并分派给合适的子 Agent（'Claude Code' 负责写代码，'Codex' 负责代码审查）。你必须输出一个标准的 JSON 数组，格式形如：[{\"agent\": \"Claude Code\", \"task\": \"具体任务\"}, {\"agent\": \"Codex\", \"task\": \"具体任务\"}]。不要输出任何其他文本。"
+        "system": (
+                "你是一个高层任务协调器。后端会在每次规划请求中通过 [Available Agents] "
+                "提供当前会话实际可用的成员 Agent 列表，包括 agentId、name、runtime 和 description。"
+                "你只能从 [Available Agents] 中选择 Agent 进行分派，不能编造或使用未列出的 Agent。"
+                "需要输出计划时只输出结构化 JSON；普通聊天时直接简洁回复。"
+            )
     }
 }
 
@@ -34,6 +39,23 @@ TASK_KEYWORDS = {
     "翻译", "图表", "流程图", "时序图", "架构图", "mermaid", "markdown", "ppt",
     "workflow", "agent", "diff", "bug", "review",
 }
+
+WORKSPACE_MODIFICATION_MARKERS = (
+    "修改", "改", "改成", "改为", "替换", "更新", "调整", "修复", "优化", "完善",
+    "增强", "改进", "补全", "区分", "更有区分", "实现", "做一下", "处理一下",
+    "modify", "change", "replace", "update", "fix", "edit", "optimize", "improve",
+)
+
+WORKSPACE_TARGET_MARKERS = (
+    "代码", "文件", "功能", "页面", "组件", "项目", "游戏", "角色", "动作", "攻击",
+    "效果", "特效", "逻辑", "样式", "ui", "交互", "bug", "artifact", "workspace",
+)
+
+WORKSPACE_CHAT_ONLY_MARKERS = (
+    "不要改代码", "别改代码", "不用改代码", "先不要改", "不要实际改", "不用实际改",
+    "只给方案", "给我一个方案", "给个方案", "应该怎么", "怎么优化", "怎么改",
+    "有什么建议", "给点建议", "分析一下", "解释一下", "review 一下",
+)
 
 AGENT_NAME_TO_ID = {
     "默认聊天助手": "agent-chat",
@@ -53,13 +75,7 @@ ORCHESTRATOR_INTENT_SYSTEM = """你是 AgentHub 的群聊协调器 Orchestrator�
 - task：要求生成、修改、实现、审查、优化、调试、部署、整理文档、构建网页或 workflow 等需要 Agent 执行的工作。
 
 如果是 chat，请给出自然、简洁的中文回复，并保持 taskPlan 为空数组。
-如果是 task，请拆解为 1-3 个可执行子任务，只使用这些 agentName：默认聊天助手、翻译助手、图表助手、文档助手、Claude Code、Codex。
-- 默认聊天助手：负责通用问答、解释说明和轻量整理。
-- 翻译助手：负责中英互译、多语言翻译和文本润色。
-- 图表助手：负责 Mermaid 流程图、时序图、架构图和关系图。
-- 文档助手：负责 Markdown 文档、汇报材料和 PPT 大纲。
-- Claude Code：负责代码生成、页面实现、工程改造。
-- Codex：负责代码审查、质量检查、Bug 分析和优化建议。
+如果是 task，请拆解为 1-3 个可执行子任务。只能使用调用方提供的当前群聊成员 Agent；如果缺少成员上下文，不要编造 Agent，尽量给出通用任务描述，后端会按当前群成员二次归一化。
 
 你必须只输出 JSON，不要输出 Markdown，不要输出解释文本。
 格式如下：
@@ -69,8 +85,8 @@ ORCHESTRATOR_INTENT_SYSTEM = """你是 AgentHub 的群聊协调器 Orchestrator�
   "reply": "闲聊时的回复；任务时可以是一句简短确认",
   "taskPlan": [
     {
-      "agentId": "agent-claude-code",
-      "agentName": "Claude Code",
+      "agentId": "必须是当前群聊成员的 agentId",
+      "agentName": "必须是当前群聊成员名称",
       "task": "具体任务"
     }
   ]
@@ -83,6 +99,14 @@ EXECUTION_MODE_SYSTEM = """你是 AgentHub 的执行模式分类器。
 你需要判断用户消息应该走普通聊天，还是启动 Sandbox Run 执行。
 
 只能输出 JSON，不要输出 Markdown，不要输出解释文本。
+
+核心原则：
+- chat：只回答、解释、分析、讨论、评价，不改文件，不创建产物，不运行命令。
+- sandbox：需要创建、修改、删除、运行、构建、测试、部署、验证工作区内容，或需要产生/更新可预览产物。
+- 在 single/group 会话中，如果 conversationWorkspaceId 存在，用户提到“项目/页面/代码/游戏/角色/动作/攻击/功能/样式/交互”等工作区对象，并表达“优化/完善/改进/增强/修复/调整/区分/补全/实现/让它更好”等意图，即使句式是“可以吗/能不能/帮我看看能否”，也应判为 sandbox。
+- 不要因为用户用了疑问句就判为 chat；判断重点是是否在请求你实际改工作区内容。
+- 如果用户只是问“怎么改/为什么/有什么建议/解释一下/review 一下”，且没有要求应用修改，则判为 chat。
+- 如果用户明确指定 executionMode 或 useSandbox，以 payload 为准。
 
 executionMode 只能是：
 - chat
@@ -107,6 +131,8 @@ intent 只能是：
 - “解释一下这个报错”
 - “帮我 review 这段代码逻辑”
 - “什么是 WebSocket？”
+- “这个功能应该怎么优化？”（只问建议）
+- “给我一个修改方案，不要改代码”
 - 讨论、解释、评估、文本类 code review、方案分析。
 
 sandbox 场景，需要启动 sandbox：
@@ -119,9 +145,15 @@ sandbox 场景，需要启动 sandbox：
 - “构建项目”
 - “修复这个 bug 并验证”
 - “生成可预览 artifact”
+- “优化一下角色和动作以及攻击，现在攻击区分不开”
+- “你可以让角色的各个动作更有区分度吗”
+- “把这个页面样式调得更清楚”
+- “让现有交互更顺滑”
 - 明确要求创建、修改、运行、验证、构建、生成文件或项目产物。
 
-第一版宁可少启动 sandbox，也不要误把普通讨论判为 sandbox。
+建议：
+- sandbox 的 intent 优先使用 code_modification / artifact_generation / project_creation / debug_run / build_or_test。
+- 如果 selectedAgentId 存在且适合执行任务，suggestedAgentId 使用 selectedAgentId；否则代码任务默认 agent-claude-code。
 
 格式：
 {
@@ -147,6 +179,49 @@ VALID_EXECUTION_INTENTS = {
     "build_or_test",
     "other",
 }
+
+ARTIFACT_MODIFICATION_MARKERS = (
+    "修改", "改成", "改为", "改掉", "替换", "换成", "更新", "调整", "修复",
+    "不要", "变成", "给我", "实现", "保存", "应用到", "直接改",
+    "modify", "change", "replace", "update", "fix", "edit",
+)
+
+
+def _payload_has_artifact_ref(payload: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    artifact_ref = payload.get("artifactRef")
+    return isinstance(artifact_ref, dict) and bool(str(artifact_ref.get("artifactId") or "").strip())
+
+
+def _payload_has_pending_workspace_clarification(payload: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    return bool(payload.get("pendingWorkspaceClarification"))
+
+
+def _looks_like_artifact_modification(user_input: str, payload: Optional[Dict[str, Any]]) -> bool:
+    if not _payload_has_artifact_ref(payload):
+        return False
+    normalized = (user_input or "").lower()
+    if any(marker in user_input or marker in normalized for marker in ARTIFACT_MODIFICATION_MARKERS):
+        return True
+    return _payload_has_pending_workspace_clarification(payload)
+
+
+def _looks_like_workspace_modification(user_input: str, conversation: Optional[Dict[str, Any]]) -> bool:
+    if not conversation or conversation.get("mode") not in {"single", "group"}:
+        return False
+    if not conversation.get("workspaceId"):
+        return False
+    normalized = (user_input or "").strip().lower()
+    if not normalized:
+        return False
+    if any(marker in user_input or marker in normalized for marker in WORKSPACE_CHAT_ONLY_MARKERS):
+        return False
+    has_modify_intent = any(marker in user_input or marker in normalized for marker in WORKSPACE_MODIFICATION_MARKERS)
+    has_workspace_target = any(marker in user_input or marker in normalized for marker in WORKSPACE_TARGET_MARKERS)
+    return has_modify_intent and has_workspace_target
 
 
 def _extract_json_object(text: str) -> dict:
@@ -282,14 +357,32 @@ def classify_message_execution_mode(
     if explicit_mode == "sandbox":
         return _sandbox_execution_decision(content, reason="payload 显式指定 sandbox 执行", confidence=1.0)
 
+    if _looks_like_artifact_modification(content, payload):
+        return _sandbox_execution_decision(
+            content,
+            intent="code_modification",
+            reason="消息引用了已有产物并表达了修改意图",
+            confidence=1.0,
+        )
+
+    if _looks_like_workspace_modification(content, conversation):
+        return _sandbox_execution_decision(
+            content,
+            intent="code_modification",
+            reason="single/group 工作区会话中表达了对现有项目内容的修改意图",
+            confidence=0.95,
+        )
+
     if conversation and conversation.get("mode") == "agent":
         return _chat_execution_decision(content, reason="agent 联系人会话本轮不自动触发 sandbox", confidence=1.0)
 
     try:
         context = {
             "conversationMode": conversation.get("mode") if conversation else None,
+            "conversationWorkspaceId": conversation.get("workspaceId") if conversation else None,
             "selectedAgentId": selected_agent.get("id") if selected_agent else None,
             "selectedAgentName": selected_agent.get("name") if selected_agent else None,
+            "selectedAgentRuntime": selected_agent.get("runtime") if selected_agent else None,
             "userInput": content,
         }
         res = client.chat.completions.create(

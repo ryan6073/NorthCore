@@ -1,11 +1,12 @@
 import json
 import re
+import shlex
 import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from app.config import settings
-from app.database import create_id, get_sandbox_file, list_sandbox_files, now_text
+from app.database import create_id, get_agent_run, get_sandbox_file, list_sandbox_files, now_text
 from app.services.file_version_service import FileVersionService
 from app.services.sandbox_service import SandboxService
 
@@ -45,6 +46,11 @@ SANDBOX_TOOL_SPECS: List[Dict[str, Any]] = [
                 "properties": {
                     "packageManager": {"type": "string"},
                     "installDependencies": {"type": "boolean"},
+                    "createPythonEnv": {"type": "boolean"},
+                    "dependencies": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -123,7 +129,7 @@ SANDBOX_TOOL_SPECS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "Write a full file into the sandbox using optimistic locking.",
+            "description": "Write a full file into the sandbox using optimistic locking. For existing files, call read_file first and use the returned currentVersion/baseVersion; baseVersion=0 is only for new files.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -235,6 +241,29 @@ class SandboxToolExecutor:
         self.step_id = step_id
         self.environment_profile = environment_profile or {}
         self.command_callback = command_callback
+        run = get_agent_run(run_id) or {}
+        self.workspace_action_context = (run.get("dag") or {}).get("workspaceActionContext") or {}
+
+    def _write_scope_error(self, path: str) -> Optional[Dict[str, Any]]:
+        if self.workspace_action_context.get("action") != "modify_existing":
+            return None
+        allowed = {
+            str(item.get("path"))
+            for item in self.workspace_action_context.get("targetFiles") or []
+            if isinstance(item, dict) and item.get("path")
+        }
+        allowed.update(str(path) for path in self.workspace_action_context.get("allowedRelatedFiles") or [])
+        if path not in allowed:
+            return {
+                "ok": False,
+                "error": "修改类任务不允许写入非 targetFiles/allowedRelatedFiles 文件",
+                "path": path,
+                "extraChangedFile": {
+                    "path": path,
+                    "reason": "not in workspaceActionContext allowed write scope",
+                },
+            }
+        return None
 
     async def execute(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         print(f"[SandboxTool] start run={self.run_id} step={self.step_id} tool={name} args={arguments}", flush=True)
@@ -330,10 +359,15 @@ class SandboxToolExecutor:
             arguments.get("packageManager")
             or self.environment_profile.get("packageManager")
             or "uv"
-        ).strip() or "uv"
+        ).strip().lower() or "uv"
         install_dependencies = arguments.get("installDependencies")
         if install_dependencies is None:
             install_dependencies = True
+        requested_dependencies = [
+            str(item).strip()
+            for item in (arguments.get("dependencies") or [])
+            if str(item).strip()
+        ]
 
         sandbox_network = str(self.sandbox.get("network") or settings.SANDBOX_NETWORK)
         allow_network = bool(self.environment_profile.get("allowNetwork", settings.SANDBOX_ALLOW_NETWORK))
@@ -343,11 +377,12 @@ class SandboxToolExecutor:
         explicit_python_env = bool(
             arguments.get("createPythonEnv")
             or self.environment_profile.get("pythonVersion")
-            or package_manager in {"pip", "venv"}
+            or requested_dependencies
         )
         python_project = bool(
             manifests.get("requirements.txt")
             or manifests.get("pyproject.toml")
+            or requested_dependencies
             or (not node_project and explicit_python_env)
         )
         needs_dependency_install = bool(
@@ -355,6 +390,7 @@ class SandboxToolExecutor:
                 manifests.get("requirements.txt")
                 or manifests.get("pyproject.toml")
                 or manifests.get("package.json")
+                or requested_dependencies
             )
         )
 
@@ -403,6 +439,31 @@ class SandboxToolExecutor:
                 command_results.append(create_venv)
                 if int(create_venv.get("exitCode") or 0) != 0:
                     actual_package_manager = "pip"
+                elif not manifests.get("pyproject.toml"):
+                    init_project = await self._execute_backend_command(
+                        "test -f pyproject.toml || uv init --bare --name agenthub-workspace",
+                        timeout_seconds=settings.SANDBOX_SETUP_TIMEOUT_SECONDS,
+                    )
+                    command_results.append(init_project)
+                    if int(init_project.get("exitCode") or 0) != 0:
+                        fallback_project = await self._execute_backend_command(
+                            "python3 -c \"from pathlib import Path; "
+                            "Path('pyproject.toml').write_text('[project]\\nname = \\\"agenthub-workspace\\\"\\nversion = \\\"0.1.0\\\"\\nrequires-python = \\\">=3.11\\\"\\ndependencies = []\\n', encoding='utf-8') "
+                            "if not Path('pyproject.toml').exists() else None\"",
+                            timeout_seconds=20,
+                        )
+                        command_results.append(fallback_project)
+                        if int(fallback_project.get("exitCode") or 0) != 0:
+                            environment_state = self.sandbox_service.update_environment_state(
+                                self.container_id,
+                                {"lastSetupStatus": "failed", "lastSetupError": "初始化 uv 项目失败"},
+                            )
+                            return {
+                                "ok": False,
+                                "error": "初始化 uv 项目失败",
+                                "environmentState": environment_state,
+                                "commandResults": command_results,
+                            }
             else:
                 actual_package_manager = "pip"
 
@@ -439,6 +500,29 @@ class SandboxToolExecutor:
                 }
 
             python_install_pairs: List[Dict[str, Optional[str]]] = []
+            if install_dependencies and requested_dependencies:
+                dependency_args = " ".join(shlex.quote(item) for item in requested_dependencies)
+                dependency_command = (
+                    f"uv add {dependency_args}"
+                    if actual_package_manager == "uv"
+                    else f"python -m pip install {dependency_args}"
+                )
+                dependency_result = await self._execute_backend_command(
+                    dependency_command,
+                    timeout_seconds=settings.SANDBOX_SETUP_TIMEOUT_SECONDS,
+                )
+                command_results.append(dependency_result)
+                if int(dependency_result.get("exitCode") or 0) != 0:
+                    environment_state = self.sandbox_service.update_environment_state(
+                        self.container_id,
+                        {"lastSetupStatus": "failed", "lastSetupError": f"依赖安装失败: {dependency_command}"},
+                    )
+                    return {
+                        "ok": False,
+                        "error": f"依赖安装失败: {dependency_command}",
+                        "environmentState": environment_state,
+                        "commandResults": command_results,
+                    }
             if install_dependencies and manifests.get("requirements.txt"):
                 python_install_pairs.append({
                     "primary": "uv pip install -r requirements.txt" if actual_package_manager == "uv" else None,
@@ -519,7 +603,7 @@ class SandboxToolExecutor:
         )
         return {
             "ok": True,
-            "manifests": manifests,
+            "manifests": self._dependency_manifest_payload(),
             "environmentState": environment_state,
             "commandResults": command_results,
         }
@@ -553,6 +637,29 @@ class SandboxToolExecutor:
                 "version": detail.get("currentVersion"),
                 "content": content,
                 "parsed": parsed,
+                "tracked": True,
+            }
+        for path in manifest_names - set(manifests.keys()):
+            try:
+                file_payload = self.sandbox_service.safe_read_workspace_file(
+                    self.sandbox["workspacePath"],
+                    path,
+                )
+            except (FileNotFoundError, UnicodeDecodeError, ValueError):
+                continue
+            content = str(file_payload.get("content") or "")
+            parsed = None
+            if path == "package.json":
+                try:
+                    parsed = json.loads(content)
+                except Exception:
+                    parsed = None
+            manifests[path] = {
+                "path": path,
+                "version": None,
+                "content": content,
+                "parsed": parsed,
+                "tracked": False,
             }
         return manifests
 
@@ -635,6 +742,9 @@ class SandboxToolExecutor:
 
     def _import_workspace_file(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         path = safe_relative_path(str(arguments.get("path") or ""))
+        scope_error = self._write_scope_error(path)
+        if scope_error:
+            return scope_error
         try:
             file_payload = self.sandbox_service.safe_read_workspace_file(
                 self.sandbox["workspacePath"],
@@ -662,11 +772,23 @@ class SandboxToolExecutor:
 
     def _write_file(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         path = safe_relative_path(str(arguments.get("path") or ""))
+        scope_error = self._write_scope_error(path)
+        if scope_error:
+            return scope_error
         content = str(arguments.get("content") or "")
         try:
             base_version = int(arguments.get("baseVersion", 0))
         except (TypeError, ValueError):
             base_version = 0
+        existing = self.file_service.read_file(self.run_id, path)
+        if existing and int(existing.get("currentVersion") or 0) > 0 and base_version == 0:
+            return {
+                "ok": False,
+                "status": "requires_read",
+                "error": "已存在文件不能使用 baseVersion=0 覆盖；请先 read_file 获取当前内容和 currentVersion，再基于原内容更新并使用正确 baseVersion 写回。",
+                "path": path,
+                "currentVersion": int(existing.get("currentVersion") or 0),
+            }
         result = self.file_service.write_file(
             sandbox=self.sandbox,
             run_id=self.run_id,

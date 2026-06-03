@@ -5,6 +5,7 @@ from fastapi import APIRouter, Body, Header, Query
 from app.api.deps import current_user_or_default
 from app.api.responses import ok, fail
 from app.database import create_workspace, get_workspace, list_workspaces
+from app.services.workspace_agents_service import ensure_workspace_agents_file
 
 router = APIRouter(prefix="/api/v1")
 
@@ -27,6 +28,7 @@ async def api_create_workspace(
     current_user = current_user_or_default(authorization)
     name = str(payload.get("name") or "").strip() or None
     workspace = create_workspace(owner_user_id=current_user["id"], name=name)
+    ensure_workspace_agents_file(workspace)
     return ok(workspace, message="Workspace 创建成功")
 
 

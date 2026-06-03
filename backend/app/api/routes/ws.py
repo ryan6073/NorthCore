@@ -26,14 +26,14 @@ async def websocket_root(websocket: WebSocket):
     current_user = user_from_token_or_default(token)
     await websocket.accept()
     ws_manager.connect(websocket, current_user["id"])
-    await websocket.send_json({
-        "type": "connected",
-        "sessionId": "agenthub-ws",
-        "serverTime": __import__("datetime").datetime.now().isoformat(),
-        "version": APP_VERSION,
-        "user": current_user,
-    })
     try:
+        await websocket.send_json({
+            "type": "connected",
+            "sessionId": "agenthub-ws",
+            "serverTime": __import__("datetime").datetime.now().isoformat(),
+            "version": APP_VERSION,
+            "user": current_user,
+        })
         while True:
             raw = await websocket.receive_text()
             try:

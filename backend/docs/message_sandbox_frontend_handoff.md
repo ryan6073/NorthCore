@@ -266,12 +266,60 @@ interface RunEventData {
 
 建议前端以 `conversationId + runId` 做归属判断，不要用单个全局 `activeRun` 覆盖所有会话。
 
-## 7. 和 Workspace 的关系
+## 7. 撤销 Run 文件改动
+
+Sandbox 文件变更卡片上的“撤销”按钮可以调用：
+
+```http
+POST /api/v1/runs/{runId}/rollback
+```
+
+后端行为：
+
+- 只允许撤销已经结束的 run；`pending/running` 会返回错误。
+- 回滚 `sandbox_files` 到本次 run 修改前的版本。
+- 本次 run 新建的文件会被删除。
+- 同步恢复/删除物理 workspace 里的文件。
+- run 状态会更新为 `cancelled`，summary 为 `用户已撤销本次文件改动`。
+- workspace index 会被标记为 stale，等待后续重建。
+
+返回示例：
+
+```json
+{
+  "code": 0,
+  "message": "Run 文件改动已撤销",
+  "data": {
+    "run": {},
+    "rollbackChanges": [
+      {
+        "path": "src/game.js",
+        "action": "restored",
+        "restoredVersion": 1
+      },
+      {
+        "path": "src/new.js",
+        "action": "deleted",
+        "restoredVersion": 0
+      }
+    ]
+  }
+}
+```
+
+前端处理：
+
+- 调用成功后刷新 `GET /api/v1/runs/{runId}` 和文件树。
+- `rollbackChanges.action=restored` 表示文件恢复到旧版本。
+- `rollbackChanges.action=deleted` 表示本次 run 新增的文件已被移除。
+- 后端会广播 `run.failed` 和 `conversation.all_tasks.completed`，payload 内包含 `rollbackChanges`。
+
+## 8. 和 Workspace 的关系
 
 消息自动触发 sandbox 时，会复用已有 workspace 逻辑：
 
 - conversation 已绑定 workspace：run 使用该 workspace。
-- conversation 没有 workspace：后端自动创建默认 workspace 并绑定。
+- conversation 没有 workspace：后端拒绝创建 run，并提示先选择或新建工作区。
 - 多个 conversation 绑定同一个 workspace 时，会看到同一批 workspace 文件。
 
 前端文件树仍然使用：
@@ -282,7 +330,7 @@ GET /api/v1/runs/{runId}/files/tree
 
 虽然路径里是 `runId`，语义上是通过 run 找到 workspace，然后展示该 workspace 当前文件树。
 
-## 8. 前端推荐状态
+## 9. 前端推荐状态
 
 ```ts
 interface ConversationExecutionState {
@@ -300,9 +348,9 @@ interface ConversationExecutionState {
 - 如果没有 active run，隐藏或清空右侧 Run 面板。
 - 不要显示其他会话的 run。
 
-## 9. 联调用例
+## 10. 联调用例
 
-### 9.1 普通解释不触发 sandbox
+### 10.1 普通解释不触发 sandbox
 
 发送：
 
@@ -316,7 +364,7 @@ interface ConversationExecutionState {
 - 不创建 run
 - 继续收到普通 assistant 回复或 chunk。
 
-### 9.2 方案分析不触发 sandbox
+### 10.2 方案分析不触发 sandbox
 
 发送：
 
@@ -329,7 +377,7 @@ interface ConversationExecutionState {
 - `executionMode = chat`
 - 不创建 run。
 
-### 9.3 产物任务自动触发 sandbox
+### 10.3 产物任务自动触发 sandbox
 
 发送：
 
@@ -344,7 +392,7 @@ interface ConversationExecutionState {
 - `run.workspaceId` 存在
 - 右侧 Run 面板开始展示状态。
 
-### 9.4 Workspace 复用
+### 10.4 Workspace 复用
 
 同一个 conversation 连续发送：
 
@@ -360,7 +408,7 @@ interface ConversationExecutionState {
 - 两次 `workspaceId` 相同。
 - 两次 `sandbox.workspacePath` 相同。
 
-### 9.5 /runs 仍然可用
+### 10.5 /runs 仍然可用
 
 直接调用：
 

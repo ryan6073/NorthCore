@@ -4,6 +4,7 @@ import uuid
 import hashlib
 import hmac
 import secrets
+import base64
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import unquote, urlparse
 
 from app.config import ROOT_DIR, settings
+from app.model_providers.registry import get_model_provider
 
 
 def now_text() -> str:
@@ -25,8 +27,15 @@ def create_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:12]}"
 
 
-def _workspace_path_for_id(workspace_id: str) -> str:
-    return str((Path(settings.SANDBOX_WORKSPACE_ROOT) / workspace_id).resolve())
+def _safe_path_segment(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value).strip("_") or "unknown"
+
+
+def _workspace_path_for_id(workspace_id: str, owner_user_id: Optional[str] = None) -> str:
+    root = Path(settings.SANDBOX_WORKSPACE_ROOT)
+    if owner_user_id:
+        root = root / _safe_path_segment(owner_user_id)
+    return str((root / workspace_id).resolve())
 
 
 def _json_dump(value: Any) -> str:
@@ -72,6 +81,34 @@ def _verify_password(password: str, stored_hash: str) -> bool:
 
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _secret_key_stream(length: int) -> bytes:
+    seed = hashlib.sha256(settings.AGENT_SECRET_KEY.encode("utf-8")).digest()
+    output = bytearray()
+    counter = 0
+    while len(output) < length:
+        output.extend(hashlib.sha256(seed + str(counter).encode("utf-8")).digest())
+        counter += 1
+    return bytes(output[:length])
+
+
+def _encrypt_secret(secret: str) -> str:
+    raw = secret.encode("utf-8")
+    stream = _secret_key_stream(len(raw))
+    encrypted = bytes(left ^ right for left, right in zip(raw, stream))
+    return base64.urlsafe_b64encode(encrypted).decode("ascii")
+
+
+def _decrypt_secret(ciphertext: Optional[str]) -> str:
+    if not ciphertext:
+        return ""
+    try:
+        encrypted = base64.urlsafe_b64decode(ciphertext.encode("ascii"))
+        stream = _secret_key_stream(len(encrypted))
+        return bytes(left ^ right for left, right in zip(encrypted, stream)).decode("utf-8")
+    except Exception:
+        return ""
 
 
 def _resolve_sqlite_path() -> Path:
@@ -343,6 +380,9 @@ def init_db() -> None:
                 status TEXT,
                 category TEXT,
                 provider TEXT,
+                runtime TEXT NOT NULL DEFAULT 'native',
+                model_config_id TEXT,
+                runtime_config_json TEXT NOT NULL DEFAULT '{}',
                 enabled INTEGER,
                 last_used_at TEXT,
                 system_prompt TEXT NOT NULL DEFAULT '',
@@ -366,6 +406,9 @@ def init_db() -> None:
                 status TEXT NOT NULL DEFAULT 'offline',
                 category TEXT NOT NULL DEFAULT 'custom',
                 provider TEXT NOT NULL DEFAULT 'mock',
+                runtime TEXT NOT NULL DEFAULT 'native',
+                model_config_id TEXT,
+                runtime_config_json TEXT NOT NULL DEFAULT '{}',
                 enabled INTEGER NOT NULL DEFAULT 1,
                 last_used_at TEXT,
                 system_prompt TEXT NOT NULL DEFAULT '',
@@ -382,6 +425,34 @@ def init_db() -> None:
                 applied_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS model_credentials (
+                id TEXT PRIMARY KEY,
+                owner_user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                credential_type TEXT NOT NULL DEFAULT 'api_key',
+                secret_ciphertext TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS model_configs (
+                id TEXT PRIMARY KEY,
+                owner_user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                protocol TEXT NOT NULL,
+                model_name TEXT NOT NULL,
+                base_url TEXT NOT NULL DEFAULT '',
+                credential_ref TEXT,
+                extra_config_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (credential_ref) REFERENCES model_credentials(id) ON DELETE SET NULL
+            );
+
             CREATE TABLE IF NOT EXISTS workspaces (
                 id TEXT PRIMARY KEY,
                 owner_user_id TEXT NOT NULL,
@@ -391,6 +462,31 @@ def init_db() -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS workspace_deployments (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                owner_user_id TEXT NOT NULL,
+                conversation_id TEXT,
+                run_id TEXT,
+                status TEXT NOT NULL DEFAULT 'queued',
+                deploy_type TEXT NOT NULL DEFAULT 'local_docker',
+                project_type TEXT NOT NULL DEFAULT '',
+                service_urls_json TEXT NOT NULL DEFAULT '{}',
+                ports_json TEXT NOT NULL DEFAULT '{}',
+                container_ids_json TEXT NOT NULL DEFAULT '[]',
+                config_json TEXT NOT NULL DEFAULT '{}',
+                logs TEXT NOT NULL DEFAULT '',
+                error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL,
+                FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE SET NULL
             );
 
             CREATE TABLE IF NOT EXISTS conversations (
@@ -432,6 +528,9 @@ def init_db() -> None:
                 status TEXT,
                 category TEXT,
                 provider TEXT,
+                runtime TEXT NOT NULL DEFAULT 'native',
+                model_config_id TEXT,
+                runtime_config_json TEXT NOT NULL DEFAULT '{}',
                 enabled INTEGER,
                 last_used_at TEXT,
                 system_prompt TEXT,
@@ -579,6 +678,10 @@ def init_db() -> None:
                 status TEXT NOT NULL DEFAULT 'pending',
                 prompt TEXT NOT NULL DEFAULT '',
                 dag_json TEXT NOT NULL DEFAULT '{}',
+                runtime TEXT NOT NULL DEFAULT 'native',
+                model_config_id TEXT,
+                runtime_session_id TEXT,
+                runtime_metadata_json TEXT NOT NULL DEFAULT '{}',
                 summary TEXT NOT NULL DEFAULT '',
                 error TEXT,
                 created_at TEXT NOT NULL,
@@ -601,6 +704,10 @@ def init_db() -> None:
                 expected_outputs_json TEXT NOT NULL DEFAULT '[]',
                 status TEXT NOT NULL DEFAULT 'pending',
                 claimed_by TEXT,
+                runtime TEXT NOT NULL DEFAULT 'native',
+                model_config_id TEXT,
+                runtime_session_id TEXT,
+                runtime_metadata_json TEXT NOT NULL DEFAULT '{}',
                 output_json TEXT NOT NULL DEFAULT '{}',
                 logs TEXT NOT NULL DEFAULT '',
                 error TEXT,
@@ -620,6 +727,11 @@ def init_db() -> None:
                 content_hash TEXT NOT NULL DEFAULT '',
                 current_version INTEGER NOT NULL DEFAULT 0,
                 artifact_id TEXT,
+                mime_type TEXT NOT NULL DEFAULT 'text/plain',
+                size INTEGER NOT NULL DEFAULT 0,
+                sha256 TEXT NOT NULL DEFAULT '',
+                is_text INTEGER NOT NULL DEFAULT 1,
+                content_preview TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (sandbox_id) REFERENCES sandboxes(id) ON DELETE CASCADE,
@@ -664,6 +776,34 @@ def init_db() -> None:
                 FOREIGN KEY (created_by_step_id) REFERENCES agent_run_steps(id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS workspace_indexes (
+                workspace_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'fresh',
+                summary TEXT NOT NULL DEFAULT '',
+                tree_json TEXT NOT NULL DEFAULT '{}',
+                feature_map_json TEXT NOT NULL DEFAULT '{}',
+                artifact_map_json TEXT NOT NULL DEFAULT '{}',
+                deployment_map_json TEXT NOT NULL DEFAULT '{}',
+                recent_changes_json TEXT NOT NULL DEFAULT '[]',
+                version INTEGER NOT NULL DEFAULT 0,
+                last_run_id TEXT,
+                last_error TEXT,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS web_search_cache (
+                cache_key TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                query TEXT NOT NULL,
+                max_results INTEGER NOT NULL,
+                region TEXT NOT NULL DEFAULT '',
+                safesearch TEXT NOT NULL DEFAULT '',
+                results_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_conversations_updated_at
                 ON conversations(updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash
@@ -684,12 +824,22 @@ def init_db() -> None:
                 ON agent_runs(conversation_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_workspaces_owner_updated_at
                 ON workspaces(owner_user_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_workspace_deployments_workspace
+                ON workspace_deployments(workspace_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_workspace_deployments_owner
+                ON workspace_deployments(owner_user_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_model_credentials_owner
+                ON model_credentials(owner_user_id, provider);
+            CREATE INDEX IF NOT EXISTS idx_model_configs_owner
+                ON model_configs(owner_user_id, provider);
             CREATE INDEX IF NOT EXISTS idx_run_steps_run_status
                 ON agent_run_steps(run_id, status);
             CREATE INDEX IF NOT EXISTS idx_sandbox_files_run_path
                 ON sandbox_files(run_id, path);
             CREATE INDEX IF NOT EXISTS idx_sandbox_conflicts_run_status
                 ON sandbox_conflicts(run_id, status);
+            CREATE INDEX IF NOT EXISTS idx_web_search_cache_updated_at
+                ON web_search_cache(updated_at DESC);
             """
         )
         ensure_column(conn, "artifacts", "tags_json", "TEXT NOT NULL DEFAULT '[]'")
@@ -698,6 +848,9 @@ def init_db() -> None:
         ensure_column(conn, "messages", "metadata_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(conn, "attachments", "meta_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(conn, "agents", "owner_user_id", "TEXT")
+        ensure_column(conn, "agents", "runtime", "TEXT NOT NULL DEFAULT 'native'")
+        ensure_column(conn, "agents", "model_config_id", "TEXT")
+        ensure_column(conn, "agents", "runtime_config_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(conn, "agent_user_overrides", "name", "TEXT")
         ensure_column(conn, "agent_user_overrides", "avatar", "TEXT")
         ensure_column(conn, "agent_user_overrides", "description", "TEXT")
@@ -705,6 +858,9 @@ def init_db() -> None:
         ensure_column(conn, "agent_user_overrides", "status", "TEXT")
         ensure_column(conn, "agent_user_overrides", "category", "TEXT")
         ensure_column(conn, "agent_user_overrides", "provider", "TEXT")
+        ensure_column(conn, "agent_user_overrides", "runtime", "TEXT NOT NULL DEFAULT 'native'")
+        ensure_column(conn, "agent_user_overrides", "model_config_id", "TEXT")
+        ensure_column(conn, "agent_user_overrides", "runtime_config_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(conn, "agent_user_overrides", "enabled", "INTEGER")
         ensure_column(conn, "agent_user_overrides", "last_used_at", "TEXT")
         ensure_column(conn, "agent_user_overrides", "model_config_json", "TEXT")
@@ -718,13 +874,41 @@ def init_db() -> None:
         ensure_column(conn, "conversations", "is_archived", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "conversations", "system_prompt", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "conversations", "workspace_id", "TEXT")
+        ensure_column(conn, "conversation_agent_overrides", "runtime", "TEXT NOT NULL DEFAULT 'native'")
+        ensure_column(conn, "conversation_agent_overrides", "model_config_id", "TEXT")
+        ensure_column(conn, "conversation_agent_overrides", "runtime_config_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(conn, "sandboxes", "workspace_id", "TEXT")
         ensure_column(conn, "agent_runs", "workspace_id", "TEXT")
+        ensure_column(conn, "agent_runs", "runtime", "TEXT NOT NULL DEFAULT 'native'")
+        ensure_column(conn, "agent_runs", "model_config_id", "TEXT")
+        ensure_column(conn, "agent_runs", "runtime_session_id", "TEXT")
+        ensure_column(conn, "agent_runs", "runtime_metadata_json", "TEXT NOT NULL DEFAULT '{}'")
+        ensure_column(conn, "agent_run_steps", "runtime", "TEXT NOT NULL DEFAULT 'native'")
+        ensure_column(conn, "agent_run_steps", "model_config_id", "TEXT")
+        ensure_column(conn, "agent_run_steps", "runtime_session_id", "TEXT")
+        ensure_column(conn, "agent_run_steps", "runtime_metadata_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(conn, "sandbox_files", "workspace_id", "TEXT")
+        ensure_column(conn, "sandbox_files", "mime_type", "TEXT NOT NULL DEFAULT 'text/plain'")
+        ensure_column(conn, "sandbox_files", "size", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "sandbox_files", "sha256", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "sandbox_files", "is_text", "INTEGER NOT NULL DEFAULT 1")
+        ensure_column(conn, "sandbox_files", "content_preview", "TEXT NOT NULL DEFAULT ''")
         seed_default_user(conn)
         migrate_legacy_ownership(conn)
         migrate_agent_conversation_mode(conn)
         ensure_column(conn, "conversations", "workspace_id", "TEXT")
+        ensure_column(conn, "workspace_deployments", "conversation_id", "TEXT")
+        ensure_column(conn, "workspace_deployments", "run_id", "TEXT")
+        ensure_column(conn, "workspace_deployments", "deploy_type", "TEXT NOT NULL DEFAULT 'local_docker'")
+        ensure_column(conn, "workspace_deployments", "project_type", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "workspace_deployments", "service_urls_json", "TEXT NOT NULL DEFAULT '{}'")
+        ensure_column(conn, "workspace_deployments", "ports_json", "TEXT NOT NULL DEFAULT '{}'")
+        ensure_column(conn, "workspace_deployments", "container_ids_json", "TEXT NOT NULL DEFAULT '[]'")
+        ensure_column(conn, "workspace_deployments", "config_json", "TEXT NOT NULL DEFAULT '{}'")
+        ensure_column(conn, "workspace_deployments", "logs", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "workspace_deployments", "error", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "workspace_deployments", "started_at", "TEXT")
+        ensure_column(conn, "workspace_deployments", "finished_at", "TEXT")
         conn.executescript(
             """
             DROP INDEX IF EXISTS idx_conversations_contact_unique;
@@ -739,14 +923,38 @@ def init_db() -> None:
                 ON agents(owner_user_id, enabled);
             CREATE INDEX IF NOT EXISTS idx_workspaces_owner_updated_at
                 ON workspaces(owner_user_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_workspace_deployments_workspace
+                ON workspace_deployments(workspace_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_workspace_deployments_owner
+                ON workspace_deployments(owner_user_id, updated_at DESC);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_sandbox_files_workspace_path
                 ON sandbox_files(workspace_id, path)
                 WHERE workspace_id IS NOT NULL;
             """
         )
+        ensure_column(conn, "workspace_indexes", "status", "TEXT NOT NULL DEFAULT 'fresh'")
+        ensure_column(conn, "workspace_indexes", "summary", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "workspace_indexes", "tree_json", "TEXT NOT NULL DEFAULT '{}'")
+        ensure_column(conn, "workspace_indexes", "feature_map_json", "TEXT NOT NULL DEFAULT '{}'")
+        ensure_column(conn, "workspace_indexes", "artifact_map_json", "TEXT NOT NULL DEFAULT '{}'")
+        ensure_column(conn, "workspace_indexes", "deployment_map_json", "TEXT NOT NULL DEFAULT '{}'")
+        ensure_column(conn, "workspace_indexes", "recent_changes_json", "TEXT NOT NULL DEFAULT '[]'")
+        ensure_column(conn, "workspace_indexes", "version", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "workspace_indexes", "last_run_id", "TEXT")
+        ensure_column(conn, "workspace_indexes", "last_error", "TEXT")
+        ensure_column(conn, "workspace_indexes", "updated_at", "TEXT")
+        ensure_column(conn, "web_search_cache", "provider", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "web_search_cache", "query", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "web_search_cache", "max_results", "INTEGER NOT NULL DEFAULT 10")
+        ensure_column(conn, "web_search_cache", "region", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "web_search_cache", "safesearch", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "web_search_cache", "results_json", "TEXT NOT NULL DEFAULT '[]'")
+        ensure_column(conn, "web_search_cache", "created_at", "TEXT")
+        ensure_column(conn, "web_search_cache", "updated_at", "TEXT")
         migrate_artifact_versions(conn)
         seed_agents(conn)
         migrate_legacy_disabled_agents(conn)
+        migrate_agent_workspace_runtime_config(conn)
         ensure_group_orchestrator_memberships(conn)
         ensure_all_user_contact_conversations(conn)
 
@@ -959,6 +1167,42 @@ def migrate_legacy_disabled_agents(conn: sqlite3.Connection) -> None:
     )
 
 
+def strip_agent_workspace_runtime_config(runtime_config: Any) -> Dict[str, Any]:
+    if not isinstance(runtime_config, dict):
+        return {}
+    return {
+        key: value
+        for key, value in runtime_config.items()
+        if key not in {"default_workspace_id", "defaultWorkspaceId"}
+    }
+
+
+def migrate_agent_workspace_runtime_config(conn: sqlite3.Connection) -> None:
+    migration_id = "remove_agent_default_workspace_runtime_config_v1"
+    if conn.execute("SELECT id FROM app_migrations WHERE id = ?", (migration_id,)).fetchone():
+        return
+    timestamp = now_text()
+    for table_name in ("agents", "agent_user_overrides", "conversation_agent_overrides"):
+        rows = conn.execute(
+            f"""
+            SELECT id, runtime_config_json
+            FROM {table_name}
+            WHERE runtime_config_json LIKE '%default_workspace_id%'
+               OR runtime_config_json LIKE '%defaultWorkspaceId%'
+            """
+        ).fetchall()
+        for row in rows:
+            cleaned_config = strip_agent_workspace_runtime_config(_json_load(row["runtime_config_json"], {}))
+            conn.execute(
+                f"UPDATE {table_name} SET runtime_config_json = ?, updated_at = ? WHERE id = ?",
+                (_json_dump(cleaned_config), timestamp, row["id"]),
+            )
+    conn.execute(
+        "INSERT INTO app_migrations (id, applied_at) VALUES (?, ?)",
+        (migration_id, timestamp),
+    )
+
+
 def get_enabled_agents_for_user_conn(conn: sqlite3.Connection, owner_user_id: str) -> List[sqlite3.Row]:
     return conn.execute(
         """
@@ -1097,10 +1341,11 @@ def seed_agents(conn: sqlite3.Connection) -> None:
             """
             INSERT OR IGNORE INTO agents (
                 id, name, avatar, description, tags_json, status, category, provider,
+                runtime, model_config_id, runtime_config_json,
                 enabled, last_used_at, system_prompt, model_config_json, tools_json,
                 permissions_json, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'native', NULL, '{}', ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 agent["id"],
@@ -1134,6 +1379,204 @@ def paginate(items: List[Dict[str, Any]], page: int, page_size: int) -> Dict[str
         "pageSize": page_size,
         "hasMore": end < total,
     }
+
+
+def model_credential_from_row(row: sqlite3.Row, include_secret: bool = False) -> Dict[str, Any]:
+    credential = {
+        "id": row["id"],
+        "ownerUserId": row["owner_user_id"],
+        "name": row["name"],
+        "provider": row["provider"],
+        "credentialType": row["credential_type"],
+        "configured": bool(row["secret_ciphertext"]),
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+    }
+    if include_secret:
+        credential["secret"] = _decrypt_secret(row["secret_ciphertext"])
+    return credential
+
+
+def model_config_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "ownerUserId": row["owner_user_id"],
+        "name": row["name"],
+        "provider": row["provider"],
+        "protocol": row["protocol"],
+        "modelName": row["model_name"],
+        "baseUrl": row["base_url"],
+        "credentialRef": row["credential_ref"],
+        "extraConfig": _json_load(row["extra_config_json"], {}),
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+    }
+
+
+def list_model_credentials(owner_user_id: str) -> List[Dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM model_credentials WHERE owner_user_id = ? ORDER BY updated_at DESC",
+            (owner_user_id,),
+        ).fetchall()
+    return [model_credential_from_row(row) for row in rows]
+
+
+def get_model_credential(credential_id: str, owner_user_id: Optional[str] = None, include_secret: bool = False) -> Optional[Dict[str, Any]]:
+    owner_clause = ""
+    params: List[Any] = [credential_id]
+    if owner_user_id:
+        owner_clause = "AND owner_user_id = ?"
+        params.append(owner_user_id)
+    with get_connection() as conn:
+        row = conn.execute(
+            f"SELECT * FROM model_credentials WHERE id = ? {owner_clause}",
+            params,
+        ).fetchone()
+    return model_credential_from_row(row, include_secret=include_secret) if row else None
+
+
+def create_model_credential(owner_user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    credential_id = create_id("cred")
+    timestamp = now_text()
+    name = str(payload.get("name") or "").strip() or "Model Credential"
+    provider = str(payload.get("provider") or "openai_compatible").strip()
+    credential_type = str(payload.get("credentialType") or payload.get("credential_type") or "api_key").strip()
+    secret = str(payload.get("secret") or payload.get("apiKey") or payload.get("api_key") or "").strip()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO model_credentials (
+                id, owner_user_id, name, provider, credential_type,
+                secret_ciphertext, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (credential_id, owner_user_id, name, provider, credential_type, _encrypt_secret(secret), timestamp, timestamp),
+        )
+    return get_model_credential(credential_id, owner_user_id=owner_user_id)  # type: ignore[return-value]
+
+
+def update_model_credential(credential_id: str, owner_user_id: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    current = get_model_credential(credential_id, owner_user_id=owner_user_id, include_secret=True)
+    if not current:
+        return None
+    name = str(payload.get("name") or current["name"]).strip() or current["name"]
+    provider = str(payload.get("provider") or current["provider"]).strip()
+    credential_type = str(payload.get("credentialType") or payload.get("credential_type") or current["credentialType"]).strip()
+    secret = str(payload.get("secret") or payload.get("apiKey") or payload.get("api_key") or current.get("secret") or "").strip()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE model_credentials
+            SET name = ?, provider = ?, credential_type = ?, secret_ciphertext = ?, updated_at = ?
+            WHERE id = ? AND owner_user_id = ?
+            """,
+            (name, provider, credential_type, _encrypt_secret(secret), now_text(), credential_id, owner_user_id),
+        )
+    return get_model_credential(credential_id, owner_user_id=owner_user_id)
+
+
+def delete_model_credential(credential_id: str, owner_user_id: str) -> bool:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "DELETE FROM model_credentials WHERE id = ? AND owner_user_id = ?",
+            (credential_id, owner_user_id),
+        )
+        return cur.rowcount > 0
+
+
+def list_model_configs(owner_user_id: str) -> List[Dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM model_configs WHERE owner_user_id = ? ORDER BY updated_at DESC",
+            (owner_user_id,),
+        ).fetchall()
+    return [model_config_from_row(row) for row in rows]
+
+
+def get_model_config(config_id: str, owner_user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    owner_clause = ""
+    params: List[Any] = [config_id]
+    if owner_user_id:
+        owner_clause = "AND owner_user_id = ?"
+        params.append(owner_user_id)
+    with get_connection() as conn:
+        row = conn.execute(
+            f"SELECT * FROM model_configs WHERE id = ? {owner_clause}",
+            params,
+        ).fetchone()
+    return model_config_from_row(row) if row else None
+
+
+def create_model_config(owner_user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    config_id = create_id("modelConfig")
+    timestamp = now_text()
+    name = str(payload.get("name") or "").strip() or "Model Config"
+    provider = str(payload.get("provider") or "openai_compatible").strip()
+    protocol = str(payload.get("protocol") or "openai_chat_completions").strip()
+    model_name = str(payload.get("modelName") or payload.get("model_name") or "").strip()
+    base_url = str(payload.get("baseUrl") or payload.get("base_url") or "").strip()
+    if not base_url:
+        base_url = str(get_model_provider(provider).get("defaultBaseUrl") or "").strip()
+    credential_ref = str(payload.get("credentialRef") or payload.get("credential_ref") or "").strip() or None
+    extra_config = payload.get("extraConfig") if isinstance(payload.get("extraConfig"), dict) else payload.get("extra_config") if isinstance(payload.get("extra_config"), dict) else {}
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO model_configs (
+                id, owner_user_id, name, provider, protocol, model_name,
+                base_url, credential_ref, extra_config_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (config_id, owner_user_id, name, provider, protocol, model_name, base_url, credential_ref, _json_dump(extra_config), timestamp, timestamp),
+        )
+    return get_model_config(config_id, owner_user_id=owner_user_id)  # type: ignore[return-value]
+
+
+def update_model_config(config_id: str, owner_user_id: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    current = get_model_config(config_id, owner_user_id=owner_user_id)
+    if not current:
+        return None
+    updated = {**current, **payload}
+    credential_ref = str(updated.get("credentialRef") or updated.get("credential_ref") or "").strip() or None
+    extra_config = updated.get("extraConfig") if isinstance(updated.get("extraConfig"), dict) else {}
+    with get_connection() as conn:
+        provider = str(updated.get("provider") or "openai_compatible").strip()
+        base_url = str(updated.get("baseUrl") or updated.get("base_url") or "").strip()
+        if not base_url:
+            base_url = str(get_model_provider(provider).get("defaultBaseUrl") or "").strip()
+        conn.execute(
+            """
+            UPDATE model_configs
+            SET name = ?, provider = ?, protocol = ?, model_name = ?, base_url = ?,
+                credential_ref = ?, extra_config_json = ?, updated_at = ?
+            WHERE id = ? AND owner_user_id = ?
+            """,
+            (
+                str(updated.get("name") or "Model Config").strip(),
+                provider,
+                str(updated.get("protocol") or "openai_chat_completions").strip(),
+                str(updated.get("modelName") or updated.get("model_name") or "").strip(),
+                base_url,
+                credential_ref,
+                _json_dump(extra_config),
+                now_text(),
+                config_id,
+                owner_user_id,
+            ),
+        )
+    return get_model_config(config_id, owner_user_id=owner_user_id)
+
+
+def delete_model_config(config_id: str, owner_user_id: str) -> bool:
+    with get_connection() as conn:
+        cur = conn.execute(
+            "DELETE FROM model_configs WHERE id = ? AND owner_user_id = ?",
+            (config_id, owner_user_id),
+        )
+        return cur.rowcount > 0
 
 
 def user_from_row(row: sqlite3.Row) -> Dict[str, Any]:
@@ -1307,6 +1750,9 @@ def agent_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "status": row["status"],
         "category": row["category"],
         "provider": row["provider"],
+        "runtime": row["runtime"] or "native",
+        "modelConfigId": row["model_config_id"],
+        "runtimeConfig": strip_agent_workspace_runtime_config(_json_load(row["runtime_config_json"], {})),
         "enabled": bool(row["enabled"]),
         "lastUsedAt": row["last_used_at"],
         "systemPrompt": row["system_prompt"],
@@ -1343,6 +1789,9 @@ def apply_agent_user_override(agent: Dict[str, Any], owner_user_id: Optional[str
         "status": row["status"] if row["status"] is not None else agent["status"],
         "category": row["category"] if row["category"] is not None else agent["category"],
         "provider": row["provider"] if row["provider"] is not None else agent["provider"],
+        "runtime": row["runtime"] if row["runtime"] is not None else agent.get("runtime", "native"),
+        "modelConfigId": row["model_config_id"] if row["model_config_id"] is not None else agent.get("modelConfigId"),
+        "runtimeConfig": strip_agent_workspace_runtime_config(_json_load(row["runtime_config_json"], agent.get("runtimeConfig", {})) if row["runtime_config_json"] is not None else agent.get("runtimeConfig", {})),
         "enabled": bool(row["enabled"]) if row["enabled"] is not None else agent["enabled"],
         "lastUsedAt": row["last_used_at"] if row["last_used_at"] is not None else agent["lastUsedAt"],
         "systemPrompt": row["system_prompt"] if row["system_prompt"] is not None else agent["systemPrompt"],
@@ -1379,6 +1828,9 @@ def apply_conversation_agent_override(agent: Dict[str, Any], conversation_id: st
         "status": row["status"] if row["status"] is not None else agent["status"],
         "category": row["category"] if row["category"] is not None else agent["category"],
         "provider": row["provider"] if row["provider"] is not None else agent["provider"],
+        "runtime": row["runtime"] if row["runtime"] is not None else agent.get("runtime", "native"),
+        "modelConfigId": row["model_config_id"] if row["model_config_id"] is not None else agent.get("modelConfigId"),
+        "runtimeConfig": strip_agent_workspace_runtime_config(_json_load(row["runtime_config_json"], agent.get("runtimeConfig", {})) if row["runtime_config_json"] is not None else agent.get("runtimeConfig", {})),
         "enabled": bool(row["enabled"]) if row["enabled"] is not None else agent["enabled"],
         "lastUsedAt": row["last_used_at"] if row["last_used_at"] is not None else agent["lastUsedAt"],
         "systemPrompt": row["system_prompt"] if row["system_prompt"] is not None else agent["systemPrompt"],
@@ -1436,11 +1888,13 @@ def upsert_agent_user_override(
             (owner_user_id, base_agent_id),
         ).fetchone()
         if existing:
+            updated_runtime_config = strip_agent_workspace_runtime_config(updated.get("runtimeConfig", {}))
             conn.execute(
                 """
                 UPDATE agent_user_overrides
                 SET name = ?, avatar = ?, description = ?, tags_json = ?,
-                    status = ?, category = ?, provider = ?, enabled = ?, last_used_at = ?,
+                    status = ?, category = ?, provider = ?, runtime = ?, model_config_id = ?,
+                    runtime_config_json = ?, enabled = ?, last_used_at = ?,
                     system_prompt = ?, model_config_json = ?, tools_json = ?,
                     permissions_json = ?, updated_at = ?
                 WHERE owner_user_id = ? AND base_agent_id = ?
@@ -1453,6 +1907,9 @@ def upsert_agent_user_override(
                     updated.get("status", "offline"),
                     updated.get("category", "custom"),
                     updated.get("provider", "mock"),
+                    updated.get("runtime", "native"),
+                    updated.get("modelConfigId"),
+                    _json_dump(updated_runtime_config),
                     1 if updated.get("enabled", True) else 0,
                     updated.get("lastUsedAt"),
                     updated.get("systemPrompt", ""),
@@ -1465,14 +1922,16 @@ def upsert_agent_user_override(
                 ),
             )
         else:
+            updated_runtime_config = strip_agent_workspace_runtime_config(updated.get("runtimeConfig", {}))
             conn.execute(
                 """
                 INSERT INTO agent_user_overrides (
                     id, owner_user_id, base_agent_id, name, avatar, description, tags_json,
-                    status, category, provider, enabled, last_used_at, system_prompt,
+                    status, category, provider, runtime, model_config_id, runtime_config_json,
+                    enabled, last_used_at, system_prompt,
                     model_config_json, tools_json, permissions_json, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     create_id("agentOverride"),
@@ -1485,6 +1944,9 @@ def upsert_agent_user_override(
                     updated.get("status", "offline"),
                     updated.get("category", "custom"),
                     updated.get("provider", "mock"),
+                    updated.get("runtime", "native"),
+                    updated.get("modelConfigId"),
+                    _json_dump(updated_runtime_config),
                     1 if updated.get("enabled", True) else 0,
                     updated.get("lastUsedAt"),
                     updated.get("systemPrompt", ""),
@@ -1539,6 +2001,9 @@ def upsert_conversation_agent_config(
             "status": existing["status"] if existing else None,
             "category": existing["category"] if existing else None,
             "provider": existing["provider"] if existing else None,
+            "runtime": existing["runtime"] if existing else None,
+            "model_config_id": existing["model_config_id"] if existing else None,
+            "runtime_config_json": existing["runtime_config_json"] if existing else None,
             "enabled": existing["enabled"] if existing else None,
             "last_used_at": existing["last_used_at"] if existing else None,
             "system_prompt": existing["system_prompt"] if existing else None,
@@ -1561,6 +2026,12 @@ def upsert_conversation_agent_config(
             values["category"] = str(payload.get("category") or "custom")
         if "provider" in payload:
             values["provider"] = str(payload.get("provider") or "mock")
+        if "runtime" in payload:
+            values["runtime"] = str(payload.get("runtime") or "native")
+        if "modelConfigId" in payload or "model_config_id" in payload:
+            values["model_config_id"] = str(payload.get("modelConfigId") or payload.get("model_config_id") or "").strip() or None
+        if "runtimeConfig" in payload:
+            values["runtime_config_json"] = _json_dump(strip_agent_workspace_runtime_config(payload.get("runtimeConfig") or {}))
         if "enabled" in payload:
             values["enabled"] = 1 if bool(payload.get("enabled")) else 0
         if "lastUsedAt" in payload:
@@ -1579,7 +2050,8 @@ def upsert_conversation_agent_config(
                 """
                 UPDATE conversation_agent_overrides
                 SET name = ?, avatar = ?, description = ?, tags_json = ?,
-                    status = ?, category = ?, provider = ?, enabled = ?, last_used_at = ?,
+                    status = ?, category = ?, provider = ?, runtime = ?, model_config_id = ?,
+                    runtime_config_json = ?, enabled = ?, last_used_at = ?,
                     system_prompt = ?, model_config_json = ?, tools_json = ?,
                     permissions_json = ?, updated_at = ?
                 WHERE conversation_id = ? AND agent_id = ?
@@ -1592,6 +2064,9 @@ def upsert_conversation_agent_config(
                     values["status"],
                     values["category"],
                     values["provider"],
+                    values["runtime"],
+                    values["model_config_id"],
+                    values["runtime_config_json"],
                     values["enabled"],
                     values["last_used_at"],
                     values["system_prompt"],
@@ -1608,11 +2083,12 @@ def upsert_conversation_agent_config(
                 """
                 INSERT INTO conversation_agent_overrides (
                     id, conversation_id, agent_id, name, avatar, description,
-                    tags_json, status, category, provider, enabled, last_used_at,
+                    tags_json, status, category, provider, runtime, model_config_id,
+                    runtime_config_json, enabled, last_used_at,
                     system_prompt, model_config_json, tools_json, permissions_json,
                     created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     create_id("convAgentOverride"),
@@ -1625,6 +2101,9 @@ def upsert_conversation_agent_config(
                     values["status"],
                     values["category"],
                     values["provider"],
+                    values["runtime"],
+                    values["model_config_id"],
+                    values["runtime_config_json"],
                     values["enabled"],
                     values["last_used_at"],
                     values["system_prompt"],
@@ -1686,6 +2165,60 @@ def workspace_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "name": row["name"],
         "workspacePath": row["workspace_path"],
         "status": row["status"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+    }
+
+
+def workspace_deployment_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "id": row["id"],
+        "workspaceId": row["workspace_id"],
+        "ownerUserId": row["owner_user_id"],
+        "conversationId": row["conversation_id"],
+        "runId": row["run_id"],
+        "status": row["status"],
+        "deployType": row["deploy_type"],
+        "projectType": row["project_type"],
+        "serviceUrls": _json_load(row["service_urls_json"], {}),
+        "ports": _json_load(row["ports_json"], {}),
+        "containerIds": _json_load(row["container_ids_json"], []),
+        "config": _json_load(row["config_json"], {}),
+        "logs": row["logs"],
+        "error": row["error"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+        "startedAt": row["started_at"],
+        "finishedAt": row["finished_at"],
+    }
+
+
+def workspace_index_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "workspaceId": row["workspace_id"],
+        "status": row["status"],
+        "summary": row["summary"],
+        "tree": _json_load(row["tree_json"], {}),
+        "featureMap": _json_load(row["feature_map_json"], {}),
+        "artifactMap": _json_load(row["artifact_map_json"], {}),
+        "deploymentMap": _json_load(row["deployment_map_json"], {}),
+        "recentChanges": _json_load(row["recent_changes_json"], []),
+        "version": row["version"],
+        "lastRunId": row["last_run_id"],
+        "lastError": row["last_error"],
+        "updatedAt": row["updated_at"],
+    }
+
+
+def web_search_cache_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "cacheKey": row["cache_key"],
+        "provider": row["provider"],
+        "query": row["query"],
+        "maxResults": row["max_results"],
+        "region": row["region"],
+        "safesearch": row["safesearch"],
+        "results": _json_load(row["results_json"], []),
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }
@@ -1849,6 +2382,10 @@ def agent_run_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "status": row["status"],
         "prompt": row["prompt"],
         "dag": _json_load(row["dag_json"], {}),
+        "runtime": row["runtime"] or "native",
+        "modelConfigId": row["model_config_id"],
+        "runtimeSessionId": row["runtime_session_id"],
+        "runtimeMetadata": _json_load(row["runtime_metadata_json"], {}),
         "summary": row["summary"],
         "error": row["error"],
         "createdAt": row["created_at"],
@@ -1869,6 +2406,10 @@ def agent_run_step_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "expectedOutputs": _json_load(row["expected_outputs_json"], []),
         "status": row["status"],
         "claimedBy": row["claimed_by"],
+        "runtime": row["runtime"] or "native",
+        "modelConfigId": row["model_config_id"],
+        "runtimeSessionId": row["runtime_session_id"],
+        "runtimeMetadata": _json_load(row["runtime_metadata_json"], {}),
         "output": _json_load(row["output_json"], {}),
         "logs": row["logs"],
         "error": row["error"],
@@ -1889,6 +2430,11 @@ def sandbox_file_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "contentHash": row["content_hash"],
         "currentVersion": row["current_version"],
         "artifactId": row["artifact_id"],
+        "mimeType": row["mime_type"],
+        "size": row["size"],
+        "sha256": row["sha256"],
+        "isText": bool(row["is_text"]),
+        "contentPreview": row["content_preview"],
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }
@@ -1934,7 +2480,7 @@ def create_workspace(
 ) -> Dict[str, Any]:
     workspace_id = workspace_id or create_id("workspace")
     timestamp = now_text()
-    resolved_path = workspace_path or _workspace_path_for_id(workspace_id)
+    resolved_path = workspace_path or _workspace_path_for_id(workspace_id, owner_user_id)
     Path(resolved_path).mkdir(parents=True, exist_ok=True)
     with get_connection() as conn:
         conn.execute(
@@ -1990,6 +2536,353 @@ def list_workspaces(
     return paginate([workspace_from_row(row) for row in rows], page, page_size)
 
 
+def create_workspace_deployment(
+    workspace_id: str,
+    owner_user_id: str,
+    conversation_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+    deploy_type: str = "local_docker",
+    config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    deployment_id = create_id("deployment")
+    timestamp = now_text()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO workspace_deployments (
+                id, workspace_id, owner_user_id, conversation_id, run_id,
+                status, deploy_type, project_type, service_urls_json, ports_json,
+                container_ids_json, config_json, logs, error,
+                created_at, updated_at, started_at, finished_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'queued', ?, '', '{}', '{}', '[]', ?, '', '', ?, ?, NULL, NULL)
+            """,
+            (
+                deployment_id,
+                workspace_id,
+                owner_user_id,
+                conversation_id,
+                run_id,
+                deploy_type,
+                _json_dump(config or {}),
+                timestamp,
+                timestamp,
+            ),
+        )
+        row = conn.execute("SELECT * FROM workspace_deployments WHERE id = ?", (deployment_id,)).fetchone()
+    return workspace_deployment_from_row(row)
+
+
+def get_workspace_deployment(
+    deployment_id: str,
+    owner_user_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    owner_clause = ""
+    params: List[Any] = [deployment_id]
+    if owner_user_id:
+        owner_clause = "AND owner_user_id = ?"
+        params.append(owner_user_id)
+    with get_connection() as conn:
+        row = conn.execute(
+            f"SELECT * FROM workspace_deployments WHERE id = ? {owner_clause}",
+            params,
+        ).fetchone()
+    return workspace_deployment_from_row(row) if row else None
+
+
+def list_workspace_deployments(
+    workspace_id: str,
+    owner_user_id: str,
+    page: int = 1,
+    page_size: int = 20,
+) -> Dict[str, Any]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM workspace_deployments
+            WHERE workspace_id = ? AND owner_user_id = ?
+            ORDER BY created_at DESC
+            """,
+            (workspace_id, owner_user_id),
+        ).fetchall()
+    return paginate([workspace_deployment_from_row(row) for row in rows], page, page_size)
+
+
+def update_workspace_deployment(
+    deployment_id: str,
+    status: Optional[str] = None,
+    project_type: Optional[str] = None,
+    service_urls: Optional[Dict[str, Any]] = None,
+    ports: Optional[Dict[str, Any]] = None,
+    container_ids: Optional[List[str]] = None,
+    config: Optional[Dict[str, Any]] = None,
+    logs: Optional[str] = None,
+    append_logs: Optional[str] = None,
+    error: Optional[str] = None,
+    mark_started: bool = False,
+    mark_finished: bool = False,
+) -> Optional[Dict[str, Any]]:
+    timestamp = now_text()
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM workspace_deployments WHERE id = ?", (deployment_id,)).fetchone()
+        if not row:
+            return None
+        next_logs = row["logs"] or ""
+        if logs is not None:
+            next_logs = logs
+        if append_logs:
+            next_logs = (next_logs + ("\n" if next_logs else "") + append_logs).strip()
+        conn.execute(
+            """
+            UPDATE workspace_deployments
+            SET status = COALESCE(?, status),
+                project_type = COALESCE(?, project_type),
+                service_urls_json = COALESCE(?, service_urls_json),
+                ports_json = COALESCE(?, ports_json),
+                container_ids_json = COALESCE(?, container_ids_json),
+                config_json = COALESCE(?, config_json),
+                logs = ?,
+                error = COALESCE(?, error),
+                updated_at = ?,
+                started_at = CASE WHEN ? THEN COALESCE(started_at, ?) ELSE started_at END,
+                finished_at = CASE WHEN ? THEN COALESCE(finished_at, ?) ELSE finished_at END
+            WHERE id = ?
+            """,
+            (
+                status,
+                project_type,
+                _json_dump(service_urls) if service_urls is not None else None,
+                _json_dump(ports) if ports is not None else None,
+                _json_dump(container_ids) if container_ids is not None else None,
+                _json_dump(config) if config is not None else None,
+                next_logs,
+                error,
+                timestamp,
+                1 if mark_started else 0,
+                timestamp,
+                1 if mark_finished else 0,
+                timestamp,
+                deployment_id,
+            ),
+        )
+        row = conn.execute("SELECT * FROM workspace_deployments WHERE id = ?", (deployment_id,)).fetchone()
+    return workspace_deployment_from_row(row) if row else None
+
+
+def list_recent_workspace_deployments(workspace_id: str, limit: int = 5) -> List[Dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM workspace_deployments
+            WHERE workspace_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (workspace_id, int(limit or 5)),
+        ).fetchall()
+    return [workspace_deployment_from_row(row) for row in rows]
+
+
+def get_workspace_index(workspace_id: str) -> Optional[Dict[str, Any]]:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM workspace_indexes WHERE workspace_id = ?",
+            (workspace_id,),
+        ).fetchone()
+    return workspace_index_from_row(row) if row else None
+
+
+def upsert_workspace_index(
+    workspace_id: str,
+    summary: str,
+    tree: Dict[str, Any],
+    feature_map: Dict[str, Any],
+    artifact_map: Dict[str, Any],
+    recent_changes: List[Dict[str, Any]],
+    last_run_id: Optional[str] = None,
+    status: str = "fresh",
+    deployment_map: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    timestamp = now_text()
+    with get_connection() as conn:
+        current = conn.execute(
+            "SELECT version, deployment_map_json FROM workspace_indexes WHERE workspace_id = ?",
+            (workspace_id,),
+        ).fetchone()
+        next_version = int(current["version"] or 0) + 1 if current else 1
+        next_deployment_map = deployment_map
+        if next_deployment_map is None:
+            next_deployment_map = _json_load(current["deployment_map_json"], {}) if current else {}
+        conn.execute(
+            """
+            INSERT INTO workspace_indexes (
+                workspace_id, status, summary, tree_json, feature_map_json,
+                artifact_map_json, deployment_map_json, recent_changes_json, version, last_run_id,
+                last_error, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+            ON CONFLICT(workspace_id) DO UPDATE SET
+                status = excluded.status,
+                summary = excluded.summary,
+                tree_json = excluded.tree_json,
+                feature_map_json = excluded.feature_map_json,
+                artifact_map_json = excluded.artifact_map_json,
+                deployment_map_json = excluded.deployment_map_json,
+                recent_changes_json = excluded.recent_changes_json,
+                version = excluded.version,
+                last_run_id = excluded.last_run_id,
+                last_error = NULL,
+                updated_at = excluded.updated_at
+            """,
+            (
+                workspace_id,
+                status,
+                summary,
+                _json_dump(tree),
+                _json_dump(feature_map),
+                _json_dump(artifact_map),
+                _json_dump(next_deployment_map),
+                _json_dump(recent_changes),
+                next_version,
+                last_run_id,
+                timestamp,
+            ),
+        )
+        row = conn.execute(
+            "SELECT * FROM workspace_indexes WHERE workspace_id = ?",
+            (workspace_id,),
+        ).fetchone()
+    return workspace_index_from_row(row)
+
+
+def update_workspace_index_deployments(workspace_id: str, deployment_map: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    timestamp = now_text()
+    with get_connection() as conn:
+        current = conn.execute(
+            "SELECT * FROM workspace_indexes WHERE workspace_id = ?",
+            (workspace_id,),
+        ).fetchone()
+        if current:
+            next_version = int(current["version"] or 0) + 1
+            conn.execute(
+                """
+                UPDATE workspace_indexes
+                SET deployment_map_json = ?, version = ?, updated_at = ?, status = 'fresh', last_error = NULL
+                WHERE workspace_id = ?
+                """,
+                (_json_dump(deployment_map), next_version, timestamp, workspace_id),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO workspace_indexes (
+                    workspace_id, status, summary, tree_json, feature_map_json,
+                    artifact_map_json, deployment_map_json, recent_changes_json,
+                    version, last_run_id, last_error, updated_at
+                )
+                VALUES (?, 'fresh', '', '{}', '{}', '{}', ?, '[]', 1, NULL, NULL, ?)
+                """,
+                (workspace_id, _json_dump(deployment_map), timestamp),
+            )
+        row = conn.execute(
+            "SELECT * FROM workspace_indexes WHERE workspace_id = ?",
+            (workspace_id,),
+        ).fetchone()
+    return workspace_index_from_row(row) if row else None
+
+
+def mark_workspace_index_stale(workspace_id: str, error: str, last_run_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    timestamp = now_text()
+    with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT * FROM workspace_indexes WHERE workspace_id = ?",
+            (workspace_id,),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """
+                UPDATE workspace_indexes
+                SET status = 'stale', last_error = ?, last_run_id = COALESCE(?, last_run_id), updated_at = ?
+                WHERE workspace_id = ?
+                """,
+                (error, last_run_id, timestamp, workspace_id),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO workspace_indexes (
+                    workspace_id, status, summary, tree_json, feature_map_json,
+                    artifact_map_json, recent_changes_json, version, last_run_id,
+                    last_error, updated_at
+                )
+                VALUES (?, 'stale', '', '{}', '{}', '{}', '[]', 0, ?, ?, ?)
+                """,
+                (workspace_id, last_run_id, error, timestamp),
+            )
+        row = conn.execute(
+            "SELECT * FROM workspace_indexes WHERE workspace_id = ?",
+            (workspace_id,),
+        ).fetchone()
+    return workspace_index_from_row(row) if row else None
+
+
+def get_web_search_cache(cache_key: str) -> Optional[Dict[str, Any]]:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM web_search_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+    return web_search_cache_from_row(row) if row else None
+
+
+def upsert_web_search_cache(
+    cache_key: str,
+    provider: str,
+    query: str,
+    max_results: int,
+    region: str,
+    safesearch: str,
+    results: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    timestamp = now_text()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO web_search_cache (
+                cache_key, provider, query, max_results, region, safesearch,
+                results_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                provider = excluded.provider,
+                query = excluded.query,
+                max_results = excluded.max_results,
+                region = excluded.region,
+                safesearch = excluded.safesearch,
+                results_json = excluded.results_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                cache_key,
+                provider,
+                query,
+                max_results,
+                region,
+                safesearch,
+                _json_dump(results),
+                timestamp,
+                timestamp,
+            ),
+        )
+        row = conn.execute(
+            "SELECT * FROM web_search_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+    return web_search_cache_from_row(row)
+
+
 def bind_conversation_workspace(
     conversation_id: str,
     workspace_id: Optional[str],
@@ -2035,12 +2928,7 @@ def ensure_conversation_workspace(
         if workspace:
             Path(workspace["workspacePath"]).mkdir(parents=True, exist_ok=True)
             return workspace
-    workspace = create_workspace(
-        owner_user_id=owner_user_id,
-        name=f"{conversation['title']} Workspace",
-    )
-    bind_conversation_workspace(conversation_id, workspace["id"], owner_user_id=owner_user_id)
-    return workspace
+    return None
 
 
 def list_agents(
@@ -2155,6 +3043,9 @@ def create_agent(payload: Dict[str, Any], owner_user_id: Optional[str] = None) -
         name = "Custom Agent"
     category = payload.get("category", "custom")
     provider = payload.get("provider", "custom")
+    runtime = str(payload.get("runtime") or "native").strip() or "native"
+    model_config_id = str(payload.get("modelConfigId") or payload.get("model_config_id") or "").strip() or None
+    runtime_config = strip_agent_workspace_runtime_config(payload.get("runtimeConfig") if isinstance(payload.get("runtimeConfig"), dict) else {})
     enabled = bool(payload.get("enabled", True))
     status = payload.get("status") or ("online" if enabled else "disabled")
     if not enabled:
@@ -2170,10 +3061,11 @@ def create_agent(payload: Dict[str, Any], owner_user_id: Optional[str] = None) -
             """
             INSERT INTO agents (
                 id, owner_user_id, name, avatar, description, tags_json, status, category, provider,
+                runtime, model_config_id, runtime_config_json,
                 enabled, last_used_at, system_prompt, model_config_json, tools_json,
                 permissions_json, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 agent_id,
@@ -2185,6 +3077,9 @@ def create_agent(payload: Dict[str, Any], owner_user_id: Optional[str] = None) -
                 status,
                 category,
                 provider,
+                runtime,
+                model_config_id,
+                _json_dump(runtime_config),
                 1 if enabled else 0,
                 payload.get("lastUsedAt"),
                 payload.get("systemPrompt", ""),
@@ -2210,13 +3105,15 @@ def update_agent(agent_id: str, payload: Dict[str, Any], owner_user_id: Optional
         return None
 
     updated = {**current, **payload, "id": agent_id}
+    updated_runtime_config = strip_agent_workspace_runtime_config(updated.get("runtimeConfig", {}))
     timestamp = now_text()
     with get_connection() as conn:
         conn.execute(
             """
             UPDATE agents
             SET name = ?, avatar = ?, description = ?, tags_json = ?, status = ?,
-                category = ?, provider = ?, enabled = ?, last_used_at = ?,
+                category = ?, provider = ?, runtime = ?, model_config_id = ?,
+                runtime_config_json = ?, enabled = ?, last_used_at = ?,
                 system_prompt = ?, model_config_json = ?, tools_json = ?,
                 permissions_json = ?, updated_at = ?
             WHERE id = ?
@@ -2229,6 +3126,9 @@ def update_agent(agent_id: str, payload: Dict[str, Any], owner_user_id: Optional
                 updated.get("status", "offline"),
                 updated.get("category", "custom"),
                 updated.get("provider", "mock"),
+                updated.get("runtime", "native"),
+                updated.get("modelConfigId") or updated.get("model_config_id"),
+                _json_dump(updated_runtime_config),
                 1 if updated.get("enabled", True) else 0,
                 updated.get("lastUsedAt"),
                 updated.get("systemPrompt", ""),
@@ -2710,6 +3610,57 @@ def list_artifacts(conversation_id: str) -> List[Dict[str, Any]]:
     return [artifact_meta_from_row(row) for row in rows]
 
 
+def list_artifacts_for_run(run_id: str) -> List[Dict[str, Any]]:
+    artifact_ids = set()
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at DESC, rowid DESC",
+            (run_id,),
+        ).fetchall()
+        artifact_ids.update(row["id"] for row in rows)
+
+        version_rows = conn.execute(
+            """
+            SELECT artifact_id, metadata_json
+            FROM artifact_versions
+            WHERE metadata_json LIKE ?
+            """,
+            (f"%{run_id}%",),
+        ).fetchall()
+        for version_row in version_rows:
+            metadata = _json_load(version_row["metadata_json"], {})
+            if metadata.get("sourceRunId") == run_id:
+                artifact_ids.add(version_row["artifact_id"])
+
+        if not artifact_ids:
+            return []
+        placeholders = ",".join("?" for _ in artifact_ids)
+        artifact_rows = conn.execute(
+            f"""
+            SELECT *
+            FROM artifacts
+            WHERE id IN ({placeholders})
+            ORDER BY updated_at DESC, created_at DESC
+            """,
+            tuple(artifact_ids),
+        ).fetchall()
+    return [artifact_meta_from_row(row) for row in artifact_rows]
+
+
+def list_artifacts_for_message(message_id: str) -> List[Dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM artifacts
+            WHERE message_id = ?
+            ORDER BY created_at ASC, rowid ASC
+            """,
+            (message_id,),
+        ).fetchall()
+    return [artifact_meta_from_row(row) for row in rows]
+
+
 def get_artifact_version(version_id: str) -> Optional[Dict[str, Any]]:
     with get_connection() as conn:
         row = conn.execute("SELECT * FROM artifact_versions WHERE id = ?", (version_id,)).fetchone()
@@ -2959,6 +3910,10 @@ def create_agent_run(
     dag: Dict[str, Any],
     run_id: Optional[str] = None,
     workspace_id: Optional[str] = None,
+    runtime: str = "native",
+    model_config_id: Optional[str] = None,
+    runtime_session_id: Optional[str] = None,
+    runtime_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     run_id = run_id or create_id("run")
     timestamp = now_text()
@@ -2967,11 +3922,26 @@ def create_agent_run(
             """
             INSERT INTO agent_runs (
                 id, sandbox_id, conversation_id, owner_user_id, workspace_id, status,
-                prompt, dag_json, created_at, updated_at
+                prompt, dag_json, runtime, model_config_id, runtime_session_id,
+                runtime_metadata_json, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (run_id, sandbox_id, conversation_id, owner_user_id, workspace_id, prompt, _json_dump(dag), timestamp, timestamp),
+            (
+                run_id,
+                sandbox_id,
+                conversation_id,
+                owner_user_id,
+                workspace_id,
+                prompt,
+                _json_dump(dag),
+                runtime,
+                model_config_id,
+                runtime_session_id,
+                _json_dump(runtime_metadata or {}),
+                timestamp,
+                timestamp,
+            ),
         )
     update_sandbox(sandbox_id, run_id=run_id)
     return get_agent_run(run_id)
@@ -2998,6 +3968,8 @@ def update_agent_run(
     error: Optional[str] = None,
     mark_started: bool = False,
     mark_finished: bool = False,
+    runtime_session_id: Optional[str] = None,
+    runtime_metadata: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     current = get_agent_run(run_id)
     if not current:
@@ -3009,7 +3981,8 @@ def update_agent_run(
         conn.execute(
             """
             UPDATE agent_runs
-            SET status = ?, summary = ?, error = ?, started_at = ?, finished_at = ?, updated_at = ?
+            SET status = ?, summary = ?, error = ?, started_at = ?, finished_at = ?,
+                runtime_session_id = ?, runtime_metadata_json = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -3018,9 +3991,22 @@ def update_agent_run(
                 error if error is not None else current.get("error"),
                 started_at,
                 finished_at,
+                runtime_session_id if runtime_session_id is not None else current.get("runtimeSessionId"),
+                _json_dump(runtime_metadata if runtime_metadata is not None else current.get("runtimeMetadata", {})),
                 timestamp,
                 run_id,
             ),
+        )
+    return get_agent_run(run_id)
+
+
+def update_agent_run_dag(run_id: str, dag: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not get_agent_run(run_id):
+        return None
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE agent_runs SET dag_json = ?, updated_at = ? WHERE id = ?",
+            (_json_dump(dag), now_text(), run_id),
         )
     return get_agent_run(run_id)
 
@@ -3033,10 +4019,11 @@ def create_agent_run_steps(run_id: str, steps: List[Dict[str, Any]]) -> List[Dic
                 """
                 INSERT OR REPLACE INTO agent_run_steps (
                     id, run_id, agent_id, agent_name, task, depends_on_json,
-                    expected_outputs_json, status, output_json, logs,
+                    expected_outputs_json, status, runtime, model_config_id,
+                    runtime_metadata_json, output_json, logs,
                     created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', '{}', '', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, '{}', '', ?, ?)
                 """,
                 (
                     step["id"],
@@ -3046,6 +4033,9 @@ def create_agent_run_steps(run_id: str, steps: List[Dict[str, Any]]) -> List[Dic
                     step.get("task", ""),
                     _json_dump(step.get("dependsOn", [])),
                     _json_dump(step.get("expectedOutputs", [])),
+                    step.get("runtime", "native"),
+                    step.get("modelConfigId") or step.get("model_config_id"),
+                    _json_dump(step.get("runtimeMetadata", {})),
                     timestamp,
                     timestamp,
                 ),
@@ -3077,6 +4067,8 @@ def update_agent_run_step(
     error: Optional[str] = None,
     mark_started: bool = False,
     mark_finished: bool = False,
+    runtime_session_id: Optional[str] = None,
+    runtime_metadata: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     current = get_agent_run_step(step_id)
     if not current:
@@ -3092,7 +4084,8 @@ def update_agent_run_step(
             """
             UPDATE agent_run_steps
             SET status = ?, claimed_by = ?, output_json = ?, logs = ?, error = ?,
-                started_at = ?, finished_at = ?, updated_at = ?
+                started_at = ?, finished_at = ?, runtime_session_id = ?,
+                runtime_metadata_json = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -3103,6 +4096,8 @@ def update_agent_run_step(
                 error if error is not None else current.get("error"),
                 started_at,
                 finished_at,
+                runtime_session_id if runtime_session_id is not None else current.get("runtimeSessionId"),
+                _json_dump(runtime_metadata if runtime_metadata is not None else current.get("runtimeMetadata", {})),
                 timestamp,
                 step_id,
             ),
@@ -3123,6 +4118,7 @@ def get_agent_run_detail(run_id: str, owner_user_id: Optional[str] = None) -> Op
         "steps": list_agent_run_steps(run_id),
         "files": list_sandbox_files(run_id),
         "conflicts": list_sandbox_conflicts(run_id),
+        "artifacts": list_artifacts_for_run(run_id),
     }
 
 
@@ -3171,6 +4167,30 @@ def list_sandbox_files(run_id: str) -> List[Dict[str, Any]]:
     return [sandbox_file_from_row(row) for row in rows]
 
 
+def list_sandbox_files_for_workspace(workspace_id: str) -> List[Dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sandbox_files WHERE workspace_id = ? ORDER BY path ASC",
+            (workspace_id,),
+        ).fetchall()
+    return [sandbox_file_from_row(row) for row in rows]
+
+
+def get_sandbox_file_by_artifact(workspace_id: str, artifact_id: str) -> Optional[Dict[str, Any]]:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM sandbox_files
+            WHERE workspace_id = ? AND artifact_id = ?
+            ORDER BY updated_at DESC, rowid DESC
+            LIMIT 1
+            """,
+            (workspace_id, artifact_id),
+        ).fetchone()
+    return sandbox_file_from_row(row) if row else None
+
+
 def list_sandbox_files_changed_by_run(run_id: str) -> List[Dict[str, Any]]:
     with get_connection() as conn:
         rows = conn.execute(
@@ -3178,6 +4198,82 @@ def list_sandbox_files_changed_by_run(run_id: str) -> List[Dict[str, Any]]:
             (run_id,),
         ).fetchall()
     return [sandbox_file_from_row(row) for row in rows]
+
+
+def rollback_sandbox_files_for_run(run_id: str) -> List[Dict[str, Any]]:
+    timestamp = now_text()
+    rollback_items: List[Dict[str, Any]] = []
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        run_step_ids = {
+            row["id"]
+            for row in conn.execute(
+                "SELECT id FROM agent_run_steps WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+        }
+        rows = conn.execute(
+            "SELECT * FROM sandbox_files WHERE run_id = ? ORDER BY path ASC",
+            (run_id,),
+        ).fetchall()
+        for file_row in rows:
+            current_version = int(file_row["current_version"] or 0)
+            restore_version = current_version
+            restore_row = None
+            while restore_version > 0:
+                version_row = conn.execute(
+                    """
+                    SELECT *
+                    FROM sandbox_file_versions
+                    WHERE file_id = ? AND version = ?
+                    """,
+                    (file_row["id"], restore_version),
+                ).fetchone()
+                if not version_row:
+                    restore_version = 0
+                    break
+                created_by = str(version_row["created_by_step_id"] or "")
+                if created_by not in run_step_ids:
+                    restore_row = version_row
+                    break
+                restore_version = int(version_row["base_version"] or 0)
+
+            if restore_row:
+                restored_content = restore_row["content"] or ""
+                restored_hash = restore_row["content_hash"] or _content_hash(restored_content)
+                restored_size = len(restored_content.encode("utf-8"))
+                conn.execute(
+                    """
+                    UPDATE sandbox_files
+                    SET content_hash = ?, current_version = ?, sha256 = ?, size = ?,
+                        is_text = 1, content_preview = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        restored_hash,
+                        int(restore_row["version"]),
+                        restored_hash,
+                        restored_size,
+                        restored_content[:4000],
+                        timestamp,
+                        file_row["id"],
+                    ),
+                )
+                rollback_items.append({
+                    "path": file_row["path"],
+                    "action": "restored",
+                    "restoredVersion": int(restore_row["version"]),
+                    "content": restored_content,
+                })
+            else:
+                conn.execute("DELETE FROM sandbox_files WHERE id = ?", (file_row["id"],))
+                rollback_items.append({
+                    "path": file_row["path"],
+                    "action": "deleted",
+                    "restoredVersion": 0,
+                    "content": None,
+                })
+    return rollback_items
 
 
 def get_sandbox_file(run_id: str, file_path: str) -> Optional[Dict[str, Any]]:
@@ -3218,9 +4314,14 @@ def create_sandbox_file_version(
     content: str,
     base_version: int,
     created_by_step_id: Optional[str] = None,
+    mime_type: str = "text/plain",
+    size: Optional[int] = None,
+    content_preview: Optional[str] = None,
 ) -> Dict[str, Any]:
     timestamp = now_text()
     content_hash = _content_hash(content)
+    file_size = size if size is not None else len(content.encode("utf-8"))
+    preview = content_preview if content_preview is not None else content[:4000]
 
     def create_conflict(conn: sqlite3.Connection, file_row: sqlite3.Row, current_version: int) -> Dict[str, Any]:
         conflict_id = create_id("conflict")
@@ -3266,11 +4367,11 @@ def create_sandbox_file_version(
             """
             INSERT OR IGNORE INTO sandbox_files (
                 id, sandbox_id, run_id, workspace_id, path, content_hash, current_version,
-                created_at, updated_at
+                mime_type, size, sha256, is_text, content_preview, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, '', 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, '', 0, ?, 0, '', 1, '', ?, ?)
             """,
-            (create_id("file"), sandbox_id, run_id, workspace_id, file_path, timestamp, timestamp),
+            (create_id("file"), sandbox_id, run_id, workspace_id, file_path, mime_type, timestamp, timestamp),
         )
         if workspace_id:
             file_row = conn.execute(
@@ -3306,10 +4407,11 @@ def create_sandbox_file_version(
         conn.execute(
             """
             UPDATE sandbox_files
-            SET sandbox_id = ?, run_id = ?, workspace_id = ?, content_hash = ?, current_version = ?, updated_at = ?
+            SET sandbox_id = ?, run_id = ?, workspace_id = ?, content_hash = ?, current_version = ?,
+                mime_type = ?, size = ?, sha256 = ?, is_text = 1, content_preview = ?, updated_at = ?
             WHERE id = ?
             """,
-            (sandbox_id, run_id, workspace_id, content_hash, next_version, timestamp, file_row["id"]),
+            (sandbox_id, run_id, workspace_id, content_hash, next_version, mime_type, file_size, content_hash, preview, timestamp, file_row["id"]),
         )
         file_row = conn.execute("SELECT * FROM sandbox_files WHERE id = ?", (file_row["id"],)).fetchone()
         version_row = conn.execute("SELECT * FROM sandbox_file_versions WHERE id = ?", (version_id,)).fetchone()
@@ -3317,6 +4419,108 @@ def create_sandbox_file_version(
             "status": "saved",
             "file": sandbox_file_from_row(file_row),
             "version": sandbox_file_version_from_row(version_row),
+        }
+
+
+def upsert_sandbox_file_metadata(
+    sandbox_id: str,
+    run_id: str,
+    file_path: str,
+    mime_type: str,
+    size: int,
+    sha256: str,
+    is_text: bool,
+    content_preview: str = "",
+    content: str = "",
+    created_by_step_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    timestamp = now_text()
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        sandbox = conn.execute(
+            "SELECT * FROM sandboxes WHERE id = ? AND run_id = ?",
+            (sandbox_id, run_id),
+        ).fetchone()
+        if not sandbox:
+            raise ValueError("sandbox not found for run")
+        workspace_id = sandbox["workspace_id"]
+        if not workspace_id:
+            run = conn.execute("SELECT * FROM agent_runs WHERE id = ?", (run_id,)).fetchone()
+            workspace_id = run["workspace_id"] if run else None
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO sandbox_files (
+                id, sandbox_id, run_id, workspace_id, path, content_hash, current_version,
+                mime_type, size, sha256, is_text, content_preview, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, '', 0, ?, 0, '', ?, '', ?, ?)
+            """,
+            (create_id("file"), sandbox_id, run_id, workspace_id, file_path, mime_type, 1 if is_text else 0, timestamp, timestamp),
+        )
+        if workspace_id:
+            file_row = conn.execute(
+                "SELECT * FROM sandbox_files WHERE workspace_id = ? AND path = ?",
+                (workspace_id, file_path),
+            ).fetchone()
+        else:
+            file_row = conn.execute(
+                "SELECT * FROM sandbox_files WHERE sandbox_id = ? AND path = ?",
+                (sandbox_id, file_path),
+            ).fetchone()
+        current_sha = file_row["sha256"] or file_row["content_hash"] or ""
+        has_changed = current_sha != sha256
+        next_version = int(file_row["current_version"] or 0)
+        version_row = None
+        if has_changed:
+            next_version += 1
+            version_id = create_id("fileVersion")
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO sandbox_file_versions (
+                    id, file_id, version, content, content_hash,
+                    created_by_step_id, base_version, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    version_id,
+                    file_row["id"],
+                    next_version,
+                    content if is_text else "",
+                    sha256,
+                    created_by_step_id,
+                    max(next_version - 1, 0),
+                    timestamp,
+                ),
+            )
+            version_row = conn.execute("SELECT * FROM sandbox_file_versions WHERE id = ?", (version_id,)).fetchone()
+        conn.execute(
+            """
+            UPDATE sandbox_files
+            SET sandbox_id = ?, run_id = ?, workspace_id = ?, content_hash = ?, current_version = ?,
+                mime_type = ?, size = ?, sha256 = ?, is_text = ?, content_preview = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                sandbox_id if has_changed else file_row["sandbox_id"],
+                run_id if has_changed else file_row["run_id"],
+                workspace_id,
+                sha256,
+                next_version,
+                mime_type,
+                int(size or 0),
+                sha256,
+                1 if is_text else 0,
+                content_preview[:4000],
+                timestamp,
+                file_row["id"],
+            ),
+        )
+        file_row = conn.execute("SELECT * FROM sandbox_files WHERE id = ?", (file_row["id"],)).fetchone()
+        return {
+            "status": "saved",
+            "file": sandbox_file_from_row(file_row),
+            "version": sandbox_file_version_from_row(version_row) if version_row else None,
         }
 
 
@@ -3491,7 +4695,7 @@ def list_effective_messages(
             SELECT *
             FROM messages
             WHERE conversation_id = ?
-              AND type IN ('text', 'code', 'task-plan')
+              AND type IN ('text', 'code', 'task-plan', 'artifact')
               AND sender_id != 'system'
               AND content != ''
               {after_clause}

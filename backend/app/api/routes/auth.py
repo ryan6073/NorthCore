@@ -16,6 +16,16 @@ from app.services.ws_service import *
 
 router = APIRouter(prefix="/api/v1")
 
+
+def _auth_payload(user: Dict[str, Any], session: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "user": user,
+        "token": session.get("token"),
+        "tokenType": session.get("tokenType", "Bearer"),
+        "expiresAt": session.get("expiresAt"),
+    }
+
+
 @router.post("/auth/register")
 async def api_register(payload: Dict[str, Any] = Body(...)):
     email = str(payload.get("email", "")).strip().lower()
@@ -30,7 +40,7 @@ async def api_register(payload: Dict[str, Any] = Body(...)):
     if not user:
         return fail(40004, "邮箱已注册")
     session = create_user_session(user["id"])
-    return ok(auth_payload(user, session), message="注册成功")
+    return ok(_auth_payload(user, session), message="注册成功")
 
 
 @router.post("/auth/login")
@@ -42,14 +52,14 @@ async def api_login(payload: Dict[str, Any] = Body(...)):
         return fail(40005, "邮箱或密码错误")
     ensure_user_contact_conversations(user["id"])
     session = create_user_session(user["id"])
-    return ok(auth_payload(user, session), message="登录成功")
+    return ok(_auth_payload(user, session), message="登录成功")
 
 
 @router.post("/auth/guest")
 async def api_guest_login():
     user = get_or_create_guest_user()
     session = create_user_session(user["id"])
-    return ok(auth_payload(user, session), message="游客登录成功")
+    return ok(_auth_payload(user, session), message="游客登录成功")
 
 
 @router.get("/auth/me")

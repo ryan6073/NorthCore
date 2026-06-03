@@ -14,6 +14,7 @@ from app.services.message_service import *
 from app.services.sandbox_preview_service import build_sandbox_html_preview
 from app.services.run_service import *
 from app.services.ws_service import *
+from app.runtimes.router import runtime_router
 
 router = APIRouter(prefix="/api/v1")
 
@@ -38,7 +39,9 @@ async def api_create_run(conversation_id: str, payload: Dict[str, Any] = Body(..
         await emit_run_event(current_user, conversation_id, event_type, data)
 
     try:
-        detail = await create_run_for_conversation(
+        run_agent = choose_target_agent(conversation, str(payload.get("targetAgentId") or "").strip() or None) or choose_agent_for_conversation(conversation)
+        detail = await runtime_router.create_run(
+            run_agent,
             current_user=current_user,
             conversation_id=conversation_id,
             prompt=prompt,
@@ -61,6 +64,15 @@ async def api_list_conversation_runs(
     conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
     if not conversation:
         return fail(40001, "会话不存在")
+    page_data = list_agent_runs_for_conversation(
+        conversation_id,
+        owner_user_id=current_user["id"],
+        page=page,
+        page_size=pageSize,
+    )
+    for item in page_data.get("items") or []:
+        if item.get("status") == "running":
+            await recover_orphaned_finished_run(item["id"], owner_user_id=current_user["id"])
     return ok(
         list_agent_runs_for_conversation(
             conversation_id,
@@ -77,7 +89,28 @@ async def api_get_run(run_id: str, authorization: Optional[str] = Header(None)):
     detail = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
     if not detail:
         return fail(40001, "Run 不存在")
+    detail = await recover_orphaned_finished_run(run_id, owner_user_id=current_user["id"]) or detail
     return ok(detail)
+
+
+@router.post("/runs/{run_id}/retry")
+async def api_retry_run(run_id: str, authorization: Optional[str] = Header(None)):
+    current_user = current_user_or_default(authorization)
+    original = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
+    if not original:
+        return fail(40001, "Run 不存在")
+
+    async def emit(event_type: str, data: Dict[str, Any]) -> None:
+        await emit_run_event(current_user, original["conversationId"], event_type, data)
+
+    try:
+        result = await retry_agent_run(current_user, run_id, emit=emit)
+    except ValueError as exc:
+        message = str(exc)
+        if message == "Run 不存在":
+            return fail(40001, message)
+        return fail(40000, message)
+    return ok(result, message="Run 重试已创建")
 
 
 @router.get("/runs/{run_id}/files")
@@ -179,10 +212,52 @@ async def api_cancel_run(run_id: str, authorization: Optional[str] = Header(None
         sandbox_service = SandboxService()
         await sandbox_service.stop_container(sandbox["id"], sandbox.get("containerId"))
         update_sandbox(sandbox["id"], status="cancelled")
+    payload = build_run_event_payload(run_id, {"status": "cancelled", "summary": "用户已取消", "artifactChanges": []})
     await emit_run_event(
         current_user,
         detail["conversationId"],
         "run.failed",
-        build_run_event_payload(run_id, {"status": "cancelled"}),
+        payload,
+    )
+    await emit_run_event(
+        current_user,
+        detail["conversationId"],
+        "conversation.all_tasks.completed",
+        payload,
     )
     return ok(get_agent_run_detail(run_id, owner_user_id=current_user["id"]), message="Run 已取消")
+
+
+@router.post("/runs/{run_id}/rollback")
+async def api_rollback_run(run_id: str, authorization: Optional[str] = Header(None)):
+    current_user = current_user_or_default(authorization)
+    try:
+        result = rollback_run_workspace_changes(run_id, owner_user_id=current_user["id"])
+    except ValueError as exc:
+        message = str(exc)
+        if message == "Run 不存在":
+            return fail(40001, message)
+        return fail(40000, message)
+
+    payload = build_run_event_payload(
+        run_id,
+        {
+            "status": "cancelled",
+            "summary": "用户已撤销本次文件改动",
+            "artifactChanges": [],
+            "rollbackChanges": result.get("rollbackChanges", []),
+        },
+    )
+    await emit_run_event(
+        current_user,
+        result["run"]["conversationId"],
+        "run.failed",
+        payload,
+    )
+    await emit_run_event(
+        current_user,
+        result["run"]["conversationId"],
+        "conversation.all_tasks.completed",
+        payload,
+    )
+    return ok(result, message="Run 文件改动已撤销")

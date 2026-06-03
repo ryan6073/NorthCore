@@ -64,6 +64,8 @@ async def api_create_conversation(payload: Dict[str, Any] = Body(...), authoriza
         return fail(40000, "会话标题不能为空")
     if mode not in {"single", "group"}:
         return fail(40000, "mode 只支持 single 或 group；agent 会话由 Agent 联系人接口自动创建")
+    if not workspace_id:
+        return fail(40000, "创建 single/group 会话必须选择或新建工作区")
     if not isinstance(agent_ids, list) or not agent_ids:
         return fail(40000, "agentIds 不能为空")
     agent_ids = ensure_orchestrator_for_group(mode, agent_ids)

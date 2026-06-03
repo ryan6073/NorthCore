@@ -62,7 +62,19 @@ class SandboxService:
             "--security-opt",
             "no-new-privileges",
             "-e",
-            "HOME=/workspace",
+            "HOME=/tmp/agenthub-home",
+            "-e",
+            "UV_CACHE_DIR=/tmp/uv-cache",
+            "-e",
+            "PIP_CACHE_DIR=/tmp/pip-cache",
+            "-e",
+            "MPLCONFIGDIR=/tmp/mpl-cache",
+            "-e",
+            "XDG_CACHE_HOME=/tmp/.cache",
+            "-e",
+            "XDG_CONFIG_HOME=/tmp/.config",
+            "-e",
+            "PYTHONUNBUFFERED=1",
             "-e",
             "DEBIAN_FRONTEND=noninteractive",
             "-e",
@@ -84,9 +96,9 @@ class SandboxService:
             command.extend(["--read-only", "--tmpfs", "/tmp:rw,size=256m"])
         command.extend([
             self.image,
-            "tail",
-            "-f",
-            "/dev/null",
+            "sh",
+            "-lc",
+            "mkdir -p /tmp/agenthub-home /tmp/uv-cache /tmp/pip-cache /tmp/mpl-cache /tmp/.cache /tmp/.config && tail -f /dev/null",
         ])
         proc = await asyncio.create_subprocess_exec(
             *command,
@@ -181,7 +193,10 @@ class SandboxService:
         size = target.stat().st_size
         if size > limit:
             raise ValueError(f"file too large: {size} bytes")
-        content = target.read_text(encoding="utf-8")
+        try:
+            content = target.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("workspace 文件不是 UTF-8 文本，当前版本系统暂不支持导入二进制文件") from exc
         return {
             "path": relative_path,
             "size": size,

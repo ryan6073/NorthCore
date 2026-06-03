@@ -17,7 +17,7 @@
 - 同一个 conversation 下的多个 run 默认复用同一个 `workspacePath`。
 - `run` 仍然是一次任务执行记录。
 - `sandbox/container` 仍然按 run 临时创建，但挂载的是 conversation 绑定的 workspace 目录。
-- 如果旧前端创建 run 时没有传 `workspaceId`，后端会自动创建默认 workspace 并绑定到 conversation。
+- 后端不再自动创建 workspace；`single/group` conversation 创建时必须传入已存在的 `workspaceId`。
 - `agent` 联系人会话本轮先不做 workspace 选择入口，前端接入时只考虑 `single/group`。
 
 关系可以理解为：
@@ -73,12 +73,12 @@ interface Workspace {
 前端建议：
 
 - 在创建 `single/group` 会话时提供“新建 workspace / 选择已有 workspace”的入口。
-- 如果用户没有选择 workspace，可以不传 `workspaceId`，后端会在第一次创建 run 时兜底创建。
-- 如果产品上希望会话创建后立即有 workspace，则先 `POST /workspaces`，再把返回的 `id` 作为 `workspaceId` 传给创建会话接口。
+- 用户必须选择或新建 workspace；不传 `workspaceId` 时，后端会拒绝创建 `single/group` 会话。
+- 前端应先 `POST /workspaces` 或选择已有 workspace，再把返回的 `id` 作为 `workspaceId` 传给创建会话接口。
 
 ### 2.2 Conversation 增加 workspaceId
 
-创建 conversation 时可选传：
+创建 `single/group` conversation 时必须传：
 
 ```http
 POST /api/v1/conversations
@@ -117,8 +117,8 @@ interface Conversation {
 
 前端注意：
 
-- `workspaceId` 可以为空，表示还没绑定。
-- 旧会话第一次创建 run 时，后端会自动补 workspace。
+- 新建 `single/group` 会话时 `workspaceId` 不可为空。
+- 历史会话如果没有 workspace，创建 run 时会被后端拒绝，并提示选择或新建工作区。
 - 更新 workspace 绑定时，后端会校验 workspace 是否属于当前用户。
 - 前端本轮只给 `single/group` 会话展示 workspace 创建/选择；`agent` 会话先不展示该入口。
 
@@ -273,7 +273,7 @@ interface SandboxRunState {
 
 ## 4. 兼容性说明
 
-- 老前端不传 `workspaceId` 创建 run：可以继续工作。
+- 老前端不传 `workspaceId` 创建 run：不再继续工作，后端会提示先选择或新建工作区。
 - 老前端继续调用 `/runs/{runId}/files`：仍返回平铺列表。
 - 新前端可以改用 `/runs/{runId}/files/tree` 渲染目录树。
 - Artifact 相关接口保持不变。

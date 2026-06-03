@@ -75,3 +75,9 @@ node_modules/
 # build output
 dist/
 build/
+
+docker
+
+sandboxes/
+
+docs/

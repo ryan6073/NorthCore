@@ -10,16 +10,22 @@ from app.api.deps import current_user_or_default, extract_bearer_token, user_fro
 from app.api.responses import fail, ok
 from app.config import settings
 from app.core.llm_client import client
-from app.core.orchestrator import AGENT_CONFIGS, analyze_orchestrator_intent, classify_message_execution_mode
+from app.core.orchestrator import AGENT_CONFIGS, analyze_orchestrator_intent
 from app.database import *
+from app.model_providers.service import create_openai_client_for_agent, model_name_for_agent
+from app.runtimes.router import runtime_router
 from app.services.file_version_service import FileVersionService
-from app.services.run_scheduler import RunScheduler, generate_dag
+from app.services.intent_service import classify_for_conversation
 from app.services.sandbox_service import SandboxService
+from app.services.web_search_service import prepare_web_search_for_chat
+from app.services.workspace_agents_service import read_workspace_agents_context
 
 API_PREFIX = "/api/v1"
 CONTEXT_CHAR_THRESHOLD = 8000
 CONTEXT_RETAIN_MESSAGE_COUNT = 12
 CONTEXT_CAPACITY_CHARS = 200_000
+ARTIFACT_CONTEXT_MAX_CHARS = 12_000
+ARTIFACT_RESOLUTION_CONFIDENCE_THRESHOLD = 0.78
 MEMORY_EXTRACT_SYSTEM_PROMPT = """你是 AgentHub 的长期记忆提取器。
 请判断本轮持久会话是否包含值得长期保存的信息。
 
@@ -56,6 +62,40 @@ CONTEXT_SUMMARY_SYSTEM_PROMPT = """你是 AgentHub 的会话压缩器。
 - 忽略 API key 错误、Unauthorized、模型调用失败等临时错误提示
 - 摘要要紧凑、结构清晰，可直接作为后续模型上下文
 """
+ARTIFACT_RESOLVER_SYSTEM_PROMPT = """你是 AgentHub 的产物引用解析器。
+你的任务是在用户没有显式 artifactRef 时，判断当前消息是否需要加载某个已存在的 Artifact。
+
+要求：
+- 只根据用户当前消息、最近上下文占位符和候选 Artifact 列表判断。
+- 不要编造 artifactId。
+- 如果不确定，返回 shouldLoadArtifact=false，并设置 needsClarification=true。
+- 只输出 JSON，不要输出解释性正文。
+
+JSON 格式：
+{
+  "shouldLoadArtifact": true,
+  "confidence": 0.0,
+  "artifactId": "artifact-xxx",
+  "loadScope": {
+    "mode": "full | lines | preview",
+    "startLine": null,
+    "endLine": null
+  },
+  "reason": "简短原因",
+  "needsClarification": false
+}
+"""
+
+AUTO_ARTIFACT_REFERENCE_MARKERS = (
+    "刚才", "之前", "前面", "上面", "这个", "那个", "这里", "这段", "原文",
+    "文件", "代码", "产物", "python", ".py", "html", "artifact",
+    "修改", "改", "替换", "换成", "不要", "给我", "修复", "更新",
+)
+
+TARGET_CLARIFICATION_MARKERS = (
+    "刚才", "之前", "前面", "上面", "这个", "那个", "原文", "文件", "代码",
+    "python", ".py", "html", "产物", "artifact",
+)
 
 
 class WebSocketConnectionManager:
@@ -132,6 +172,9 @@ CONVERSATION_AGENT_CONFIG_FIELDS = {
     "status",
     "category",
     "provider",
+    "runtime",
+    "modelConfigId",
+    "runtimeConfig",
     "enabled",
     "lastUsedAt",
     "systemPrompt",
@@ -167,11 +210,14 @@ def find_sensitive_model_config_key(value: Any, path: str = "modelConfig") -> Op
 
 
 def validate_agent_payload_security(payload: Dict[str, Any]) -> Optional[str]:
-    if "modelConfig" not in payload:
-        return None
-    sensitive_path = find_sensitive_model_config_key(payload.get("modelConfig"))
-    if sensitive_path:
-        return f"当前版本不支持提交模型密钥或敏感鉴权字段: {sensitive_path}"
+    if "modelConfig" in payload:
+        sensitive_path = find_sensitive_model_config_key(payload.get("modelConfig"))
+        if sensitive_path:
+            return f"当前版本不支持提交模型密钥或敏感鉴权字段: {sensitive_path}"
+    if "runtimeConfig" in payload:
+        sensitive_path = find_sensitive_model_config_key(payload.get("runtimeConfig"), "runtimeConfig")
+        if sensitive_path:
+            return f"runtimeConfig 不允许提交模型密钥或敏感鉴权字段: {sensitive_path}"
     return None
 
 
@@ -289,6 +335,73 @@ def get_enabled_orchestrator(conversation: Dict[str, Any]) -> Optional[Dict[str,
         return None
     agent = get_agent("agent-orchestrator")
     return agent if agent_is_callable(agent) else None
+
+
+def callable_group_member_agents(conversation: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if conversation.get("mode") != "group":
+        return []
+    agents: List[Dict[str, Any]] = []
+    for agent_id in conversation.get("agentIds") or []:
+        if agent_id == ORCHESTRATOR_AGENT_ID:
+            continue
+        agent = get_effective_agent_for_conversation(conversation, agent_id)
+        if agent_is_callable(agent):
+            agents.append(agent)
+    return agents
+
+
+def _score_agent_for_task(agent: Dict[str, Any], task_text: str) -> int:
+    text = (
+        f"{agent.get('name') or ''} "
+        f"{agent.get('description') or ''} "
+        f"{' '.join(agent.get('tags') or [])}"
+    ).lower()
+    task = task_text.lower()
+    score = 0
+    if any(marker in task_text or marker in task for marker in ("图表", "流程图", "时序图", "架构图", "mermaid", "diagram")):
+        score += 5 if any(marker in text for marker in ("图表", "mermaid", "diagram")) else 0
+    if any(marker in task_text or marker in task for marker in ("文档", "markdown", "docx", "ppt", "汇报", "总结")):
+        score += 5 if any(marker in text for marker in ("文档", "markdown", "ppt", "document")) else 0
+    if any(marker in task_text or marker in task for marker in ("review", "审查", "bug", "修复", "代码", "实现", "开发")):
+        score += 4 if any(marker in text for marker in ("codex", "代码", "code", "开发", "工程", "bug")) else 0
+    return score
+
+
+def normalize_group_task_plan_for_conversation(
+    conversation: Dict[str, Any],
+    task_plan: List[Dict[str, Any]],
+    user_input: str,
+) -> List[Dict[str, Any]]:
+    agents = callable_group_member_agents(conversation)
+    if not agents:
+        return []
+    by_id = {str(agent["id"]): agent for agent in agents}
+    by_name = {str(agent.get("name") or ""): agent for agent in agents if agent.get("name")}
+    normalized: List[Dict[str, Any]] = []
+    for step in task_plan or []:
+        if not isinstance(step, dict):
+            continue
+        task = str(step.get("task") or user_input).strip()
+        if not task:
+            continue
+        raw_agent_id = str(step.get("agentId") or "").strip()
+        raw_agent_name = str(step.get("agentName") or step.get("agent") or "").strip()
+        agent = by_id.get(raw_agent_id) or by_name.get(raw_agent_name)
+        if not agent:
+            agent = max(agents, key=lambda item: _score_agent_for_task(item, task))
+        normalized.append({
+            "agentId": agent["id"],
+            "agentName": agent.get("name") or "Agent",
+            "task": task,
+        })
+    if normalized:
+        return normalized[:4]
+    fallback = max(agents, key=lambda item: _score_agent_for_task(item, user_input))
+    return [{
+        "agentId": fallback["id"],
+        "agentName": fallback.get("name") or "Agent",
+        "task": user_input,
+    }]
 
 
 def system_prompt_for_agent(agent: Optional[Dict[str, Any]]) -> str:
@@ -423,13 +536,17 @@ def build_artifact_ref_context(
     start_line = raw_ref.get("startLine")
     end_line = raw_ref.get("endLine")
     if not quoted_text and artifact.get("content"):
-        try:
-            start = max(int(start_line or 1), 1)
-            end = max(int(end_line or start), start)
-            lines = str(artifact.get("content") or "").splitlines()
-            quoted_text = "\n".join(lines[start - 1:end]).strip()
-        except (TypeError, ValueError):
-            quoted_text = str(artifact.get("content") or "")[:8000]
+        content = str(artifact.get("content") or "")
+        if start_line is None and end_line is None:
+            quoted_text = content[:ARTIFACT_CONTEXT_MAX_CHARS]
+        else:
+            try:
+                start = max(int(start_line or 1), 1)
+                end = max(int(end_line or start), start)
+                lines = content.splitlines()
+                quoted_text = "\n".join(lines[start - 1:end]).strip()
+            except (TypeError, ValueError):
+                quoted_text = content[:ARTIFACT_CONTEXT_MAX_CHARS]
 
     artifact_ref = {
         "artifactId": artifact_id,
@@ -438,9 +555,58 @@ def build_artifact_ref_context(
         "version": raw_ref.get("version") or artifact.get("latestVersion"),
         "startLine": start_line,
         "endLine": end_line,
-        "quotedText": quoted_text[:12000],
+        "quotedText": quoted_text[:ARTIFACT_CONTEXT_MAX_CHARS],
     }
     return artifact_ref, None
+
+
+def artifact_meta_from_detail(artifact: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: v for k, v in artifact.items() if k not in {"content", "currentVersion"}}
+
+
+def render_artifact_placeholder(artifact: Dict[str, Any]) -> str:
+    title = artifact.get("title") or artifact.get("artifactTitle") or "untitled"
+    artifact_id = artifact.get("id") or artifact.get("artifactId")
+    artifact_type = artifact.get("type") or artifact.get("artifactType") or "unknown"
+    version = artifact.get("latestVersion") or artifact.get("version") or "unknown"
+    return (
+        f"[Artifact: {title} | id={artifact_id} | type={artifact_type} "
+        f"| version={version} | url={API_PREFIX}/artifacts/{artifact_id}]"
+    )
+
+
+def related_artifact_placeholders_for_message(message: Dict[str, Any]) -> List[str]:
+    placeholders: List[str] = []
+    seen: Set[str] = set()
+    artifact_id = message.get("artifactId")
+    if artifact_id:
+        artifact = get_artifact(artifact_id)
+        if artifact:
+            seen.add(artifact["id"])
+            placeholders.append(render_artifact_placeholder(artifact_meta_from_detail(artifact)))
+    message_id = message.get("id")
+    if message_id:
+        for artifact in list_artifacts_for_message(message_id):
+            if artifact["id"] in seen:
+                continue
+            seen.add(artifact["id"])
+            placeholders.append(render_artifact_placeholder(artifact))
+    metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+    artifact_ref = metadata.get("artifactRef") if isinstance(metadata.get("artifactRef"), dict) else None
+    if artifact_ref and artifact_ref.get("artifactId") not in seen:
+        placeholders.append(render_artifact_placeholder(artifact_ref))
+    return placeholders
+
+
+def render_message_for_model_context(message: Dict[str, Any]) -> str:
+    role_label = "用户" if message.get("role") == "user" else message.get("senderName", "Agent")
+    placeholders = related_artifact_placeholders_for_message(message)
+    if placeholders:
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        if message.get("role") == "user" and isinstance(metadata.get("artifactRef"), dict):
+            return f"{role_label}: {message.get('content', '')}\n" + "\n".join(placeholders)
+        return f"{role_label}: " + "\n".join(placeholders)
+    return f"{role_label}: {message.get('content', '')}"
 
 
 def build_user_input_with_references(
@@ -486,6 +652,161 @@ def build_user_input_with_references(
     return "\n\n".join(sections)
 
 
+def should_attempt_auto_artifact_resolution(content: str) -> bool:
+    normalized = (content or "").strip().lower()
+    if not normalized:
+        return False
+    return any(marker in content or marker in normalized for marker in AUTO_ARTIFACT_REFERENCE_MARKERS)
+
+
+def payload_with_resolved_artifact_ref(payload: Dict[str, Any], artifact_ref: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not artifact_ref:
+        return payload
+    if isinstance(payload.get("artifactRef"), dict):
+        return payload
+    return {**payload, "artifactRef": artifact_ref}
+
+
+def latest_pending_workspace_clarification(conversation_id: str) -> Optional[Dict[str, Any]]:
+    messages = list_effective_messages(conversation_id)[-12:]
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        action_context = metadata.get("workspaceActionContext") if isinstance(metadata.get("workspaceActionContext"), dict) else None
+        if not action_context or action_context.get("action") != "clarify":
+            continue
+        if metadata.get("event") != "workspace.action.decision":
+            continue
+        original_user = None
+        for previous in reversed(messages[:index]):
+            if previous.get("role") == "user":
+                original_user = previous
+                break
+        if not original_user:
+            return None
+        return {
+            "clarificationMessage": message,
+            "originalUserMessage": original_user,
+            "workspaceActionContext": action_context,
+        }
+    return None
+
+
+def looks_like_target_clarification(content: str, artifact_ref: Optional[Dict[str, Any]]) -> bool:
+    if not artifact_ref:
+        return False
+    normalized = (content or "").strip().lower()
+    if not normalized:
+        return False
+    return any(marker in content or marker in normalized for marker in TARGET_CLARIFICATION_MARKERS)
+
+
+def build_execution_input_for_workspace_action(
+    content: str,
+    model_user_input: str,
+    pending_clarification: Optional[Dict[str, Any]],
+    artifact_ref: Optional[Dict[str, Any]],
+) -> str:
+    if not pending_clarification or not looks_like_target_clarification(content, artifact_ref):
+        return model_user_input
+    original = pending_clarification.get("originalUserMessage") or {}
+    original_content = str(original.get("content") or "").strip()
+    if not original_content:
+        return model_user_input
+    return (
+        "[用户先前的修改需求]\n"
+        f"{original_content}\n\n"
+        "[用户本轮补充的目标文件/产物]\n"
+        f"{model_user_input}"
+    )
+
+
+async def resolve_artifact_context_with_model(
+    content: str,
+    conversation_id: str,
+    owner_user_id: str,
+) -> Optional[Dict[str, Any]]:
+    artifacts = list_artifacts(conversation_id)
+    if not artifacts:
+        return None
+    candidate_artifacts = artifacts[:20]
+    candidate_ids = {artifact["id"] for artifact in candidate_artifacts}
+    recent_messages = list_effective_messages(conversation_id)[-8:]
+    recent_context = "\n".join(render_message_for_model_context(message) for message in recent_messages)
+    candidates_text = "\n".join(
+        f"- id={artifact['id']} title={artifact['title']} type={artifact['type']} "
+        f"version={artifact.get('latestVersion')}"
+        for artifact in candidate_artifacts
+    )
+    user_prompt = (
+        f"用户当前消息：\n{content}\n\n"
+        f"最近上下文（Artifact 只以占位符出现）：\n{recent_context or '无'}\n\n"
+        f"候选 Artifact：\n{candidates_text}\n\n"
+        "请判断是否需要加载某个 Artifact 内容供正式回答使用。"
+    )
+    try:
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model=settings.MODEL_EP,
+            messages=[
+                {"role": "system", "content": ARTIFACT_RESOLVER_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            stream=False,
+        )
+        raw_content = response.choices[0].message.content or ""
+        payload = parse_json_object(raw_content)
+    except Exception as exc:
+        print(f"❌ [Artifact Resolver Error]: {format_model_error(exc)}")
+        return None
+
+    if not payload.get("shouldLoadArtifact"):
+        return None
+    try:
+        confidence = float(payload.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0
+    artifact_id = str(payload.get("artifactId") or "").strip()
+    if confidence < ARTIFACT_RESOLUTION_CONFIDENCE_THRESHOLD or artifact_id not in candidate_ids:
+        return None
+
+    load_scope = payload.get("loadScope") if isinstance(payload.get("loadScope"), dict) else {}
+    mode = str(load_scope.get("mode") or "full").strip().lower()
+    raw_ref: Dict[str, Any] = {"artifactId": artifact_id}
+    if mode == "lines":
+        raw_ref["startLine"] = load_scope.get("startLine")
+        raw_ref["endLine"] = load_scope.get("endLine")
+    artifact_ref, error = build_artifact_ref_context(
+        {"artifactRef": raw_ref},
+        conversation_id,
+        owner_user_id,
+    )
+    if error:
+        print(f"❌ [Artifact Resolver Load Error]: {error}")
+        return None
+    if artifact_ref:
+        artifact_ref["resolution"] = {
+            "source": "model",
+            "confidence": confidence,
+            "reason": str(payload.get("reason") or ""),
+            "needsClarification": bool(payload.get("needsClarification")),
+        }
+    return artifact_ref
+
+
+async def resolve_artifact_context_for_message(
+    payload: Dict[str, Any],
+    conversation_id: str,
+    owner_user_id: str,
+    content: str,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    # Artifact references are manual-only. Do not infer artifactRef from recent
+    # context, otherwise the UI shows an implicit quote card that the user did
+    # not choose. Workspace targeting is handled by workspace_index_context.
+    artifact_ref, artifact_ref_error = build_artifact_ref_context(payload, conversation_id, owner_user_id)
+    return artifact_ref, artifact_ref_error
+
+
 def build_user_input_with_quote(content: str, quoted_message: Optional[Dict[str, Any]]) -> str:
     return build_user_input_with_references(content, quoted_message, None)
 
@@ -510,11 +831,11 @@ def build_context_usage(conversation: Dict[str, Any]) -> Dict[str, Any]:
             if message["id"] not in pinned_ids
         ]
         used_chars = len(build_persistent_system_context(conversation["id"], base_system_prompt))
-        used_chars += sum(len(message["content"]) for message in effective_messages)
+        used_chars += sum(len(render_message_for_model_context(message)) for message in effective_messages)
     else:
-        history = get_context_messages(conversation["id"])
+        history = list_effective_messages(conversation["id"])[-12:]
         used_chars = len(base_system_prompt)
-        used_chars += estimate_context_chars(history)
+        used_chars += sum(len(render_message_for_model_context(message)) for message in history)
 
     percent = min(100, round((used_chars / CONTEXT_CAPACITY_CHARS) * 100))
     return {
@@ -606,8 +927,7 @@ def attach_context_usage_to_page(page_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def render_context_message(message: Dict[str, Any]) -> str:
-    role_label = "用户" if message["role"] == "user" else message.get("senderName", "Agent")
-    return f"{role_label}: {message['content']}"
+    return render_message_for_model_context(message)
 
 
 def parse_json_object(text: str) -> Dict[str, Any]:
@@ -707,6 +1027,10 @@ async def compress_conversation_context(
 
 def build_persistent_system_context(conversation_id: str, base_system_prompt: str) -> str:
     sections = [base_system_prompt]
+    conversation = get_conversation(conversation_id)
+    workspace_context = read_workspace_agents_context(conversation.get("workspaceId") if conversation else None)
+    if workspace_context:
+        sections.append(workspace_context)
     memories = list_active_memories(conversation_id)
     if memories:
         sections.append(
@@ -755,8 +1079,8 @@ async def maybe_auto_compress_context(
     context_chars = len(user_input)
     context_chars += len(summary["summary"]) if summary else 0
     context_chars += sum(len(memory["content"]) for memory in list_active_memories(conversation["id"]))
-    context_chars += sum(len(pin["message"]["content"]) for pin in list_pins(conversation["id"]))
-    context_chars += sum(len(message["content"]) for message in effective_messages)
+    context_chars += sum(len(render_message_for_model_context(pin["message"])) for pin in list_pins(conversation["id"]))
+    context_chars += sum(len(render_message_for_model_context(message)) for message in effective_messages)
     if context_chars < CONTEXT_CHAR_THRESHOLD:
         return
     await compress_conversation_context(conversation["id"], manual=False, exclude_message_id=exclude_message_id)
@@ -770,9 +1094,24 @@ async def build_model_messages(
 ) -> List[Dict[str, str]]:
     conversation = get_conversation(conversation_id)
     base_system_prompt = system_prompt_for_conversation(conversation, agent)
+    workspace_context = read_workspace_agents_context(conversation.get("workspaceId") if conversation else None)
+    if workspace_context:
+        print(
+            f"[WorkspaceAgentsContext] stage=chat conversation={conversation_id} workspace={conversation.get('workspaceId') if conversation else '-'}\n{workspace_context}",
+            flush=True,
+        )
     if not supports_persistent_context(conversation):
-        history = get_context_messages(conversation_id, exclude_message_id=exclude_message_id)
-        return [{"role": "system", "content": base_system_prompt}] + history + [
+        if workspace_context:
+            base_system_prompt = base_system_prompt + "\n\n" + workspace_context
+        history = list_effective_messages(conversation_id, exclude_message_id=exclude_message_id)[-12:]
+        rendered_history = [
+            {
+                "role": "assistant" if message["role"] in ("agent", "orchestrator", "system") else "user",
+                "content": render_message_for_model_context(message),
+            }
+            for message in history
+        ]
+        return [{"role": "system", "content": base_system_prompt}] + rendered_history + [
             {"role": "user", "content": user_input}
         ]
 
@@ -791,7 +1130,7 @@ async def build_model_messages(
     messages = [{"role": "system", "content": build_persistent_system_context(conversation_id, base_system_prompt)}]
     for message in effective_messages:
         role = "assistant" if message["role"] in ("agent", "orchestrator", "system") else "user"
-        messages.append({"role": role, "content": message["content"]})
+        messages.append({"role": role, "content": render_message_for_model_context(message)})
     messages.append({"role": "user", "content": user_input})
     return messages
 
@@ -803,9 +1142,11 @@ async def call_agent_once(
     exclude_message_id: Optional[str] = None,
 ) -> str:
     messages = await build_model_messages(conversation_id, agent, user_input, exclude_message_id)
+    owner_user_id = agent.get("ownerUserId") if agent else None
+    agent_client = create_openai_client_for_agent(agent, owner_user_id=owner_user_id)
     response = await asyncio.to_thread(
-        client.chat.completions.create,
-        model=settings.MODEL_EP,
+        agent_client.chat.completions.create,
+        model=model_name_for_agent(agent, owner_user_id=owner_user_id),
         messages=messages,
         stream=False,
     )
@@ -819,9 +1160,11 @@ async def stream_agent_reply(
     exclude_message_id: Optional[str] = None,
 ):
     messages = await build_model_messages(conversation_id, agent, user_input, exclude_message_id)
+    owner_user_id = agent.get("ownerUserId") if agent else None
+    agent_client = create_openai_client_for_agent(agent, owner_user_id=owner_user_id)
     response = await asyncio.to_thread(
-        client.chat.completions.create,
-        model=settings.MODEL_EP,
+        agent_client.chat.completions.create,
+        model=model_name_for_agent(agent, owner_user_id=owner_user_id),
         messages=messages,
         stream=True,
     )
@@ -1388,7 +1731,12 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
             await send_ws_error(websocket, event_id, 40003, "引用消息不存在或不属于当前会话")
             return
         message_metadata = build_quote_metadata(quoted_message)
-    artifact_ref, artifact_ref_error = build_artifact_ref_context(data, conversation_id, current_user["id"])
+    artifact_ref, artifact_ref_error = await resolve_artifact_context_for_message(
+        data,
+        conversation_id,
+        current_user["id"],
+        content,
+    )
     if artifact_ref_error:
         await send_ws_error(websocket, event_id, 40003, artifact_ref_error)
         return
@@ -1397,6 +1745,16 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
     if attachments:
         message_metadata["attachments"] = attachments
     model_user_input = build_user_input_with_references(content, quoted_message, artifact_ref)
+    execution_payload = payload_with_resolved_artifact_ref(data, artifact_ref)
+    pending_clarification = latest_pending_workspace_clarification(conversation_id) if artifact_ref else None
+    if pending_clarification and looks_like_target_clarification(content, artifact_ref):
+        execution_payload = {**execution_payload, "pendingWorkspaceClarification": True}
+    execution_user_input = build_execution_input_for_workspace_action(
+        content,
+        model_user_input,
+        pending_clarification,
+        artifact_ref,
+    )
     target_agent = choose_target_agent(conversation, target_agent_id)
     if target_agent_id and not target_agent:
         await send_ws_error(websocket, event_id, 40002, "指定 Agent 不存在、已禁用或不属于当前会话")
@@ -1439,12 +1797,42 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
 
     total_artifacts = 0
     completed_messages: List[Dict[str, Any]] = []
-    execution_decision = classify_message_execution_mode(
-        content,
-        payload=data,
-        conversation=conversation,
-        selected_agent=target_agent,
-    )
+    try:
+        execution_decision = await classify_for_conversation(
+            conversation=conversation,
+            selected_agent=target_agent,
+            content=content,
+            payload=execution_payload,
+        )
+    except Exception as exc:
+        error_content = f"意图识别失败：{format_model_error(exc)}"
+        error_message = create_message(
+            conversation_id=conversation_id,
+            sender_id="system",
+            sender_name="系统",
+            role="system",
+            msg_type="status",
+            content=error_content,
+            metadata={"event": "execution.mode.failed"},
+        )
+        completed_messages.append(error_message)
+        await send_message_completed(current_user, conversation_id, event_id, error_message)
+        await emit_conversation_event(
+            current_user,
+            conversation_id,
+            "conversation.all_tasks.completed",
+            event_id,
+            {
+                "conversationId": conversation_id,
+                "summary": "意图识别失败",
+                "totalMessages": 2,
+                "totalArtifacts": 0,
+                "contextUsage": build_context_usage(conversation),
+            },
+        )
+        return
+    if execution_decision["executionMode"] == "sandbox" and artifact_ref:
+        execution_decision = {**execution_decision, "suggestedRunPrompt": execution_user_input}
     await emit_conversation_event(
         current_user,
         conversation_id,
@@ -1459,9 +1847,134 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
         },
     )
     if execution_decision["executionMode"] == "sandbox":
-        from app.services.run_service import create_run_for_conversation
+        async def emit_run(event_type: str, payload: Dict[str, Any]) -> None:
+            await emit_conversation_event(current_user, conversation_id, event_type, event_id, payload)
 
-        status_content = "已识别为产物型任务，正在创建沙箱运行..."
+        try:
+            run_agent = target_agent or choose_agent_for_conversation(conversation)
+            run = await runtime_router.create_run(
+                run_agent,
+                current_user=current_user,
+                conversation_id=conversation_id,
+                prompt=execution_decision.get("suggestedRunPrompt") or model_user_input,
+                payload=execution_payload,
+                emit=emit_run,
+            )
+        except Exception as exc:
+            if exc.__class__.__name__ == "WorkspaceActionDecision":
+                action_context = getattr(exc, "action_context", {}) or {}
+                if action_context.get("action") == "answer_only":
+                    agent = target_agent or choose_agent_for_conversation(conversation)
+                    try:
+                        answer_content = await runtime_router.execute_chat(
+                            agent,
+                            conversation,
+                            model_user_input,
+                            {"excludeMessageId": user_message["id"]},
+                        )
+                    except Exception as answer_exc:
+                        answer_content = fallback_reply(agent, content, answer_exc)
+                    answer_message = create_message(
+                        conversation_id=conversation_id,
+                        sender_id=agent["id"],
+                        sender_name=agent["name"],
+                        role="agent",
+                        msg_type="text",
+                        content=answer_content,
+                        metadata={"workspaceActionContext": action_context},
+                    )
+                    completed_messages.append(answer_message)
+                    update_conversation_activity(conversation_id, answer_content)
+                    await send_message_completed(current_user, conversation_id, event_id, answer_message)
+                    await emit_conversation_event(
+                        current_user,
+                        conversation_id,
+                        "conversation.all_tasks.completed",
+                        event_id,
+                        {
+                            "conversationId": conversation_id,
+                            "summary": "只读回答已完成",
+                            "totalMessages": 2,
+                            "totalArtifacts": 0,
+                            "workspaceActionContext": action_context,
+                            "contextUsage": build_context_usage(conversation),
+                        },
+                    )
+                    schedule_memory_extraction(conversation, user_message, completed_messages)
+                    return
+                decision_content = (
+                    action_context.get("clarificationQuestion")
+                    or "请补充要修改的目标。"
+                )
+                decision_message = create_message(
+                    conversation_id=conversation_id,
+                    sender_id="system",
+                    sender_name="系统",
+                    role="system",
+                    msg_type="status",
+                    content=decision_content,
+                    metadata={
+                        "event": "workspace.action.decision",
+                        "workspaceActionContext": action_context,
+                        "executionMode": "chat" if action_context.get("action") == "answer_only" else "clarify",
+                    },
+                )
+                completed_messages.append(decision_message)
+                update_conversation_activity(conversation_id, decision_content)
+                await send_message_completed(current_user, conversation_id, event_id, decision_message)
+                await emit_conversation_event(
+                    current_user,
+                    conversation_id,
+                    "conversation.all_tasks.completed",
+                    event_id,
+                    {
+                        "conversationId": conversation_id,
+                        "summary": decision_content,
+                        "totalMessages": 2,
+                        "totalArtifacts": 0,
+                        "workspaceActionContext": action_context,
+                        "contextUsage": build_context_usage(conversation),
+                    },
+                )
+                schedule_memory_extraction(conversation, user_message, completed_messages)
+                return
+            if isinstance(exc, ValueError):
+                error_content = str(exc)
+                error_message = create_message(
+                    conversation_id=conversation_id,
+                    sender_id="system",
+                    sender_name="系统",
+                    role="system",
+                    msg_type="status",
+                    content=error_content,
+                    metadata={
+                        "event": "sandbox.run.rejected",
+                        "executionMode": execution_decision["executionMode"],
+                        "intent": execution_decision["intent"],
+                        "reason": execution_decision["reason"],
+                        "error": error_content,
+                    },
+                )
+                completed_messages.append(error_message)
+                update_conversation_activity(conversation_id, error_content)
+                await send_message_completed(current_user, conversation_id, event_id, error_message)
+                await emit_conversation_event(
+                    current_user,
+                    conversation_id,
+                    "conversation.all_tasks.completed",
+                    event_id,
+                    {
+                        "conversationId": conversation_id,
+                        "summary": error_content,
+                        "totalMessages": 2,
+                        "totalArtifacts": 0,
+                        "contextUsage": build_context_usage(conversation),
+                    },
+                )
+                return
+            await send_ws_error(websocket, event_id, 40000, str(exc))
+            return
+        status_content = "已识别为产物型任务，沙箱任务已创建。"
         status_message = create_message(
             conversation_id=conversation_id,
             sender_id="system",
@@ -1478,54 +1991,39 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
         completed_messages.append(status_message)
         update_conversation_activity(conversation_id, status_content)
         await send_message_completed(current_user, conversation_id, event_id, status_message)
-
-        async def emit_run(event_type: str, payload: Dict[str, Any]) -> None:
-            await emit_conversation_event(current_user, conversation_id, event_type, event_id, payload)
-
-        try:
-            run = await create_run_for_conversation(
-                current_user=current_user,
-                conversation_id=conversation_id,
-                prompt=execution_decision.get("suggestedRunPrompt") or model_user_input,
-                payload=data,
-                emit=emit_run,
-            )
-        except ValueError as exc:
-            await send_ws_error(websocket, event_id, 40000, str(exc))
-            return
-        await emit_conversation_event(
-            current_user,
-            conversation_id,
-            "conversation.all_tasks.completed",
-            event_id,
-            {
-                "conversationId": conversation_id,
-                "summary": "沙箱任务已创建",
-                "totalMessages": 2,
-                "totalArtifacts": 0,
-                "executionMode": "sandbox",
-                "intent": execution_decision["intent"],
-                "reason": execution_decision["reason"],
-                "run": run,
-                "workspaceId": run.get("workspaceId"),
-                "contextUsage": build_context_usage(conversation),
-            },
-        )
         schedule_memory_extraction(conversation, user_message, completed_messages)
         return
 
+    web_search_model_user_input = model_user_input
+    web_search_metadata: Optional[Dict[str, Any]] = None
+    web_search_model_user_input, web_search_metadata = await prepare_web_search_for_chat(
+        content,
+        model_user_input,
+        payload=data,
+        conversation=conversation,
+    )
+
     if conversation["mode"] == "group" and not target_agent:
         intent_result = analyze_orchestrator_intent(content)
+        if intent_result["intent"] == "task":
+            intent_result = {
+                **intent_result,
+                "taskPlan": normalize_group_task_plan_for_conversation(
+                    conversation,
+                    intent_result.get("taskPlan") or [],
+                    content,
+                ),
+            }
         if intent_result["intent"] == "chat":
             orchestrator_content = intent_result["reply"]
-            if quoted_message or artifact_ref:
+            if quoted_message or artifact_ref or (web_search_metadata and web_search_metadata.get("shouldSearch")):
                 orchestrator_agent = get_enabled_orchestrator(conversation) or choose_agent_for_conversation(conversation)
                 try:
-                    orchestrator_content = await call_agent_once(
-                        conversation_id,
+                    orchestrator_content = await runtime_router.execute_chat(
                         orchestrator_agent,
-                        model_user_input,
-                        exclude_message_id=user_message["id"],
+                        conversation,
+                        web_search_model_user_input,
+                        {"excludeMessageId": user_message["id"]},
                     )
                 except Exception as exc:
                     orchestrator_content = fallback_reply(orchestrator_agent, content, exc)
@@ -1536,6 +2034,7 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
                 role="orchestrator",
                 msg_type="text",
                 content=orchestrator_content,
+                metadata={"webSearch": web_search_metadata} if web_search_metadata else None,
             )
             update_conversation_activity(conversation_id, orchestrator_content)
             await send_message_completed(current_user, conversation_id, event_id, orchestrator_message)
@@ -1587,33 +2086,29 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
     )
 
     try:
-        sequence = 0
-        async for token in stream_agent_reply(
-            conversation_id,
+        full_response_text = await runtime_router.execute_chat(
             agent,
-            model_user_input,
-            exclude_message_id=user_message["id"],
-        ):
-            sequence += 1
-            full_response_text += token
-            await emit_conversation_event(
-                current_user,
-                conversation_id,
-                "conversation.message.chunk",
-                event_id,
-                {
-                    "messageId": message_id,
-                    "conversationId": conversation_id,
-                    "senderId": agent["id"],
-                    "senderName": agent["name"],
-                    "role": role,
-                    "messageType": "text",
-                    "chunk": token,
-                    "sequence": sequence,
-                    "isFullContent": False,
-                },
-            )
-            await asyncio.sleep(0)
+            conversation,
+            web_search_model_user_input,
+            {"excludeMessageId": user_message["id"]},
+        )
+        await emit_conversation_event(
+            current_user,
+            conversation_id,
+            "conversation.message.chunk",
+            event_id,
+            {
+                "messageId": message_id,
+                "conversationId": conversation_id,
+                "senderId": agent["id"],
+                "senderName": agent["name"],
+                "role": role,
+                "messageType": "text",
+                "chunk": full_response_text,
+                "sequence": 1,
+                "isFullContent": True,
+            },
+        )
     except Exception as exc:
         full_response_text = fallback_reply(agent, content, exc)
         finish_reason = "error"
@@ -1626,6 +2121,7 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
         msg_type="text",
         content=full_response_text,
         message_id=message_id,
+        metadata={"webSearch": web_search_metadata} if web_search_metadata else None,
     )
     completed_messages.append(agent_message)
     update_conversation_activity(conversation_id, full_response_text)
