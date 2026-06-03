@@ -13,15 +13,32 @@ export type MessageType =
 
 export interface MessageAttachment {
   id: string;
+  conversationId?: string;
+  messageId?: string | null;
+  kind?: string;
+  type: string;
   name: string;
-  type: 'image' | 'pdf' | 'ppt' | 'other';
-  url: string;
+  mimeType?: string;
   size?: number;
+  sha256?: string;
+  url: string;
+  parseStatus?: 'pending' | 'parsed' | 'partial' | 'empty' | 'unsupported' | 'oversized' | 'failed';
+  summary?: string;
   meta?: {
+    entryCount?: number;
+    parsedEntryCount?: number;
+    skipped?: boolean;
+    zipSha256?: string;
+    zipBaseName?: string;
     width?: number;
     height?: number;
     pages?: number;
+    [key: string]: any;
   };
+  createdAt?: string;
+  // Local UI helpers
+  isUploading?: boolean;
+  uploadError?: string;
   file?: any;
 }
 
@@ -141,6 +158,8 @@ export interface Agent {
   runtime?: AgentRuntime;
   modelConfigId?: string | null;
   runtimeConfig?: Record<string, any>;
+  requiresWorkspace?: boolean;
+  supportsContactConversation?: boolean;
 }
 
 export type AgentListItem = Agent;
@@ -302,7 +321,7 @@ export interface SendMessageRequest {
   targetAgentId?: string;
   quotedMessageId?: string;
   artifactRef?: ArtifactReference;
-  attachments?: MessageAttachment[];
+  attachments?: { id: string; attachmentId?: string }[];
   useSandbox?: boolean;
   executionMode?: 'chat' | 'sandbox' | 'deployment';
   runMode?: 'chat' | 'sandbox' | 'deployment';

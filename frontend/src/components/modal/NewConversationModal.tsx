@@ -23,11 +23,17 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
 
+  const preselectedAgentId = useAgentHubStore(state => state.preselectedAgentId);
+  const setPreselectedAgentId = useAgentHubStore(state => state.setPreselectedAgentId);
+
   const displayAgents = agents;
 
   useEffect(() => {
     if (open) {
       loadWorkspaces();
+      if (preselectedAgentId) {
+        setSelectedAgentIds([preselectedAgentId]);
+      }
     } else {
       setMode('single');
       setSelectedAgentIds([]);
@@ -35,8 +41,9 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
       setShowCreateWorkspace(false);
       setNewWorkspaceName('');
       setCreatingWorkspace(false);
+      setPreselectedAgentId(null);
     }
-  }, [open, loadWorkspaces]);
+  }, [open, loadWorkspaces, preselectedAgentId, setPreselectedAgentId]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

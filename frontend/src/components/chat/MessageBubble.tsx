@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Message, Agent as AgentType } from '@/types';
-import { User, Bot, Sparkles, CornerUpLeft, Pin, Copy, Check, Navigation, FileCode, Globe, Loader2 } from 'lucide-react';
+import { User, Bot, Sparkles, CornerUpLeft, Pin, Copy, Check, Navigation, FileCode, Globe } from 'lucide-react';
 import CodeBlock from './CodeBlock';
 import TaskPlanCard from './TaskPlanCard';
 import ArtifactMessage from './ArtifactMessage';
@@ -47,23 +47,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     }
   }
 
-  if (message.metadata?.source === 'sandboxRunProgress') {
-    const timeText = getPreciseTime(message.createdAt);
-    return (
-      <div 
-        id={`msg-${message.id}`} 
-        className="flex gap-3.5 mb-3.5 w-full animate-fade-in transition-all duration-300"
-      >
-        <div className="w-9 h-9 flex-shrink-0" />
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50/50 dark:bg-slate-900/20 border border-slate-200/50 dark:border-slate-800/60 rounded-xl text-slate-550 dark:text-slate-400 text-[11px] w-fit max-w-[90%] shadow-xs">
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500 dark:text-indigo-400 flex-shrink-0" />
-          <span className="font-bold text-slate-700 dark:text-slate-350">{message.senderName || 'Agent'}:</span>
-          <span className="break-all">{message.content}</span>
-          <span className="text-[9px] text-slate-400 dark:text-slate-500 font-mono ml-2 select-none">{timeText}</span>
-        </div>
-      </div>
-    );
-  }
+
 
   const globalSetReplyContext = useAgentHubStore(state => state.setReplyContext);
   const globalTogglePinMessage = useAgentHubStore(state => state.togglePinMessage);

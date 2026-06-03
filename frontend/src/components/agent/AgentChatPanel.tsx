@@ -170,44 +170,113 @@ const AgentChatPanel: React.FC<AgentChatPanelProps> = ({ agent, conversation, me
     fileInputRef.current?.click();
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-    const newAttachments: MessageAttachment[] = Array.from(files).map(file => {
+    const filesArray = Array.from(files);
+    if (filesArray.length === 0) return;
+
+    // Create temporary pending attachments in local state (no immediate upload)
+    const tempAttachments: MessageAttachment[] = filesArray.map(file => {
       const isImage = file.type.startsWith('image/');
       const isPdf = file.type === 'application/pdf' || file.name.endsWith('.pdf');
       const isPpt = file.name.endsWith('.ppt') || file.name.endsWith('.pptx');
       
-      let type: 'image' | 'pdf' | 'ppt' | 'other' = 'other';
+      let type = 'other';
       if (isImage) type = 'image';
       else if (isPdf) type = 'pdf';
       else if (isPpt) type = 'ppt';
 
-      const url = URL.createObjectURL(file);
-      
+      const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       return {
-        id: `attach-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        id: tempId,
         name: file.name,
         type,
-        url,
+        url: URL.createObjectURL(file),
         size: file.size,
-        meta: type === 'pdf' ? { pages: Math.floor(Math.random() * 20) + 5 } : undefined,
+        isUploading: false,
         file
       };
     });
-    
-    setPendingAttachments(prev => [...prev, ...newAttachments]);
+
+    setPendingAttachments(prev => [...prev, ...tempAttachments]);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const hasHeader = !!replyContext || !!quoteArtifactRef || pendingAttachments.length > 0;
-  const canSend = inputValue.trim() || pendingAttachments.length > 0;
+  const isUploadingAny = pendingAttachments.some(a => a.isUploading);
+  const canSend = (inputValue.trim() || pendingAttachments.length > 0) && !isUploadingAny;
 
   const handleSend = async () => {
     const trimmed = inputValue.trim();
     if (!trimmed && pendingAttachments.length === 0) return;
     
-    await sendMessage(trimmed, pendingAttachments, agent.id);
+    const useMockMode = useAgentHubStore.getState().useMockMode;
+    const conversationId = conversation?.id;
+    
+    let finalAttachments: MessageAttachment[] = [];
+
+    if (pendingAttachments.length > 0) {
+      // Set all pending attachments to uploading state in UI
+      setPendingAttachments(prev => prev.map(a => ({ ...a, isUploading: true })));
+
+      const filesToUpload = pendingAttachments.map(a => a.file).filter(Boolean) as File[];
+
+      if (useMockMode || !conversationId) {
+        // Mock mode upload simulation
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        finalAttachments = pendingAttachments.map(item => ({
+          ...item,
+          isUploading: false,
+          parseStatus: 'parsed' as const,
+          summary: `[Mock 摘要] 这是关于 ${item.name} 的模型提取摘要分析。`,
+          meta: item.name.endsWith('.zip') ? { entryCount: 5, parsedEntryCount: 4, skipped: true } : item.meta,
+          createdAt: new Date().toISOString()
+        }));
+      } else {
+        try {
+          const { uploadAttachmentBatch } = await import('@/services/http/attachmentService');
+          const res = await uploadAttachmentBatch(conversationId, filesToUpload);
+          if (res.code === 0 && res.data && res.data.results) {
+            const failed: MessageAttachment[] = [];
+            res.data.results.forEach((result, idx) => {
+              const orig = pendingAttachments[idx];
+              if (!orig) return;
+              if (result && result.ok && result.attachment) {
+                finalAttachments.push({
+                  ...result.attachment,
+                  isUploading: false
+                });
+              } else {
+                failed.push({
+                  ...orig,
+                  isUploading: false,
+                  uploadError: result?.error || '上传失败'
+                });
+              }
+            });
+
+            if (failed.length > 0) {
+              setPendingAttachments(failed);
+              alert('部分附件上传失败，请重试');
+              return;
+            }
+          } else {
+            const errMsg = res.message || '上传接口调用失败';
+            setPendingAttachments(prev => prev.map(a => ({ ...a, isUploading: false, uploadError: errMsg })));
+            alert(`附件上传失败: ${errMsg}`);
+            return;
+          }
+        } catch (err: any) {
+          const errMsg = err.message || '上传网络错误';
+          setPendingAttachments(prev => prev.map(a => ({ ...a, isUploading: false, uploadError: errMsg })));
+          alert(`附件上传失败: ${errMsg}`);
+          return;
+        }
+      }
+    }
+
+    await sendMessage(trimmed, finalAttachments, agent.id);
     
     setInputValue('');
     setPendingAttachments([]);
@@ -383,11 +452,18 @@ const AgentChatPanel: React.FC<AgentChatPanelProps> = ({ agent, conversation, me
                 <div className="flex flex-wrap gap-1.5 px-3.5 py-1.5 bg-slate-50/50 dark:bg-slate-900/30 border-b border-lark-border/40 dark:border-slate-800/40 flex-shrink-0 select-none max-h-16 overflow-y-auto">
                   {pendingAttachments.map((attach) => (
                     <div key={attach.id} className="flex items-center gap-1.5 px-2 py-0.5 bg-white dark:bg-slate-900 border border-lark-border dark:border-slate-800 rounded-lg text-xs shadow-sm max-w-[180px]">
-                      <span className="truncate flex-1 text-slate-600 dark:text-slate-300 font-medium text-[10px]">{attach.name}</span>
+                      <span 
+                        className={`truncate flex-1 text-[10px] font-medium ${attach.uploadError ? 'text-red-500' : 'text-slate-600 dark:text-slate-300'}`}
+                        title={attach.uploadError || attach.name}
+                      >
+                        {attach.name}
+                        {attach.isUploading && ' (上传中...)'}
+                        {attach.uploadError && ' (失败)'}
+                      </span>
                       <button
                         type="button"
                         onClick={() => setPendingAttachments(prev => prev.filter(a => a.id !== attach.id))}
-                        className="text-slate-400 hover:text-red-500 p-0.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800"
+                        className="text-slate-400 hover:text-red-500 p-0.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex-shrink-0"
                       >
                         <X className="w-3 h-3" />
                       </button>

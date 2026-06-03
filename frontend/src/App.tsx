@@ -168,9 +168,18 @@ function App() {
   }, [selectedArtifact, useMockMode, setIsFullScreenOpen]);
 
   const handleOpenAgentChat = useCallback(async (agentId: string) => {
-    await getOrCreateAgentChat(agentId);
+    const agent = agents.find(a => a.id === agentId);
+    if (agent && (agent.requiresWorkspace === true || agent.supportsContactConversation === false)) {
+      useAgentHubStore.setState({ preselectedAgentId: agentId, isNewConversationOpen: true });
+    } else {
+      try {
+        await getOrCreateAgentChat(agentId);
+      } catch (e) {
+        console.error("Failed to start contact chat", e);
+      }
+    }
     closeAgentProfile();
-  }, [getOrCreateAgentChat, closeAgentProfile]);
+  }, [agents, getOrCreateAgentChat, closeAgentProfile]);
 
   const isDesktop = useAgentHubStore(state => state.isDesktop);
   const setIsSettingsOpen = useAgentHubStore(state => state.setIsSettingsOpen);

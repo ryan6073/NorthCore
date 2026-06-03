@@ -8,6 +8,7 @@ import CodeDiffViewer from '../artifact/CodeDiffViewer';
 import CodeEditorContainer from '../artifact/CodeEditorContainer';
 import DocPreview from '../artifact/DocPreview';
 import PptPreview from '../artifact/PptPreview';
+import { PptxPreview } from '@/components/file/PptxPreview';
 import { getSandboxHtmlPreview } from '@/services/http/sandboxService';
 import mermaid from 'mermaid';
 
@@ -631,7 +632,16 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
     }
 
     if (artifact.type === 'ppt') {
-      if (activeTab === 'preview') {
+       if (activeTab === 'preview') {
+        const isBinaryPptx = artifact.isText === false || artifact.filePath?.endsWith('.pptx') || artifact.mimeType?.includes('presentation') || artifact.downloadUrl?.endsWith('.pptx');
+        if (isBinaryPptx) {
+          return (
+            <PptxPreview
+              item={artifact}
+              fileName={artifact.title}
+            />
+          );
+        }
         return (
           <PptPreview
             content={currentVersion?.content || ''}

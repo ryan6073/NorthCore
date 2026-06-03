@@ -128,7 +128,15 @@ export function canDownload(
 export function getDownloadUrl(item: any, apiBaseUrl?: string): string {
   if (item.downloadUrl) {
     if (apiBaseUrl && !item.downloadUrl.startsWith('http')) {
-      return `${apiBaseUrl}${item.downloadUrl.startsWith('/') ? '' : '/'}${item.downloadUrl}`;
+      const base = apiBaseUrl.endsWith('/') ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
+      const path = item.downloadUrl.startsWith('/') ? item.downloadUrl : `/${item.downloadUrl}`;
+      if (path.startsWith('/api/v1') && base.endsWith('/api/v1')) {
+        return base.slice(0, -7) + path;
+      }
+      if (path.startsWith(base)) {
+        return path;
+      }
+      return `${base}${path}`;
     }
     return item.downloadUrl;
   }

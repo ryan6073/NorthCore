@@ -85,6 +85,9 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
     delete (cleanRuntimeConfig as any).baseUrl;
     delete (cleanRuntimeConfig as any).modelName;
     delete (cleanRuntimeConfig as any).provider;
+    delete (cleanRuntimeConfig as any).opencode_bin;
+    delete (cleanRuntimeConfig as any).codex_bin;
+    delete (cleanRuntimeConfig as any).claude_code_bin;
 
     onSave({
       ...form,
@@ -589,23 +592,6 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                         <>
                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                             <div>
-                              <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">二进制执行路径 (opencode_bin - 可选)</label>
-                              <input
-                                type="text"
-                                placeholder="不填使用默认配置 (例如 opencode)"
-                                value={(form.runtimeConfig as any)?.opencode_bin || ''}
-                                onChange={e => setForm(prev => ({
-                                  ...prev,
-                                  runtimeConfig: {
-                                    ...(prev.runtimeConfig || {}),
-                                    opencode_bin: e.target.value
-                                  }
-                                }))}
-                                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all font-mono"
-                              />
-                            </div>
-
-                            <div>
                               <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">审批模式 (Approval Mode)</label>
                               <select
                                 value={(form.runtimeConfig as any)?.approval_mode || 'manual'}
@@ -648,23 +634,6 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                       {form.runtime === 'codex' && (
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 animate-fade-in">
                           <div>
-                            <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">二进制执行路径 (codex_bin - 可选)</label>
-                            <input
-                              type="text"
-                              placeholder="不填使用默认配置 (例如 codex)"
-                              value={(form.runtimeConfig as any)?.codex_bin || ''}
-                              onChange={e => setForm(prev => ({
-                                ...prev,
-                                runtimeConfig: {
-                                  ...(prev.runtimeConfig || {}),
-                                  codex_bin: e.target.value
-                                }
-                              }))}
-                              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all font-mono"
-                            />
-                          </div>
-
-                          <div>
                             <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">超时秒数 (timeout_seconds - 可选)</label>
                             <input
                               type="number"
@@ -686,23 +655,6 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                       {form.runtime === 'claude_code' && (
                         <div className="space-y-4 animate-fade-in">
                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                            <div>
-                              <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">二进制执行路径 (claude_code_bin - 可选)</label>
-                              <input
-                                type="text"
-                                placeholder="不填使用默认配置 (例如 claude)"
-                                value={(form.runtimeConfig as any)?.claude_code_bin || ''}
-                                onChange={e => setForm(prev => ({
-                                  ...prev,
-                                  runtimeConfig: {
-                                    ...(prev.runtimeConfig || {}),
-                                    claude_code_bin: e.target.value
-                                  }
-                                }))}
-                                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-2 focus:ring-violet-500/15 focus:border-violet-500 transition-all font-mono"
-                              />
-                            </div>
-
                             <div>
                               <label className="block text-xs font-bold text-slate-700 dark:text-slate-350 mb-1.5">超时秒数 (timeout_seconds - 可选)</label>
                               <input

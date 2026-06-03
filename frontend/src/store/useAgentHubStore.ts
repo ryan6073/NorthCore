@@ -544,6 +544,7 @@ interface AgentHubStore {
   selectedArtifactId: string | null;
   selectedArtifactVersion: number | null;
   isNewConversationOpen: boolean;
+  preselectedAgentId: string | null;
   isProcessing: boolean;
   isFullScreenOpen: boolean;
   selectedAgentId: string | null;
@@ -595,6 +596,7 @@ interface AgentHubStore {
   setSelectedArtifactId: (id: string | null) => void;
   setSelectedArtifactVersion: (version: number | null) => void;
   setIsNewConversationOpen: (open: boolean) => void;
+  setPreselectedAgentId: (id: string | null) => void;
   setIsFullScreenOpen: (open: boolean) => void;
   setSelectedAgentId: (id: string | null) => void;
   setConfiguringAgentId: (id: string | null, isSessionLevel?: boolean) => void;
@@ -798,6 +800,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   selectedArtifactId: null,
   selectedArtifactVersion: null,
   isNewConversationOpen: false,
+  preselectedAgentId: null,
   isProcessing: false,
   isFullScreenOpen: false,
   selectedAgentId: null,
@@ -1344,6 +1347,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
   setSelectedArtifactVersion: (version) => set({ selectedArtifactVersion: version }),
   setIsNewConversationOpen: (open) => set({ isNewConversationOpen: open }),
+  setPreselectedAgentId: (id) => set({ preselectedAgentId: id }),
   setIsFullScreenOpen: (open) => set({ isFullScreenOpen: open }),
   setSelectedAgentId: (id) => set({ selectedAgentId: id }),
   setConfiguringAgentId: (id, isSessionLevel = false) => set({ configuringAgentId: id, configuringAgentIsSessionLevel: isSessionLevel }),
@@ -1737,8 +1741,57 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
     get().clearFileContext();
 
+    let finalAttachments = attachments || [];
+    const filesToUpload = finalAttachments.filter(a => a.file).map(a => a.file) as File[];
+
+    if (filesToUpload.length > 0) {
+      if (!useMockMode) {
+        try {
+          const { uploadAttachmentBatch } = await import('@/services/http/attachmentService');
+          const res = await uploadAttachmentBatch(activeConversationId, filesToUpload);
+          if (res.code === 0 && res.data && res.data.results) {
+            const uploadedAttachments: MessageAttachment[] = [];
+            res.data.results.forEach((result) => {
+              if (result && result.ok && result.attachment) {
+                uploadedAttachments.push(result.attachment);
+              }
+            });
+            finalAttachments = uploadedAttachments;
+            set(state => ({
+              messages: state.messages.map(m => m.id === newUserMessage.id ? { ...m, attachments: uploadedAttachments } : m)
+            }));
+          } else {
+            console.error("Batch upload failed in store:", res.message);
+            set(state => ({
+              messages: state.messages.map(m => m.id === newUserMessage.id ? { ...m, attachments: m.attachments?.map(a => ({ ...a, uploadError: '上传失败' })) } : m)
+            }));
+            return;
+          }
+        } catch (err: any) {
+          console.error("Batch upload failed in store:", err);
+          set(state => ({
+            messages: state.messages.map(m => m.id === newUserMessage.id ? { ...m, attachments: m.attachments?.map(a => ({ ...a, uploadError: '上传网络错误' })) } : m)
+          }));
+          return;
+        }
+      } else {
+        // Mock mode upload simulation
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        finalAttachments = finalAttachments.map(item => ({
+          ...item,
+          parseStatus: 'parsed' as const,
+          summary: `[Mock 摘要] 这是关于 ${item.name} 的模型提取摘要分析。`,
+          meta: item.name.endsWith('.zip') ? { entryCount: 5, parsedEntryCount: 4, skipped: true } : item.meta,
+          createdAt: new Date().toISOString()
+        }));
+        set(state => ({
+          messages: state.messages.map(m => m.id === newUserMessage.id ? { ...m, attachments: finalAttachments } : m)
+        }));
+      }
+    }
+
     if (useMockMode) {
-      const handled = await handleMockFileAttachments(activeConversationId, attachments, set, get);
+      const handled = await handleMockFileAttachments(activeConversationId, finalAttachments, set, get);
       if (handled) return;
 
       const isSandboxRequest = content.includes('登录') || content.includes('注册') || content.includes('页面') || content.includes('sandbox') || useSandbox;
@@ -2129,7 +2182,16 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           targetAgentId,
           quotedMessageId: replyContext?.id || undefined,
           artifactRef: quoteArtifactRef || undefined,
-          attachments,
+          attachments: finalAttachments?.map(a => ({
+            id: a.id,
+            attachmentId: a.id,
+            name: a.name,
+            url: a.url,
+            type: a.type || a.kind || 'file',
+            kind: a.type || a.kind || 'file',
+            size: a.size || 0,
+            mimeType: a.mimeType || ''
+          })),
           useSandbox: useSandbox ? true : undefined,
           executionMode: useSandbox ? 'sandbox' : undefined,
           webSearchMode: finalWebSearchMode,
@@ -2222,6 +2284,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
                 if (m.id === newUserMessage.id) {
                   return mappedUserMessage ? {
                     ...mappedUserMessage,
+                    attachments: mappedUserMessage.attachments || m.attachments,
                     quotedMessage: mappedUserMessage.quotedMessage || m.quotedMessage,
                     artifactRef: finalArtifactRef,
                   } : m;
@@ -2388,9 +2451,15 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             agents: [...state.agents, res.data]
           }));
           return res.data.id;
+        } else {
+          alert(`创建 Agent 失败: ${res.message || '未知错误'}`);
+          throw new Error(res.message || '创建 Agent 失败');
         }
-      } catch (e) {
-        console.error('[Store] 创建 Agent 失败，降级至 Mock 模式处理', e);
+      } catch (e: any) {
+        console.error('[Store] 创建 Agent 失败', e);
+        if (e.message) throw e;
+        alert('网络错误，创建 Agent 失败');
+        throw e;
       }
     }
 
@@ -4180,6 +4249,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   getOrCreateAgentChat: async (agentId: string) => {
     const { conversations, agents, useMockMode, currentUser } = get();
 
+    const targetAgent = agents.find(a => a.id === agentId);
+    if (targetAgent && (targetAgent.requiresWorkspace === true || targetAgent.supportsContactConversation === false)) {
+      set({ preselectedAgentId: agentId, isNewConversationOpen: true });
+      alert(`智能体 "${targetAgent.name}" 仅能在工作区会话内使用，请选择或新建一个工作区开始。`);
+      throw new Error("Direct contact conversation not supported for this platform agent");
+    }
+
     if (!useMockMode && currentUser) {
       try {
         const userId = currentUser.id || 'user-admin';
@@ -4215,7 +4291,6 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       return existing;
     }
 
-    const targetAgent = agents.find(a => a.id === agentId);
     const title = targetAgent ? targetAgent.name : '一对一对话';
     const newConv: Conversation = {
       id: `conv-agent-${agentId}`,
@@ -5733,9 +5808,94 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       };
     });
 
+    let finalAttachments = attachments || [];
+    const filesToUpload = finalAttachments.filter(a => a.file).map(a => a.file) as File[];
+
+    if (filesToUpload.length > 0) {
+      if (!useMockMode) {
+        try {
+          const { uploadAttachmentBatch } = await import('@/services/http/attachmentService');
+          const res = await uploadAttachmentBatch(convId, filesToUpload);
+          if (res.code === 0 && res.data && res.data.results) {
+            const uploadedAttachments: MessageAttachment[] = [];
+            res.data.results.forEach((result) => {
+              if (result && result.ok && result.attachment) {
+                uploadedAttachments.push(result.attachment);
+              }
+            });
+            finalAttachments = uploadedAttachments;
+            set(state => {
+              const currentMsgs = state.conversationMessages[convId] || [];
+              const updated = currentMsgs.map(m => m.id === newUserMessage.id ? { ...m, attachments: uploadedAttachments } : m);
+              const syncActive = state.activeConversationId === convId;
+              return {
+                conversationMessages: {
+                  ...state.conversationMessages,
+                  [convId]: updated
+                },
+                ...(syncActive ? { messages: updated } : {})
+              };
+            });
+          } else {
+            console.error("Batch upload failed in store:", res.message);
+            set(state => {
+              const currentMsgs = state.conversationMessages[convId] || [];
+              const updated = currentMsgs.map(m => m.id === newUserMessage.id ? { ...m, attachments: m.attachments?.map(a => ({ ...a, uploadError: '上传失败' })) } : m);
+              const syncActive = state.activeConversationId === convId;
+              return {
+                conversationMessages: {
+                  ...state.conversationMessages,
+                  [convId]: updated
+                },
+                ...(syncActive ? { messages: updated } : {})
+              };
+            });
+            return;
+          }
+        } catch (err: any) {
+          console.error("Batch upload failed in store:", err);
+          set(state => {
+            const currentMsgs = state.conversationMessages[convId] || [];
+            const updated = currentMsgs.map(m => m.id === newUserMessage.id ? { ...m, attachments: m.attachments?.map(a => ({ ...a, uploadError: '上传网络错误' })) } : m);
+            const syncActive = state.activeConversationId === convId;
+            return {
+              conversationMessages: {
+                ...state.conversationMessages,
+                [convId]: updated
+              },
+              ...(syncActive ? { messages: updated } : {})
+            };
+          });
+          return;
+        }
+      } else {
+        // Mock mode upload simulation
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        finalAttachments = finalAttachments.map(item => ({
+          ...item,
+          parseStatus: 'parsed' as const,
+          summary: `[Mock 摘要] 这是关于 ${item.name} 的模型提取摘要分析。`,
+          meta: item.name.endsWith('.zip') ? { entryCount: 5, parsedEntryCount: 4, skipped: true } : item.meta,
+          createdAt: new Date().toISOString()
+        }));
+        set(state => {
+          const currentMsgs = state.conversationMessages[convId] || [];
+          const updated = currentMsgs.map(m => m.id === newUserMessage.id ? { ...m, attachments: finalAttachments } : m);
+          const syncActive = state.activeConversationId === convId;
+          return {
+            conversationMessages: {
+              ...state.conversationMessages,
+              [convId]: updated
+            },
+            ...(syncActive ? { messages: updated } : {})
+          };
+        });
+      }
+    }
+
     if (useMockMode) {
       (async () => {
-        const handled = await handleMockFileAttachments(convId, attachments, set, get);
+        const handled = await handleMockFileAttachments(convId, finalAttachments, set, get);
         if (handled) return;
 
         setTimeout(() => {
@@ -5784,7 +5944,16 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       try {
         const sendRes = await sendMessageNonStreaming(convId, { 
           content,
-          attachments,
+          attachments: finalAttachments?.map((a: any) => ({
+            id: a.id,
+            attachmentId: a.id,
+            name: a.name,
+            url: a.url,
+            type: a.type || a.kind || 'file',
+            kind: a.type || a.kind || 'file',
+            size: a.size || 0,
+            mimeType: a.mimeType || ''
+          })),
           targetAgentId,
           useSandbox: useSandbox ? true : undefined,
           executionMode: useSandbox ? 'sandbox' : undefined,

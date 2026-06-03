@@ -12,6 +12,7 @@ import mermaid from 'mermaid';
 import sandboxService from '@/services/http/sandboxService';
 import DocPreview from './DocPreview';
 import PptPreview from './PptPreview';
+import { PptxPreview } from '@/components/file/PptxPreview';
 
 interface ArtifactPreviewProps {
   artifact: Artifact | null;
@@ -720,6 +721,15 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
     if (currentArtifact.type === 'ppt') {
       if (activeTab === 'preview') {
+        const isBinaryPptx = currentArtifact.isText === false || currentArtifact.filePath?.endsWith('.pptx') || currentArtifact.mimeType?.includes('presentation') || currentArtifact.downloadUrl?.endsWith('.pptx');
+        if (isBinaryPptx) {
+          return (
+            <PptxPreview
+              item={currentArtifact}
+              fileName={currentArtifact.title}
+            />
+          );
+        }
         return (
           <PptPreview
             content={currentVersion?.content || ''}

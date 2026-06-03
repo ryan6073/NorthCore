@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Conversation, Message, Agent, Artifact, MessageAttachment, AgentMentionItem } from '@/types';
 import MessageBubble from './MessageBubble';
 import ContextUsageRing from '@/components/common/ContextUsageRing';
-import { Send, Paperclip, Smile, AtSign, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight, Settings, Pencil, Check, Terminal, Cpu, FileText, Folder, Save, Globe } from 'lucide-react';
+import { Send, Paperclip, Smile, AtSign, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight, Settings, Pencil, Check, Terminal, Cpu, FileText, Folder, Save, Globe, Loader2 } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface ChatPanelProps {
@@ -341,7 +341,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
 
   const handleSend = () => {
     const trimmed = inputValue.trim();
-    if (!trimmed && pendingAttachments.length === 0) return;
+    if (!trimmed && pendingAttachments.length === 0 && (!workspaceContextFiles || workspaceContextFiles.length === 0)) return;
+
     const targetAgentId = parseTargetAgentId(trimmed);
     onSendMessage(trimmed, pendingAttachments, targetAgentId || undefined, undefined, webSearchMode);
     setInputValue('');
@@ -403,38 +404,42 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     fileInputRef.current?.click();
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-    const newAttachments: MessageAttachment[] = Array.from(files).map(file => {
+    const filesArray = Array.from(files);
+    if (filesArray.length === 0) return;
+
+    // Create temporary pending attachments in local state (no immediate upload)
+    const tempAttachments: MessageAttachment[] = filesArray.map(file => {
       const isImage = file.type.startsWith('image/');
       const isPdf = file.type === 'application/pdf' || file.name.endsWith('.pdf');
       const isPpt = file.name.endsWith('.ppt') || file.name.endsWith('.pptx');
       
-      let type: 'image' | 'pdf' | 'ppt' | 'other' = 'other';
+      let type = 'other';
       if (isImage) type = 'image';
       else if (isPdf) type = 'pdf';
       else if (isPpt) type = 'ppt';
 
-      const url = URL.createObjectURL(file);
-      
+      const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       return {
-        id: `attach-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        id: tempId,
         name: file.name,
         type,
-        url,
+        url: URL.createObjectURL(file),
         size: file.size,
-        meta: type === 'pdf' ? { pages: Math.floor(Math.random() * 20) + 5 } : undefined,
+        isUploading: false,
         file
       };
     });
-    
-    setPendingAttachments(prev => [...prev, ...newAttachments]);
+
+    setPendingAttachments(prev => [...prev, ...tempAttachments]);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const hasHeader = !!replyContext || !!quoteArtifactRef || pendingAttachments.length > 0 || (workspaceContextFiles && workspaceContextFiles.length > 0);
-  const canSend = inputValue.trim() || pendingAttachments.length > 0 || (workspaceContextFiles && workspaceContextFiles.length > 0);
+  const isUploadingAny = pendingAttachments.some(a => a.isUploading);
+  const canSend = (inputValue.trim() || pendingAttachments.length > 0 || (workspaceContextFiles && workspaceContextFiles.length > 0)) && !isUploadingAny;
 
   const renderMessageList = () => {
     let lastDateLabel = '';
@@ -1044,11 +1049,18 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
               <div className="flex flex-wrap gap-1.5 px-3.5 py-1.5 bg-slate-50/50 dark:bg-slate-900/30 border-b border-lark-border/40 dark:border-slate-800/40 flex-shrink-0 select-none max-h-16 overflow-y-auto">
                 {pendingAttachments.map((attach) => (
                   <div key={attach.id} className="flex items-center gap-1.5 px-2 py-0.5 bg-white dark:bg-slate-900 border border-lark-border dark:border-slate-800 rounded-lg text-xs shadow-sm max-w-[180px]">
-                    <span className="truncate flex-1 text-slate-600 dark:text-slate-300 font-medium text-[10px]">{attach.name}</span>
+                    <span 
+                      className={`truncate flex-1 text-[10px] font-medium ${attach.uploadError ? 'text-red-500' : 'text-slate-600 dark:text-slate-300'}`}
+                      title={attach.uploadError || attach.name}
+                    >
+                      {attach.name}
+                      {attach.isUploading && ' (上传中...)'}
+                      {attach.uploadError && ' (失败)'}
+                    </span>
                     <button
                       type="button"
                       onClick={() => setPendingAttachments(prev => prev.filter(a => a.id !== attach.id))}
-                      className="text-slate-400 hover:text-red-500 p-0.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800"
+                      className="text-slate-400 hover:text-red-500 p-0.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex-shrink-0"
                     >
                       <X className="w-3 h-3" />
                     </button>

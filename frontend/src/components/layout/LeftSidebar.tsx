@@ -471,8 +471,17 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
           agents={agents}
           selectedAgentId={selectedAgentId}
           onSelectAgent={async (agentId) => {
-            await getOrCreateAgentChat(agentId);
-            setViewMode('conversations');
+            const agent = agents.find(a => a.id === agentId);
+            if (agent && (agent.requiresWorkspace === true || agent.supportsContactConversation === false)) {
+              useAgentHubStore.setState({ preselectedAgentId: agentId, isNewConversationOpen: true });
+            } else {
+              try {
+                await getOrCreateAgentChat(agentId);
+                setViewMode('conversations');
+              } catch (e) {
+                console.error("Failed to start contact chat", e);
+              }
+            }
             setConfiguringAgentId(null);
           }}
           onAddAgent={() => {
