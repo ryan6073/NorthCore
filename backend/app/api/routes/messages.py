@@ -295,17 +295,34 @@ async def api_send_message(conversation_id: str, payload: Dict[str, Any] = Body(
         conversation=conversation,
     )
 
-    if conversation["mode"] == "group" and not target_agent:
+    if should_run_group_chat_collaboration(conversation, target_agent, execution_decision):
+        collaboration = await run_group_chat_collaboration(
+            conversation=conversation,
+            user_message=user_message,
+            user_input=content,
+            model_user_input=model_user_input,
+            artifact_ref=artifact_ref,
+            web_search_metadata=web_search_metadata,
+            web_search_model_user_input=web_search_model_user_input,
+            execution_decision=execution_decision,
+        )
+        if collaboration and collaboration.get("handled"):
+            agent_messages.extend(collaboration.get("agentMessages") or [])
+            artifacts.extend(collaboration.get("artifacts") or [])
+            schedule_memory_extraction(conversation, user_message, agent_messages)
+            return ok({
+                "userMessage": user_message,
+                "agentMessages": agent_messages,
+                "artifacts": artifacts,
+                "contextUsage": build_context_usage(conversation),
+                "executionMode": execution_decision["executionMode"],
+                "intent": execution_decision["intent"],
+                "reason": execution_decision["reason"],
+                "taskPlan": collaboration.get("taskPlan"),
+                "workspaceActionContext": collaboration.get("workspaceActionContext"),
+            }, message="群聊协作已完成")
+
         intent_result = analyze_orchestrator_intent(content)
-        if intent_result["intent"] == "task":
-            intent_result = {
-                **intent_result,
-                "taskPlan": normalize_group_task_plan_for_conversation(
-                    conversation,
-                    intent_result.get("taskPlan") or [],
-                    content,
-                ),
-            }
         if intent_result["intent"] == "chat":
             orchestrator_content = intent_result["reply"]
             if quoted_message or artifact_ref or (web_search_metadata and web_search_metadata.get("shouldSearch")):

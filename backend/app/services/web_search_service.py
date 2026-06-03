@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 
 from app.config import settings
 from app.core.llm_client import client
-from app.database import get_web_search_cache, upsert_web_search_cache
+from app.database import get_web_search_cache, now_datetime, upsert_web_search_cache
 
 
 VALID_WEB_SEARCH_MODES = {"auto", "force", "off"}
@@ -691,7 +691,7 @@ def _cache_is_fresh(cache_row: Dict[str, Any]) -> bool:
     ttl = max(0, _setting_int("WEB_SEARCH_CACHE_TTL_SECONDS", 3600))
     if ttl == 0:
         return False
-    return (datetime.now() - updated_at).total_seconds() <= ttl
+    return (now_datetime() - updated_at).total_seconds() <= ttl
 
 
 async def search_web(query: str, max_results: Optional[int] = None) -> Dict[str, Any]:

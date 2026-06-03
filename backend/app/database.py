@@ -6,7 +6,7 @@ import hmac
 import secrets
 import base64
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import unquote, urlparse
@@ -15,12 +15,23 @@ from app.config import ROOT_DIR, settings
 from app.model_providers.registry import get_model_provider
 
 
+BEIJING_TZ = timezone(timedelta(hours=8))
+
+
+def now_datetime() -> datetime:
+    return datetime.now(BEIJING_TZ).replace(tzinfo=None)
+
+
+def now_iso() -> str:
+    return datetime.now(BEIJING_TZ).isoformat()
+
+
 def now_text() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return now_datetime().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def future_text(days: int) -> str:
-    return (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    return (now_datetime() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def create_id(prefix: str) -> str:
@@ -1514,7 +1525,8 @@ def create_model_config(owner_user_id: str, payload: Dict[str, Any]) -> Dict[str
     timestamp = now_text()
     name = str(payload.get("name") or "").strip() or "Model Config"
     provider = str(payload.get("provider") or "openai_compatible").strip()
-    protocol = str(payload.get("protocol") or "openai_chat_completions").strip()
+    provider_meta = get_model_provider(provider)
+    protocol = str(payload.get("protocol") or provider_meta.get("protocol") or "openai_chat_completions").strip()
     model_name = str(payload.get("modelName") or payload.get("model_name") or "").strip()
     base_url = str(payload.get("baseUrl") or payload.get("base_url") or "").strip()
     if not base_url:
@@ -1544,9 +1556,13 @@ def update_model_config(config_id: str, owner_user_id: str, payload: Dict[str, A
     extra_config = updated.get("extraConfig") if isinstance(updated.get("extraConfig"), dict) else {}
     with get_connection() as conn:
         provider = str(updated.get("provider") or "openai_compatible").strip()
+        provider_meta = get_model_provider(provider)
+        protocol = str(updated.get("protocol") or provider_meta.get("protocol") or "openai_chat_completions").strip()
+        if ("provider" in payload or "provider_id" in payload) and "protocol" not in payload:
+            protocol = str(provider_meta.get("protocol") or protocol).strip()
         base_url = str(updated.get("baseUrl") or updated.get("base_url") or "").strip()
         if not base_url:
-            base_url = str(get_model_provider(provider).get("defaultBaseUrl") or "").strip()
+            base_url = str(provider_meta.get("defaultBaseUrl") or "").strip()
         conn.execute(
             """
             UPDATE model_configs
@@ -1557,7 +1573,7 @@ def update_model_config(config_id: str, owner_user_id: str, payload: Dict[str, A
             (
                 str(updated.get("name") or "Model Config").strip(),
                 provider,
-                str(updated.get("protocol") or "openai_chat_completions").strip(),
+                protocol,
                 str(updated.get("modelName") or updated.get("model_name") or "").strip(),
                 base_url,
                 credential_ref,
@@ -2270,6 +2286,7 @@ def attachment_from_row(row: sqlite3.Row) -> Dict[str, Any]:
 def artifact_meta_from_row(row: sqlite3.Row) -> Dict[str, Any]:
     artifact = {
         "id": row["id"],
+        "artifactId": row["id"],
         "conversationId": row["conversation_id"],
         "runId": row["run_id"],
         "title": row["title"],
@@ -2282,6 +2299,29 @@ def artifact_meta_from_row(row: sqlite3.Row) -> Dict[str, Any]:
     }
     if row["description"]:
         artifact["description"] = row["description"]
+    return artifact
+
+
+def artifact_meta_from_version_row(artifact_row: sqlite3.Row, version_row: sqlite3.Row) -> Dict[str, Any]:
+    metadata = _json_load(version_row["metadata_json"], {})
+    artifact = artifact_meta_from_row(artifact_row)
+    source_run_id = str(metadata.get("sourceRunId") or "").strip()
+    if source_run_id:
+        artifact["runId"] = source_run_id
+    artifact.update({
+        "artifactId": artifact_row["id"],
+        "artifactVersionId": version_row["id"],
+        "currentVersionId": version_row["id"],
+        "latestVersion": version_row["version"],
+        "size": version_row["size"],
+        "updatedAt": version_row["created_at"],
+        "versionCreatedAt": version_row["created_at"],
+        "versionMetadata": metadata,
+    })
+    if version_row["language"]:
+        artifact["language"] = version_row["language"]
+    if metadata.get("sourceFilePath"):
+        artifact["sourceFilePath"] = metadata["sourceFilePath"]
     return artifact
 
 
@@ -3602,12 +3642,36 @@ def update_conversation_activity(conversation_id: str, last_message: str) -> Non
 
 
 def list_artifacts(conversation_id: str) -> List[Dict[str, Any]]:
+    artifacts: List[Dict[str, Any]] = []
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT * FROM artifacts WHERE conversation_id = ? ORDER BY created_at DESC",
             (conversation_id,),
         ).fetchall()
-    return [artifact_meta_from_row(row) for row in rows]
+        for row in rows:
+            version_rows = conn.execute(
+                """
+                SELECT *
+                FROM artifact_versions
+                WHERE artifact_id = ?
+                ORDER BY created_at DESC, version DESC
+                """,
+                (row["id"],),
+            ).fetchall()
+            version_artifacts = []
+            for version_row in version_rows:
+                metadata = _json_load(version_row["metadata_json"], {})
+                if metadata.get("sourceRunId"):
+                    version_artifacts.append(artifact_meta_from_version_row(row, version_row))
+            if version_artifacts:
+                artifacts.extend(version_artifacts)
+            else:
+                artifacts.append(artifact_meta_from_row(row))
+    return sorted(
+        artifacts,
+        key=lambda item: str(item.get("versionCreatedAt") or item.get("updatedAt") or item.get("createdAt") or ""),
+        reverse=True,
+    )
 
 
 def list_artifacts_for_run(run_id: str) -> List[Dict[str, Any]]:

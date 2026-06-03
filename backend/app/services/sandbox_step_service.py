@@ -2,12 +2,14 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 
 from app.database import (
     get_agent,
+    get_conversation,
     get_agent_run_detail,
     get_agent_run_step,
     list_artifacts_for_run,
     update_agent_run_step,
 )
 from app.runtimes.router import runtime_router
+from app.services.message_service import get_effective_agent_for_conversation
 
 EventEmitter = Callable[[str, Dict[str, Any]], Awaitable[None]]
 
@@ -41,7 +43,31 @@ async def execute_sandbox_step(
     step: Dict[str, Any],
     send: EventEmitter,
 ) -> None:
-    agent = get_agent(step["agentId"]) or get_agent("agent-claude-code")
+    run = get_agent_run_detail(run_id)
+    owner_user_id = (run or {}).get("ownerUserId")
+    conversation_id = (run or {}).get("conversationId")
+    conversation = get_conversation(conversation_id, owner_user_id=owner_user_id) if conversation_id else None
+    if conversation:
+        agent = get_effective_agent_for_conversation(conversation, step["agentId"])
+    else:
+        agent = get_agent(step["agentId"], owner_user_id=owner_user_id)
+    agent = agent or get_agent("agent-claude-code", owner_user_id=owner_user_id) or get_agent("agent-claude-code")
+    if agent:
+        step_runtime_config = step.get("runtimeConfig") if isinstance(step.get("runtimeConfig"), dict) else {}
+        runtime_metadata = step.get("runtimeMetadata") if isinstance(step.get("runtimeMetadata"), dict) else {}
+        agent = {
+            **agent,
+            "runtime": step.get("runtime") or agent.get("runtime", "native"),
+            "modelConfigId": step.get("modelConfigId") or agent.get("modelConfigId"),
+            "runtimeConfig": {
+                **(agent.get("runtimeConfig") if isinstance(agent.get("runtimeConfig"), dict) else {}),
+                **step_runtime_config,
+            },
+            "runtimeMetadata": {
+                **(agent.get("runtimeMetadata") if isinstance(agent.get("runtimeMetadata"), dict) else {}),
+                **runtime_metadata,
+            },
+        }
     update_agent_run_step(step["id"], status="running", claimed_by=step["agentId"], mark_started=True)
     await send(
         "run.step.started",

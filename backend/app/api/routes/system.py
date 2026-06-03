@@ -22,5 +22,5 @@ async def health_check():
     return ok({
         "status": "healthy",
         "version": APP_VERSION,
-        "timestamp": __import__("datetime").datetime.now().isoformat(),
+        "timestamp": now_iso(),
     }, message="ok")

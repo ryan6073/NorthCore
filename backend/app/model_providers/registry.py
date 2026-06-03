@@ -17,6 +17,13 @@ MODEL_PROVIDERS: List[Dict[str, Any]] = [
         "defaultBaseUrl": "https://api.anthropic.com",
     },
     {
+        "id": "anthropic_compatible",
+        "name": "Anthropic-compatible / Claude Code Router",
+        "protocol": "anthropic_messages",
+        "requiresBaseUrl": True,
+        "aliases": ["claude_code_router", "claude-router", "anthropic_proxy"],
+    },
+    {
         "id": "volcengine_ark",
         "name": "Volcengine Ark / Doubao",
         "protocol": "openai_chat_completions",
@@ -96,4 +103,4 @@ def get_model_provider(provider_id: str) -> Dict[str, Any]:
     for provider in MODEL_PROVIDERS:
         if provider["id"] == normalized or normalized in provider.get("aliases", []):
             return provider
-    return MODEL_PROVIDERS[2]
+    return next(provider for provider in MODEL_PROVIDERS if provider["id"] == "volcengine_ark")

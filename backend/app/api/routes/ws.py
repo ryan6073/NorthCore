@@ -30,7 +30,7 @@ async def websocket_root(websocket: WebSocket):
         await websocket.send_json({
             "type": "connected",
             "sessionId": "agenthub-ws",
-            "serverTime": __import__("datetime").datetime.now().isoformat(),
+            "serverTime": now_iso(),
             "version": APP_VERSION,
             "user": current_user,
         })

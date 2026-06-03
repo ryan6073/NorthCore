@@ -228,6 +228,21 @@ def _fallback_dag(prompt: str, agent_id: str = "agent-claude-code") -> Dict[str,
     }
 
 
+def _artifact_publish_paths_for_action_context(action_context: Dict[str, Any]) -> set[str]:
+    paths = {
+        str(item.get("path"))
+        for item in action_context.get("targetFiles") or []
+        if isinstance(item, dict) and item.get("path")
+    }
+    paths.update(str(path) for path in action_context.get("allowedRelatedFiles") or [] if path)
+    paths.update(
+        str(item.get("path"))
+        for item in action_context.get("candidateTargets") or []
+        if isinstance(item, dict) and item.get("path")
+    )
+    return paths
+
+
 def normalize_dag(
     payload: Dict[str, Any],
     prompt: str,
@@ -1439,7 +1454,7 @@ class RunScheduler:
         artifact_changes: List[Dict[str, Any]] = []
         action_context = (run.get("dag") or {}).get("workspaceActionContext") or {}
         is_modify_existing = action_context.get("action") == "modify_existing"
-        target_paths = {str(item.get("path")) for item in action_context.get("targetFiles") or [] if isinstance(item, dict)}
+        target_paths = _artifact_publish_paths_for_action_context(action_context)
         target_artifacts = {str(item) for item in action_context.get("targetArtifacts") or []}
         target_artifact_by_path = {
             str(item.get("path")): str(item.get("artifactId"))

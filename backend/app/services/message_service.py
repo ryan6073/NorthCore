@@ -871,7 +871,7 @@ def run_is_stale(run: Dict[str, Any], now: Optional[datetime] = None) -> bool:
     started_at = parse_db_time(run.get("startedAt") or run.get("createdAt"))
     if not started_at:
         return False
-    return (now or datetime.now()) - started_at > RUN_STALE_AFTER
+    return (now or now_datetime()) - started_at > RUN_STALE_AFTER
 
 
 def mark_run_stale(run: Dict[str, Any], reason: str = "沙箱任务超时未完成，已自动标记为失败") -> None:
@@ -893,7 +893,7 @@ def cleanup_stale_runs_for_conversation(conversation_id: str, owner_user_id: str
         page=1,
         page_size=20,
     )
-    now = datetime.now()
+    now = now_datetime()
     for run in page.get("list", []):
         if run_is_stale(run, now):
             mark_run_stale(run)
@@ -1625,7 +1625,7 @@ async def send_ws_error(websocket: WebSocket, event_id: Optional[str], code: int
 
 
 def ws_now() -> str:
-    return __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return now_text()
 
 
 async def send_agent_status(
@@ -1695,6 +1695,362 @@ async def maybe_create_and_send_artifact(
     update_conversation_activity(conversation_id, artifact_message["content"])
     await send_message_completed(current_user, conversation_id, event_id, artifact_message)
     return artifact_result
+
+
+READONLY_COLLABORATION_SOURCE = "groupChatCollaboration"
+READONLY_CONTEXT_MAX_CHARS = 18000
+READONLY_FILE_MAX_CHARS = 6000
+READONLY_ARTIFACT_MAX_CHARS = 6000
+
+
+def _unique_ordered(values: List[str]) -> List[str]:
+    seen = set()
+    result: List[str] = []
+    for value in values:
+        clean_value = str(value or "").strip()
+        if not clean_value or clean_value in seen:
+            continue
+        seen.add(clean_value)
+        result.append(clean_value)
+    return result
+
+
+def should_run_group_chat_collaboration(
+    conversation: Dict[str, Any],
+    target_agent: Optional[Dict[str, Any]],
+    execution_decision: Dict[str, Any],
+) -> bool:
+    return (
+        conversation.get("mode") == "group"
+        and not target_agent
+        and execution_decision.get("executionMode") == "chat"
+    )
+
+
+def _agent_name_mentioned(content: str, agent: Dict[str, Any]) -> bool:
+    name = str(agent.get("name") or "").strip()
+    if not name:
+        return False
+    lowered = (content or "").lower()
+    return name.lower() in lowered or f"@{name}" in content or f"＠{name}" in content
+
+
+def _ensure_explicitly_named_agents_in_plan(
+    conversation: Dict[str, Any],
+    content: str,
+    task_plan: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    existing_ids = {str(step.get("agentId") or "") for step in task_plan if isinstance(step, dict)}
+    enriched_plan = list(task_plan)
+    for agent in callable_group_member_agents(conversation):
+        if str(agent.get("id")) in existing_ids or not _agent_name_mentioned(content, agent):
+            continue
+        enriched_plan.append({
+            "agentId": agent["id"],
+            "agentName": agent.get("name") or "Agent",
+            "task": f"请基于用户需求给出你的分析和建议：{content}",
+        })
+        existing_ids.add(str(agent.get("id")))
+    return enriched_plan[:4]
+
+
+def _workspace_file_content(path: str, workspace_files: List[Dict[str, Any]]) -> Optional[str]:
+    file_meta = next((item for item in workspace_files if item.get("path") == path), None)
+    if not file_meta:
+        return None
+    version = get_sandbox_file_version(file_meta["id"])
+    if not version:
+        return str(file_meta.get("contentPreview") or "").strip() or None
+    return str(version.get("content") or "")
+
+
+def _build_readonly_context(
+    conversation: Dict[str, Any],
+    workspace_action_context: Optional[Dict[str, Any]],
+    artifact_ref: Optional[Dict[str, Any]],
+) -> str:
+    sections = [
+        "[只读协作约束]",
+        "- 本轮是群聊 chat 协作，不是 sandbox run。",
+        "- 只能分析、解释、review、给建议；不要声明已经修改文件。",
+        "- 不要输出需要后端自动应用的 patch；如需修改，请建议用户后续发起执行任务。",
+    ]
+    workspace_id = str(conversation.get("workspaceId") or "").strip()
+    if workspace_id:
+        workspace_context = read_workspace_agents_context(workspace_id)
+        if workspace_context:
+            sections.append("[Workspace Agents Context]\n" + workspace_context[:4000])
+        try:
+            from app.services.workspace_index_service import workspace_index_brief
+
+            index_brief = workspace_index_brief(workspace_id)
+            if index_brief:
+                sections.append("[Workspace Index Brief]\n" + index_brief[:6000])
+        except Exception:
+            pass
+    if workspace_action_context:
+        safe_action_context = {
+            key: value
+            for key, value in workspace_action_context.items()
+            if key not in {"rawModelOutput"}
+        }
+        sections.append("[Workspace Action Context]\n" + json.dumps(safe_action_context, ensure_ascii=False))
+        target_paths = [
+            str(item.get("path") or "")
+            for item in workspace_action_context.get("targetFiles") or []
+            if isinstance(item, dict) and item.get("path")
+        ]
+        related_paths = [
+            str(path or "")
+            for path in workspace_action_context.get("allowedRelatedFiles") or []
+            if str(path or "").strip()
+        ]
+        if workspace_id and (target_paths or related_paths):
+            workspace_files = list_sandbox_files_for_workspace(workspace_id)
+            file_sections = []
+            for path in _unique_ordered([*target_paths, *related_paths])[:8]:
+                content = _workspace_file_content(path, workspace_files)
+                if content is None:
+                    continue
+                clipped = content[:READONLY_FILE_MAX_CHARS]
+                if len(content) > READONLY_FILE_MAX_CHARS:
+                    clipped += "\n...（内容已截断）"
+                file_sections.append(f"--- {path} ---\n{clipped}")
+            if file_sections:
+                sections.append("[只读文件内容]\n" + "\n\n".join(file_sections))
+        artifact_ids = [
+            str(item or "").strip()
+            for item in workspace_action_context.get("targetArtifacts") or []
+            if str(item or "").strip()
+        ]
+        artifact_sections = []
+        for artifact_id in artifact_ids[:6]:
+            artifact = get_artifact(artifact_id)
+            if not artifact:
+                continue
+            content = str(artifact.get("content") or "")
+            clipped = content[:READONLY_ARTIFACT_MAX_CHARS]
+            if len(content) > READONLY_ARTIFACT_MAX_CHARS:
+                clipped += "\n...（内容已截断）"
+            artifact_sections.append(
+                f"--- {artifact.get('title') or artifact_id} ({artifact_id}) ---\n{clipped}"
+            )
+        if artifact_sections:
+            sections.append("[只读 Artifact 内容]\n" + "\n\n".join(artifact_sections))
+    if artifact_ref:
+        sections.append("[用户显式引用产物]\n" + json.dumps(artifact_ref, ensure_ascii=False))
+    context = "\n\n".join(sections)
+    return context[:READONLY_CONTEXT_MAX_CHARS]
+
+
+def _build_collaboration_agent_input(
+    user_input: str,
+    step: Dict[str, Any],
+    readonly_context: str,
+    prior_outputs: List[Dict[str, str]],
+) -> str:
+    sections = [
+        readonly_context,
+        "[用户原始需求]\n" + user_input,
+        "[你负责的子任务]\n" + str(step.get("task") or user_input),
+    ]
+    if prior_outputs:
+        sections.append(
+            "[前序 Agent 回复]\n"
+            + "\n\n".join(
+                f"{item['agentName']}：\n{item['content'][:3000]}"
+                for item in prior_outputs
+            )
+        )
+    sections.append(
+        "请只输出你的分析和建议。不要修改文件，不要说你已经执行了命令，"
+        "不要生成可自动应用的 diff。"
+    )
+    return "\n\n".join(section for section in sections if section)
+
+
+async def execute_readonly_agent_chat(
+    agent: Dict[str, Any],
+    conversation: Dict[str, Any],
+    user_input: str,
+    exclude_message_id: Optional[str] = None,
+) -> str:
+    # Force all runtimes through the native model chat path for read-only
+    # collaboration. Platform CLI runtimes may edit files when used normally.
+    readonly_system_prompt = (
+        system_prompt_for_agent(agent)
+        + "\n\n[只读协作模式]\n"
+        "你只能基于上下文分析、review 和给建议。不要修改文件，不要声称已经执行命令，"
+        "不要输出可自动应用的 diff。"
+    )
+    return await call_agent_once(
+        conversation["id"],
+        {**agent, "runtime": "native", "systemPrompt": readonly_system_prompt},
+        user_input,
+        exclude_message_id=exclude_message_id,
+    )
+
+
+async def run_group_chat_collaboration(
+    conversation: Dict[str, Any],
+    user_message: Dict[str, Any],
+    user_input: str,
+    model_user_input: str,
+    artifact_ref: Optional[Dict[str, Any]],
+    web_search_metadata: Optional[Dict[str, Any]],
+    web_search_model_user_input: str,
+    execution_decision: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    intent_result = analyze_orchestrator_intent(user_input)
+    if intent_result.get("intent") != "task":
+        return None
+
+    task_plan = normalize_group_task_plan_for_conversation(
+        conversation,
+        intent_result.get("taskPlan") or [],
+        user_input,
+    )
+    task_plan = _ensure_explicitly_named_agents_in_plan(conversation, user_input, task_plan)
+    if not task_plan:
+        return None
+
+    workspace_action_context: Optional[Dict[str, Any]] = None
+    workspace_id = str(conversation.get("workspaceId") or "").strip()
+    if workspace_id:
+        try:
+            from app.services.workspace_index_service import resolve_workspace_action
+
+            workspace_action_context = await resolve_workspace_action(
+                conversation_id=conversation["id"],
+                workspace_id=workspace_id,
+                user_content=user_input,
+                explicit_artifact_ref=artifact_ref,
+            )
+        except Exception as exc:
+            workspace_action_context = {
+                "action": "answer_only",
+                "confidence": 0,
+                "targetFiles": [],
+                "allowedRelatedFiles": [],
+                "targetArtifacts": [],
+                "candidateTargets": [],
+                "reason": f"只读目标解析失败，按聊天上下文继续: {format_model_error(exc)}",
+            }
+
+    agent_messages: List[Dict[str, Any]] = []
+    artifacts: List[Dict[str, Any]] = []
+    plan_content = format_task_plan_content(task_plan)
+    plan_metadata = {
+        "source": READONLY_COLLABORATION_SOURCE,
+        "readOnly": True,
+        "taskPlan": task_plan,
+        "workspaceActionContext": workspace_action_context,
+        "executionMode": execution_decision.get("executionMode"),
+        "intent": execution_decision.get("intent"),
+        "reason": execution_decision.get("reason"),
+    }
+    orchestrator_message = create_message(
+        conversation_id=conversation["id"],
+        sender_id=ORCHESTRATOR_AGENT_ID,
+        sender_name="Orchestrator",
+        role="orchestrator",
+        msg_type="task-plan",
+        content=plan_content,
+        metadata=plan_metadata,
+    )
+    agent_messages.append(orchestrator_message)
+    update_conversation_activity(conversation["id"], plan_content)
+
+    if workspace_action_context and workspace_action_context.get("action") == "clarify":
+        clarification = (
+            workspace_action_context.get("clarificationQuestion")
+            or "请补充要分析的具体文件、页面或产物。"
+        )
+        clarify_message = create_message(
+            conversation_id=conversation["id"],
+            sender_id=ORCHESTRATOR_AGENT_ID,
+            sender_name="Orchestrator",
+            role="orchestrator",
+            msg_type="status",
+            content=clarification,
+            metadata={
+                "source": READONLY_COLLABORATION_SOURCE,
+                "readOnly": True,
+                "workspaceActionContext": workspace_action_context,
+                "executionMode": "clarify",
+            },
+        )
+        agent_messages.append(clarify_message)
+        update_conversation_activity(conversation["id"], clarification)
+        return {
+            "handled": True,
+            "agentMessages": agent_messages,
+            "artifacts": artifacts,
+            "workspaceActionContext": workspace_action_context,
+            "taskPlan": task_plan,
+            "summary": clarification,
+        }
+
+    readonly_context = _build_readonly_context(conversation, workspace_action_context, artifact_ref)
+    prior_outputs: List[Dict[str, str]] = []
+    for step in task_plan:
+        agent = get_effective_agent_for_conversation(conversation, str(step.get("agentId") or ""))
+        if not agent_is_callable(agent):
+            continue
+        agent_input = _build_collaboration_agent_input(
+            web_search_model_user_input or model_user_input,
+            step,
+            readonly_context,
+            prior_outputs,
+        )
+        try:
+            reply_content = await execute_readonly_agent_chat(
+                agent,
+                conversation,
+                agent_input,
+                exclude_message_id=user_message["id"],
+            )
+            finish_reason = "stop"
+        except Exception as exc:
+            reply_content = fallback_reply(agent, user_input, exc)
+            finish_reason = "error"
+        metadata = {
+            "source": READONLY_COLLABORATION_SOURCE,
+            "readOnly": True,
+            "taskPlan": task_plan,
+            "taskPlanStep": step,
+            "workspaceActionContext": workspace_action_context,
+            "finishReason": finish_reason,
+        }
+        if web_search_metadata:
+            metadata["webSearch"] = web_search_metadata
+        agent_message = create_message(
+            conversation_id=conversation["id"],
+            sender_id=agent["id"],
+            sender_name=agent.get("name") or "Agent",
+            role="agent",
+            msg_type="text",
+            content=reply_content,
+            metadata=metadata,
+        )
+        agent_messages.append(agent_message)
+        prior_outputs.append({"agentName": agent.get("name") or "Agent", "content": reply_content})
+        update_conversation_activity(conversation["id"], reply_content)
+        artifact_result = persist_artifact_from_message(conversation["id"], agent_message, artifact_ref)
+        if artifact_result:
+            artifacts.append({**artifact_result["artifact"], "action": artifact_result["action"]})
+            artifact_message = artifact_result["message"]
+            agent_messages.append(artifact_message)
+            update_conversation_activity(conversation["id"], artifact_message["content"])
+
+    return {
+        "handled": True,
+        "agentMessages": agent_messages,
+        "artifacts": artifacts,
+        "workspaceActionContext": workspace_action_context,
+        "taskPlan": task_plan,
+        "summary": "群聊只读协作已完成",
+    }
 
 
 async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], current_user: Optional[Dict[str, Any]] = None) -> None:
@@ -2003,17 +2359,42 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
         conversation=conversation,
     )
 
-    if conversation["mode"] == "group" and not target_agent:
+    if should_run_group_chat_collaboration(conversation, target_agent, execution_decision):
+        collaboration = await run_group_chat_collaboration(
+            conversation=conversation,
+            user_message=user_message,
+            user_input=content,
+            model_user_input=model_user_input,
+            artifact_ref=artifact_ref,
+            web_search_metadata=web_search_metadata,
+            web_search_model_user_input=web_search_model_user_input,
+            execution_decision=execution_decision,
+        )
+        if collaboration and collaboration.get("handled"):
+            collaboration_messages = collaboration.get("agentMessages") or []
+            completed_messages.extend(collaboration_messages)
+            for message in collaboration_messages:
+                await send_message_completed(current_user, conversation_id, event_id, message)
+            total_artifacts += len(collaboration.get("artifacts") or [])
+            await emit_conversation_event(
+                current_user,
+                conversation_id,
+                "conversation.all_tasks.completed",
+                event_id,
+                {
+                    "conversationId": conversation_id,
+                    "summary": collaboration.get("summary") or "群聊协作已完成",
+                    "totalMessages": 1 + len(collaboration_messages),
+                    "totalArtifacts": total_artifacts,
+                    "taskPlan": collaboration.get("taskPlan"),
+                    "workspaceActionContext": collaboration.get("workspaceActionContext"),
+                    "contextUsage": build_context_usage(conversation),
+                },
+            )
+            schedule_memory_extraction(conversation, user_message, completed_messages)
+            return
+
         intent_result = analyze_orchestrator_intent(content)
-        if intent_result["intent"] == "task":
-            intent_result = {
-                **intent_result,
-                "taskPlan": normalize_group_task_plan_for_conversation(
-                    conversation,
-                    intent_result.get("taskPlan") or [],
-                    content,
-                ),
-            }
         if intent_result["intent"] == "chat":
             orchestrator_content = intent_result["reply"]
             if quoted_message or artifact_ref or (web_search_metadata and web_search_metadata.get("shouldSearch")):

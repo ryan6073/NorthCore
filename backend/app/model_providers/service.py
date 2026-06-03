@@ -133,7 +133,7 @@ def test_model_config_connectivity(config_id: str, owner_user_id: str) -> Dict[s
         return {"ok": False, "error": "credential 未配置"}
     started = time.time()
     try:
-        if config.get("protocol") == "anthropic_messages" or provider["id"] == "anthropic":
+        if config.get("protocol") == "anthropic_messages" or provider["id"] in {"anthropic", "anthropic_compatible"}:
             _test_anthropic(config, secret)
         else:
             _test_openai_compatible(config, secret)

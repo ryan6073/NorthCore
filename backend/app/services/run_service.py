@@ -177,7 +177,7 @@ async def recover_orphaned_finished_run(
     if not steps or any(step.get("status") in ACTIVE_RUN_STEP_STATUSES for step in steps):
         return detail
     latest_step_at = _latest_step_timestamp(steps)
-    if latest_step_at and (datetime.now() - latest_step_at).total_seconds() < ORPHANED_RUN_RECOVERY_GRACE_SECONDS:
+    if latest_step_at and (now_datetime() - latest_step_at).total_seconds() < ORPHANED_RUN_RECOVERY_GRACE_SECONDS:
         return detail
 
     failed_steps = [step for step in steps if step.get("status") in {"failed", "blocked"}]

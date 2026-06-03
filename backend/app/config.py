@@ -25,9 +25,9 @@ class Settings(BaseSettings):
     SANDBOX_NETWORK: str = "bridge"
     SANDBOX_ALLOW_NETWORK: bool = True
     SANDBOX_AUTO_INSTALL_UV: bool = True
-    SANDBOX_TIMEOUT_SECONDS: int = 600
-    SANDBOX_COMMAND_TIMEOUT_SECONDS: int = 900
-    SANDBOX_SETUP_TIMEOUT_SECONDS: int = 300
+    SANDBOX_TIMEOUT_SECONDS: int = 1800
+    SANDBOX_COMMAND_TIMEOUT_SECONDS: int = 1800
+    SANDBOX_SETUP_TIMEOUT_SECONDS: int = 900
     SANDBOX_MAX_PARALLEL_STEPS: int = 1
     SANDBOX_WORKSPACE_ROOT: str = "/tmp/agenthub-sandboxes"
     SANDBOX_MAX_OUTPUT_CHARS: int = 100000
@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     # ==================== Agent Runtime 配置 ====================
     OPENCODE_BIN: str = "opencode"
     OPENCODE_TIMEOUT_SECONDS: int = 600
+    CODEX_BIN: str = "codex"
+    CODEX_TIMEOUT_SECONDS: int = 600
+    CODEX_HOME_ROOT: str = ""
+    CLAUDE_CODE_BIN: str = "claude"
+    CLAUDE_CODE_TIMEOUT_SECONDS: int = 600
 
     # ==================== Workspace 部署配置 ====================
     DEPLOY_BASE_URL: str = ""
