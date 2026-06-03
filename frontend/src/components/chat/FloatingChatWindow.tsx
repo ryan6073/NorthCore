@@ -27,7 +27,7 @@ const FloatingChatWindow: React.FC<FloatingChatWindowProps> = ({ floatingId }) =
   
   const [loading, setLoading] = useState(false);
   const [showRightPanel, setShowRightPanel] = useState(false);
-  const [previousWidth, setPreviousWidth] = useState(360);
+  const [previousWidth, setPreviousWidth] = useState(450);
 
   const conversation = conversations.find(c => c.id === floatingId);
   if (!floatingConf || !conversation) return null;
@@ -153,8 +153,8 @@ const FloatingChatWindow: React.FC<FloatingChatWindowProps> = ({ floatingId }) =
     document.addEventListener('mouseup', handleMouseUp);
   };
 
-  const handleSend = async (content: string, attachments?: any[], targetAgentId?: string, useSandbox?: boolean) => {
-    await sendMessageToConversation(floatingId, content, attachments, targetAgentId, useSandbox);
+  const handleSend = async (content: string, attachments?: any[], targetAgentId?: string, useSandbox?: boolean, webSearchMode?: 'auto' | 'force' | 'off') => {
+    await sendMessageToConversation(floatingId, content, attachments, targetAgentId, useSandbox, webSearchMode);
   };
 
   const toggleRightPanel = () => {

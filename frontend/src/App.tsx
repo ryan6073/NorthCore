@@ -124,8 +124,8 @@ function App() {
     setConfiguringAgentId(null);
   }, [setActiveConversationId, setLeftSidebarViewMode, setConfiguringAgentId]);
 
-  const handleSendMessage = useCallback(async (content: string, attachments?: any[], targetAgentId?: string, useSandbox?: boolean) => {
-    await sendMessage(content, attachments, targetAgentId, useSandbox);
+  const handleSendMessage = useCallback(async (content: string, attachments?: any[], targetAgentId?: string, useSandbox?: boolean, webSearchMode?: 'auto' | 'force' | 'off') => {
+    await sendMessage(content, attachments, targetAgentId, useSandbox, webSearchMode);
   }, [sendMessage]);
 
   const handleCreateConversation = useCallback(async (payload: CreateConversationPayload) => {
@@ -333,8 +333,26 @@ function App() {
       {(() => {
         const minimized = floatingConversations.filter(fc => fc.isMinimized);
         if (minimized.length === 0) return null;
+
+        // Custom helpers for gradient initials avatars
+        const getInitials = (title: string) => {
+          return title ? title.trim().charAt(0).toUpperCase() : '?';
+        };
+
+        const getGradientClass = (id: string) => {
+          const hash = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+          const gradients = [
+            'from-indigo-500 to-purple-600',
+            'from-emerald-400 to-teal-600',
+            'from-pink-500 to-rose-600',
+            'from-amber-500 to-orange-600',
+            'from-cyan-400 to-blue-600',
+          ];
+          return gradients[hash % gradients.length];
+        };
+
         return (
-          <div className="fixed bottom-6 right-6 flex flex-col gap-3.5 z-[9999] select-none">
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-end gap-3.5 px-6 py-3 backdrop-blur-md bg-white/75 dark:bg-slate-900/75 border border-slate-200/50 dark:border-slate-800/50 rounded-3xl shadow-2xl z-[9999] select-none animate-slide-up transition-all duration-300">
             {minimized.map(fc => {
               const conv = conversations.find(c => c.id === fc.id);
               if (!conv) return null;
@@ -342,29 +360,42 @@ function App() {
               const avatar = conv.mode === 'agent' && convAgent ? convAgent.avatar : '';
               
               return (
-                <div
-                  key={fc.id}
-                  onClick={() => updateFloatingConversation(fc.id, { isMinimized: false })}
-                  className="group relative w-12 h-12 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl flex items-center justify-center cursor-pointer hover:scale-110 active:scale-95 transition-all duration-300 ring-2 ring-indigo-500/20"
-                  title={`点击还原会话: ${conv.title}`}
-                >
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      useAgentHubStore.getState().removeFloatingConversation(fc.id);
-                    }}
-                    className="absolute -top-1 -right-1 hidden group-hover:flex w-4.5 h-4.5 rounded-full bg-red-550 text-white items-center justify-center shadow-md border border-white"
+                <div key={fc.id} className="flex flex-col items-center group relative">
+                  <div
+                    onClick={() => updateFloatingConversation(fc.id, { isMinimized: false })}
+                    className="relative w-11 h-11 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/60 shadow-md flex items-center justify-center cursor-pointer hover:scale-115 active:scale-95 transition-all duration-300 ring-2 ring-indigo-500/10 dark:ring-violet-400/5"
                   >
-                    <X className="w-2.5 h-2.5" />
-                  </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        useAgentHubStore.getState().removeFloatingConversation(fc.id);
+                      }}
+                      className="absolute -top-1.5 -right-1.5 hidden group-hover:flex w-4.5 h-4.5 rounded-full bg-red-500 hover:bg-red-600 text-white items-center justify-center shadow-md border border-white dark:border-slate-900 text-[10px] transition-colors"
+                      style={{ width: '18px', height: '18px' }}
+                      title="关闭会话"
+                    >
+                      <X className="w-2.5 h-2.5" />
+                    </button>
 
-                  {conv.mode === 'agent' && avatar ? (
-                    <img src={avatar} alt="" className="w-full h-full rounded-full object-cover" />
-                  ) : (
-                    <MessageSquare className="w-5 h-5 text-lark-primary" />
-                  )}
-                  
-                  <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-500 border-2 border-white dark:border-slate-900 animate-pulse" />
+                    {conv.mode === 'agent' && avatar ? (
+                      <img src={avatar} alt="" className="w-full h-full rounded-full object-cover" />
+                    ) : (
+                      <div className={`w-full h-full rounded-full bg-gradient-to-br ${getGradientClass(fc.id)} text-white flex items-center justify-center font-bold text-[13px] shadow-inner`}>
+                        {getInitials(conv.title)}
+                      </div>
+                    )}
+                    
+                    <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-500 border-2 border-white dark:border-slate-900 animate-pulse" />
+                  </div>
+
+                  {/* Active dot indicator under avatar badge */}
+                  <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 dark:bg-violet-400 mt-1.5 shadow-sm transition-all duration-300 group-hover:scale-125 group-hover:bg-violet-500" />
+
+                  {/* Glassmorphic Popover Tooltip */}
+                  <div className="absolute bottom-16 left-1/2 -translate-x-1/2 px-2.5 py-1.5 bg-slate-950/95 dark:bg-slate-900/95 text-white text-[10px] rounded-lg shadow-xl whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none border border-slate-800 text-center z-50">
+                    <span className="font-bold">{conv.title}</span>
+                    <span className="block text-[8px] text-slate-400 mt-0.5">点击还原窗口</span>
+                  </div>
                 </div>
               );
             })}

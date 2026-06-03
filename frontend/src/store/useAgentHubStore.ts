@@ -31,7 +31,8 @@ export interface FloatingConversation {
 const mockModelProviders: ModelProvider[] = [
   { id: 'openai', name: 'OpenAI (GPT)', protocol: 'openai_chat_completions', requiresBaseUrl: false },
   { id: 'anthropic', name: 'Anthropic (Claude)', protocol: 'anthropic_messages', requiresBaseUrl: false },
-  { id: 'openai_compatible', name: 'OpenAI Compatible', protocol: 'openai_chat_completions', requiresBaseUrl: true, defaultBaseUrl: 'https://api.deepseek.com/v1' }
+  { id: 'openai_compatible', name: 'OpenAI Compatible', protocol: 'openai_chat_completions', requiresBaseUrl: true, defaultBaseUrl: 'https://api.deepseek.com/v1' },
+  { id: 'anthropic_compatible', name: 'Anthropic-compatible / Claude Code Router', protocol: 'anthropic_messages', requiresBaseUrl: true, defaultBaseUrl: 'http://localhost:3000' }
 ];
 
 const initialMockModelCredentials: ModelCredential[] = [
@@ -123,6 +124,81 @@ const mergeRunSteps = (
     };
   });
 };
+const updateSandboxStatusMessage = (state: any, conversationId: string, runId: string): any => {
+  const run = state.runDetailsById[runId];
+  if (!run) return state;
+
+  const msgId = `sandbox-status-${runId}`;
+  const existingMsgIndex = state.messages.findIndex((m: any) => m.id === msgId);
+
+  // Format steps status list
+  const stepsMarkdown = (run.steps || []).map((step: any, idx: number) => {
+    let statusEmoji = '⏳';
+    let statusText = '等待中';
+    if (step.status === 'running') {
+      statusEmoji = '🚀';
+      statusText = '进行中';
+    } else if (step.status === 'completed') {
+      statusEmoji = '✅';
+      statusText = '已完成';
+    } else if (step.status === 'failed') {
+      statusEmoji = '❌';
+      statusText = '失败';
+    } else if (step.status === 'conflict') {
+      statusEmoji = '⚠️';
+      statusText = '检测到冲突';
+    } else if (step.status === 'blocked') {
+      statusEmoji = '🚫';
+      statusText = '已阻止';
+    }
+
+    const detail = step.description ? ` - *${step.description}*` : '';
+    return `${idx + 1}. ${statusEmoji} **${step.agentName}**: ${statusText}${detail}`;
+  }).join('\n');
+
+  let titleEmoji = '⚙️';
+  let runStatusText = '任务进行中';
+  if (run.status === 'completed') {
+    titleEmoji = '✅';
+    runStatusText = '任务已完成';
+  } else if (run.status === 'failed') {
+    titleEmoji = '❌';
+    runStatusText = '任务失败';
+  } else if (run.status === 'conflict') {
+    titleEmoji = '⚠️';
+    runStatusText = '检测到代码冲突';
+  } else if (run.status === 'cancelled') {
+    titleEmoji = '🚫';
+    runStatusText = '任务已取消';
+  }
+
+  const content = `### ${titleEmoji} 沙箱运行: ${runStatusText}\n\n**任务**: ${run.prompt}\n\n**子 Agent 执行过程**:\n${stepsMarkdown || '*暂无规划步骤*'}\n\n${run.summary ? `**结果总结**: ${run.summary}` : ''}`;
+
+  const message: Message = {
+    id: msgId,
+    conversationId,
+    senderId: 'system',
+    senderName: '沙箱系统',
+    role: 'system',
+    type: 'status',
+    content,
+    createdAt: run.createdAt || getCurrentFullTime()
+  };
+
+  const updatedMessages = [...state.messages];
+  if (existingMsgIndex > -1) {
+    updatedMessages[existingMsgIndex] = message;
+  } else {
+    updatedMessages.push(message);
+  }
+
+  return {
+    ...state,
+    messages: updatedMessages
+  };
+};
+
+
 
 
 interface AgentHubStore {
@@ -290,6 +366,9 @@ interface AgentHubStore {
   rightPanelTab: 'artifacts' | 'sandbox';
   workspaces: Workspace[];
   fileTreeByRunId: Record<string, WorkspaceTreeNode>;
+  /** Orchestrator 规划阶段追踪，key=runId，value=已到达的 phase 列表（按时序） */
+  planningPhaseByRunId: Record<string, string[]>;
+  runRetryProgress: Record<string, { attempt: number; maxAttempts: number; message: string }>;
   
   // Sandbox V1 Actions
   setRightPanelTab: (tab: 'artifacts' | 'sandbox') => void;
@@ -305,6 +384,8 @@ interface AgentHubStore {
   loadSandboxConflicts: (runId: string) => Promise<void>;
   resolveSandboxConflict: (runId: string, conflictId: string, resolution: 'current' | 'incoming' | 'manual', content?: string) => Promise<void>;
   cancelSandboxRun: (runId: string) => Promise<void>;
+  rollbackSandboxRun: (runId: string) => Promise<void>;
+  retrySandboxRun: (runId: string) => Promise<void>;
   loadWorkspaces: () => Promise<void>;
   createWorkspace: (name: string) => Promise<Workspace | null>;
   loadSandboxFileTree: (runId: string) => Promise<WorkspaceTreeNode | null>;
@@ -339,7 +420,7 @@ interface AgentHubStore {
   addFloatingConversation: (id: string, x?: number, y?: number) => void;
   removeFloatingConversation: (id: string) => void;
   updateFloatingConversation: (id: string, updates: Partial<FloatingConversation>) => void;
-  sendMessageToConversation: (convId: string, content: string, attachments?: any[], targetAgentId?: string, useSandbox?: boolean) => Promise<void>;
+  sendMessageToConversation: (convId: string, content: string, attachments?: any[], targetAgentId?: string, useSandbox?: boolean, webSearchMode?: 'auto' | 'force' | 'off') => Promise<void>;
 }
 
 const mergeLocalFlags = (list: Conversation[]): Conversation[] => {
@@ -448,6 +529,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   rightPanelTab: 'artifacts',
   workspaces: [],
   fileTreeByRunId: {},
+  planningPhaseByRunId: {},
+  runRetryProgress: {},
 
   loadBusinessData: async () => {
     try {
@@ -1749,6 +1832,30 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               )
             }));
             get().loadSandboxFileTree(runDetail.id);
+
+            // 处理 planningMessages：HTTP response 里可能已包含规划消息，dedup 插入消息流并同步 planningPhaseByRunId
+            if (runDetail.planningMessages && runDetail.planningMessages.length > 0) {
+              set(state => {
+                let httpMessages = [...state.messages];
+                const planningPhases: string[] = [];
+                runDetail.planningMessages!.forEach((pm: any) => {
+                  if (!httpMessages.some((m: any) => m.id === pm.id)) {
+                    httpMessages.push(mapMessageMetadata(pm));
+                  }
+                  if (pm.metadata?.phase && !planningPhases.includes(pm.metadata.phase)) {
+                    planningPhases.push(pm.metadata.phase);
+                  }
+                });
+                const phaseUpdates: any = { messages: httpMessages };
+                if (planningPhases.length > 0) {
+                  phaseUpdates.planningPhaseByRunId = {
+                    ...state.planningPhaseByRunId,
+                    [runDetail.id]: planningPhases,
+                  };
+                }
+                return phaseUpdates;
+              });
+            }
           }
           
           // Cache the artifactRef with the server-side message ID if present
@@ -2443,52 +2550,62 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
       const unsubRunCreated = wsClient.on('run.created', (event: any) => {
         const { runId, conversationId, run } = event.data;
-        if (conversationId) {
-          set(state => ({
-            runsByConversationId: {
-              ...state.runsByConversationId,
-              [conversationId]: state.runsByConversationId[conversationId]?.includes(runId)
-                ? state.runsByConversationId[conversationId]
-                : [runId, ...(state.runsByConversationId[conversationId] || [])]
-            },
-            activeRunIdByConversationId: {
-              ...state.activeRunIdByConversationId,
-              [conversationId]: runId
-            },
-            rightPanelTab: 'sandbox'
-          }));
-        }
-        if (run) {
-          const runDetail = {
+        const targetConvId = conversationId || get().activeConversationId;
+
+        set(state => {
+          const runDetail = run ? {
             ...run,
             steps: run.steps?.map((s: any) => ({
               ...s,
               log: s.log || s.logs || '',
               description: s.description || s.task || ''
             })) || []
+          } : undefined;
+
+          const updatedAgents = run ? state.agents.map((a: any) =>
+            run.dag?.nodes?.some((n: any) => n.agentId === a.id) || run.agentId === a.id
+              ? { ...a, status: 'thinking' as const }
+              : a
+          ) : state.agents;
+
+          const baseStateUpdates: any = {
+            agents: updatedAgents,
+            rightPanelTab: 'sandbox'
           };
-          set(state => {
-            const updatedAgents = state.agents.map(a =>
-              run.dag?.nodes?.some((n: any) => n.agentId === a.id) || run.agentId === a.id
-                ? { ...a, status: 'thinking' as const }
-                : a
-            );
-            return {
-              runDetailsById: {
-                ...state.runDetailsById,
-                [runId]: runDetail
-              },
-              runFilesByRunId: {
-                ...state.runFilesByRunId,
-                [runId]: runDetail.files || []
-              },
-              runConflictsByRunId: {
-                ...state.runConflictsByRunId,
-                [runId]: runDetail.conflicts || []
-              },
-              agents: updatedAgents
+
+          if (targetConvId) {
+            baseStateUpdates.runsByConversationId = {
+              ...state.runsByConversationId,
+              [targetConvId]: state.runsByConversationId[targetConvId]?.includes(runId)
+                ? state.runsByConversationId[targetConvId]
+                : [runId, ...(state.runsByConversationId[targetConvId] || [])]
             };
-          });
+            baseStateUpdates.activeRunIdByConversationId = {
+              ...state.activeRunIdByConversationId,
+              [targetConvId]: runId
+            };
+          }
+
+          if (runDetail) {
+            baseStateUpdates.runDetailsById = {
+              ...state.runDetailsById,
+              [runId]: runDetail
+            };
+            baseStateUpdates.runFilesByRunId = {
+              ...state.runFilesByRunId,
+              [runId]: runDetail.files || []
+            };
+            baseStateUpdates.runConflictsByRunId = {
+              ...state.runConflictsByRunId,
+              [runId]: runDetail.conflicts || []
+            };
+          }
+
+          const mergedState = { ...state, ...baseStateUpdates };
+          return targetConvId ? updateSandboxStatusMessage(mergedState, targetConvId, runId) : mergedState;
+        });
+
+        if (run) {
           get().loadSandboxFileTree(runId);
         } else {
           get().loadSandboxRunDetail(runId);
@@ -2536,13 +2653,15 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             a.id === agentIdToThink ? { ...a, status: 'thinking' as const } : a
           );
 
-          return {
+          const nextState = {
             runDetailsById: {
               ...state.runDetailsById,
               [runId]: runDetail
             },
             agents: updatedAgents
           };
+          const mergedState = { ...state, ...nextState };
+          return updateSandboxStatusMessage(mergedState, baseRun.conversationId || state.activeConversationId, runId);
         });
       });
 
@@ -2562,7 +2681,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             }
             return step;
           }) || [];
-          return {
+          const nextState = {
             runDetailsById: {
               ...state.runDetailsById,
               [runId]: {
@@ -2571,6 +2690,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               }
             }
           };
+          const mergedState = { ...state, ...nextState };
+          return updateSandboxStatusMessage(mergedState, targetRun.conversationId || state.activeConversationId, runId);
         });
       });
 
@@ -2609,12 +2730,14 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             dag: updatedDag || baseRun.dag
           };
 
-          return {
+          const nextState = {
             runDetailsById: {
               ...state.runDetailsById,
               [runId]: runDetail
             }
           };
+          const mergedState = { ...state, ...nextState };
+          return updateSandboxStatusMessage(mergedState, baseRun.conversationId || state.activeConversationId, runId);
         });
         const agentName = step?.agentName || '沙箱步骤';
         get().addDesktopNotification(
@@ -2660,12 +2783,14 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             dag: updatedDag || baseRun.dag
           };
 
-          return {
+          const nextState = {
             runDetailsById: {
               ...state.runDetailsById,
               [runId]: runDetail
             }
           };
+          const mergedState = { ...state, ...nextState };
+          return updateSandboxStatusMessage(mergedState, baseRun.conversationId || state.activeConversationId, runId);
         });
         const agentName = step?.agentName || '沙箱步骤';
         get().addDesktopNotification(
@@ -2711,7 +2836,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             dag: updatedDag || baseRun.dag
           };
 
-          return {
+          const nextState = {
             runDetailsById: {
               ...state.runDetailsById,
               [runId]: runDetail
@@ -2721,6 +2846,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               [runId]: conflicts || runDetail.conflicts || []
             }
           };
+          const mergedState = { ...state, ...nextState };
+          return updateSandboxStatusMessage(mergedState, baseRun.conversationId || state.activeConversationId, runId);
         });
         const agentName = step?.agentName || '沙箱步骤';
         get().addDesktopNotification(
@@ -2758,7 +2885,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             const updatedAgents = state.agents.map(a =>
               a.status === 'thinking' ? { ...a, status: 'online' as const } : a
             );
-            return {
+            const nextState = {
               runDetailsById: {
                 ...state.runDetailsById,
                 [runId]: runDetail
@@ -2766,16 +2893,30 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               artifacts: updatedArtifacts,
               agents: updatedAgents
             };
+            return updateSandboxStatusMessage({ ...state, ...nextState }, runDetail.conversationId || state.activeConversationId, runId);
           });
         } else {
           set(state => {
             const updatedAgents = state.agents.map(a =>
               a.status === 'thinking' ? { ...a, status: 'online' as const } : a
             );
-            return {
+            const targetRun = state.runDetailsById[runId];
+            const nextState = {
               artifacts: updatedArtifacts,
               agents: updatedAgents
             };
+            if (targetRun) {
+              const updatedRun = { ...targetRun, status: 'completed' as const };
+              const nextStateWithRun = {
+                ...nextState,
+                runDetailsById: {
+                  ...state.runDetailsById,
+                  [runId]: updatedRun
+                }
+              };
+              return updateSandboxStatusMessage({ ...state, ...nextStateWithRun }, updatedRun.conversationId || state.activeConversationId, runId);
+            }
+            return nextState;
           });
         }
 
@@ -2829,7 +2970,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             const updatedAgents = state.agents.map(a =>
               a.status === 'thinking' ? { ...a, status: 'online' as const } : a
             );
-            return {
+            const nextState = {
               runDetailsById: {
                 ...state.runDetailsById,
                 [runId]: runDetail
@@ -2837,16 +2978,30 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               artifacts: updatedArtifacts,
               agents: updatedAgents
             };
+            return updateSandboxStatusMessage({ ...state, ...nextState }, runDetail.conversationId || state.activeConversationId, runId);
           });
         } else {
           set(state => {
             const updatedAgents = state.agents.map(a =>
               a.status === 'thinking' ? { ...a, status: 'online' as const } : a
             );
-            return {
+            const targetRun = state.runDetailsById[runId];
+            const nextState = {
               artifacts: updatedArtifacts,
               agents: updatedAgents
             };
+            if (targetRun) {
+              const updatedRun = { ...targetRun, status: 'failed' as const };
+              const nextStateWithRun = {
+                ...nextState,
+                runDetailsById: {
+                  ...state.runDetailsById,
+                  [runId]: updatedRun
+                }
+              };
+              return updateSandboxStatusMessage({ ...state, ...nextStateWithRun }, updatedRun.conversationId || state.activeConversationId, runId);
+            }
+            return nextState;
           });
           get().loadSandboxRunDetail(runId);
         }
@@ -2856,6 +3011,242 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           'error',
           'error'
         );
+      });
+
+      // ============ Orchestrator Planning 事件处理 ============
+
+      /**
+       * 通用规划事件处理器：
+       * 1. 将后端已创建好的 message 插入消息流（dedup）
+       * 2. 追踪 phase 到 planningPhaseByRunId
+       * 3. 若 completed 且含 dagPreview，更新 run dag
+       */
+      const handlePlanningEvent = (event: any) => {
+        const payload = event.data as {
+          runId?: string;
+          conversationId?: string;
+          message?: any;
+          phase?: string;
+          dagPreview?: any;
+          error?: string;
+        };
+        const { runId, conversationId, message, phase, dagPreview } = payload;
+
+        set(state => {
+          // 仅处理当前活跃会话
+          if (conversationId && state.activeConversationId !== conversationId) return {};
+
+          const updates: Partial<typeof state> = {};
+
+          // 1. dedup 插入消息
+          if (message?.id) {
+            const alreadyExists = state.messages.some((m: any) => m.id === message.id);
+            if (!alreadyExists) {
+              updates.messages = [...state.messages, mapMessageMetadata(message)];
+            }
+          }
+
+          // 2. 追踪 phase
+          if (runId && phase) {
+            const existingPhases = state.planningPhaseByRunId[runId] || [];
+            if (!existingPhases.includes(phase)) {
+              updates.planningPhaseByRunId = {
+                ...state.planningPhaseByRunId,
+                [runId]: [...existingPhases, phase],
+              };
+            }
+          }
+
+          // 3. completed + dagPreview → 更新 run 的 dag
+          if (phase === 'completed' && dagPreview && runId) {
+            const existingRun = state.runDetailsById[runId];
+            if (existingRun) {
+              updates.runDetailsById = {
+                ...state.runDetailsById,
+                [runId]: {
+                  ...existingRun,
+                  dag: { ...existingRun.dag, ...dagPreview },
+                },
+              };
+            }
+          }
+
+          return updates;
+        });
+      };
+
+      const unsubPlanningStarted = wsClient.on('orchestrator.planning.started', handlePlanningEvent);
+      const unsubPlanningContextReady = wsClient.on('orchestrator.planning.context_ready', handlePlanningEvent);
+      const unsubPlanningAgentsSelected = wsClient.on('orchestrator.planning.agents_selected', handlePlanningEvent);
+      const unsubPlanningModelStarted = wsClient.on('orchestrator.planning.model_started', handlePlanningEvent);
+      const unsubPlanningModelCompleted = wsClient.on('orchestrator.planning.model_completed', handlePlanningEvent);
+      const unsubPlanningNormalized = wsClient.on('orchestrator.planning.normalized', handlePlanningEvent);
+      const unsubPlanningCompleted = wsClient.on('orchestrator.planning.completed', handlePlanningEvent);
+      const unsubPlanningFailed = wsClient.on('orchestrator.planning.failed', handlePlanningEvent);
+
+      const unsubRunRetryScheduled = wsClient.on('run.retry.scheduled', (event: any) => {
+        const { runId, retryAttempt, maxRetryAttempts, message } = event.data;
+        set(state => ({
+          runRetryProgress: {
+            ...state.runRetryProgress,
+            [runId]: { attempt: retryAttempt, maxAttempts: maxRetryAttempts, message }
+          }
+        }));
+      });
+
+      const unsubRunRetryCreated = wsClient.on('run.retry.created', (event: any) => {
+        const { runId, retryOfRunId, run } = event.data;
+        const conversationId = run?.conversationId || get().activeConversationId;
+        
+        set(state => {
+          const updatedRetryProgress = { ...state.runRetryProgress };
+          delete updatedRetryProgress[retryOfRunId];
+          
+          const updates: any = {
+            runRetryProgress: updatedRetryProgress
+          };
+
+          if (conversationId) {
+            updates.runsByConversationId = {
+              ...state.runsByConversationId,
+              [conversationId]: state.runsByConversationId[conversationId]?.includes(runId)
+                ? state.runsByConversationId[conversationId]
+                : [runId, ...(state.runsByConversationId[conversationId] || [])]
+            };
+            updates.activeRunIdByConversationId = {
+              ...state.activeRunIdByConversationId,
+              [conversationId]: runId
+            };
+            updates.rightPanelTab = 'sandbox';
+          }
+
+          if (run) {
+            const runDetail = {
+              ...run,
+              steps: run.steps?.map((s: any) => ({
+                ...s,
+                log: s.log || s.logs || '',
+                description: s.description || s.task || ''
+              })) || []
+            };
+            updates.runDetailsById = {
+              ...state.runDetailsById,
+              [runId]: runDetail
+            };
+            updates.runFilesByRunId = {
+              ...state.runFilesByRunId,
+              [runId]: runDetail.files || []
+            };
+            updates.runConflictsByRunId = {
+              ...state.runConflictsByRunId,
+              [runId]: runDetail.conflicts || []
+            };
+          }
+
+          return updates;
+        });
+
+        if (run) {
+          get().loadSandboxFileTree(runId);
+        } else {
+          get().loadSandboxRunDetail(runId);
+        }
+        get().addDesktopNotification(
+          '沙箱正在自动重试',
+          `新重试任务 (ID: ${runId}) 已创建。`,
+          'info',
+          'step'
+        );
+      });
+
+      const unsubRunStepToolStarted = wsClient.on('run.step.tool.started', (event: any) => {
+        const { runId, stepId, toolName, args } = event.data;
+        set(state => {
+          const targetRun = state.runDetailsById[runId];
+          if (!targetRun) return {};
+          const updatedSteps = targetRun.steps?.map((step: any) => {
+            if (step.id === stepId) {
+              const currentLog = step.log || step.logs || '';
+              const newLog = `${currentLog}\n⚙️ [Tool Call Started] ${toolName} with args: ${JSON.stringify(args || {})}\n`;
+              return { 
+                ...step, 
+                log: newLog,
+                logs: newLog
+              };
+            }
+            return step;
+          }) || [];
+          const nextState = {
+            runDetailsById: {
+              ...state.runDetailsById,
+              [runId]: {
+                ...targetRun,
+                steps: updatedSteps
+              }
+            }
+          };
+          return updateSandboxStatusMessage({ ...state, ...nextState }, targetRun.conversationId || state.activeConversationId, runId);
+        });
+      });
+
+      const unsubRunStepToolCompleted = wsClient.on('run.step.tool.completed', (event: any) => {
+        const { runId, stepId, toolName } = event.data;
+        set(state => {
+          const targetRun = state.runDetailsById[runId];
+          if (!targetRun) return {};
+          const updatedSteps = targetRun.steps?.map((step: any) => {
+            if (step.id === stepId) {
+              const currentLog = step.log || step.logs || '';
+              const newLog = `${currentLog}✅ [Tool Call Completed] ${toolName} success.\n`;
+              return { 
+                ...step, 
+                log: newLog,
+                logs: newLog
+              };
+            }
+            return step;
+          }) || [];
+          const nextState = {
+            runDetailsById: {
+              ...state.runDetailsById,
+              [runId]: {
+                ...targetRun,
+                steps: updatedSteps
+              }
+            }
+          };
+          return updateSandboxStatusMessage({ ...state, ...nextState }, targetRun.conversationId || state.activeConversationId, runId);
+        });
+      });
+
+      const unsubRunStepToolFailed = wsClient.on('run.step.tool.failed', (event: any) => {
+        const { runId, stepId, toolName, error } = event.data;
+        set(state => {
+          const targetRun = state.runDetailsById[runId];
+          if (!targetRun) return {};
+          const updatedSteps = targetRun.steps?.map((step: any) => {
+            if (step.id === stepId) {
+              const currentLog = step.log || step.logs || '';
+              const newLog = `${currentLog}❌ [Tool Call Failed] ${toolName} error: ${error || 'Unknown error'}\n`;
+              return { 
+                ...step, 
+                log: newLog,
+                logs: newLog
+              };
+            }
+            return step;
+          }) || [];
+          const nextState = {
+            runDetailsById: {
+              ...state.runDetailsById,
+              [runId]: {
+                ...targetRun,
+                steps: updatedSteps
+              }
+            }
+          };
+          return updateSandboxStatusMessage({ ...state, ...nextState }, targetRun.conversationId || state.activeConversationId, runId);
+        });
       });
 
       (wsClient as any)._unsubs = [
@@ -2874,6 +3265,19 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         unsubRunCompleted,
         unsubRunFailed,
         unsubExecutionDecided,
+        unsubPlanningStarted,
+        unsubPlanningContextReady,
+        unsubPlanningAgentsSelected,
+        unsubPlanningModelStarted,
+        unsubPlanningModelCompleted,
+        unsubPlanningNormalized,
+        unsubPlanningCompleted,
+        unsubPlanningFailed,
+        unsubRunRetryScheduled,
+        unsubRunRetryCreated,
+        unsubRunStepToolStarted,
+        unsubRunStepToolCompleted,
+        unsubRunStepToolFailed,
       ];
     } catch (e) {
       console.error('[Store] WS 连接失败', e);
@@ -3804,16 +4208,25 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               }
             }
           });
-          set(state => ({
-            runsByConversationId: {
-              ...state.runsByConversationId,
-              [conversationId]: list.map((r: any) => r.id)
-            },
-            runDetailsById: newRunsById,
-            agents: state.agents.map(a =>
-              activeRunAgents.has(a.id) ? { ...a, status: 'thinking' as const } : a
-            )
-          }));
+          set(state => {
+            const currentActiveRunId = state.activeRunIdByConversationId[conversationId];
+            const isValidActive = currentActiveRunId && list.some((r: any) => r.id === currentActiveRunId);
+            const nextActiveRunId = isValidActive ? currentActiveRunId : (list.length > 0 ? list[0].id : null);
+            return {
+              runsByConversationId: {
+                ...state.runsByConversationId,
+                [conversationId]: list.map((r: any) => r.id)
+              },
+              activeRunIdByConversationId: {
+                ...state.activeRunIdByConversationId,
+                [conversationId]: nextActiveRunId
+              },
+              runDetailsById: newRunsById,
+              agents: state.agents.map(a =>
+                activeRunAgents.has(a.id) ? { ...a, status: 'thinking' as const } : a
+              )
+            };
+          });
         }
       } catch (e) {
         console.error('[Store] 获取沙箱任务列表失败', e);
@@ -4132,6 +4545,172 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           }
         };
       });
+    }
+  },
+
+  rollbackSandboxRun: async (runId) => {
+    const { useMockMode } = get();
+    if (!useMockMode) {
+      try {
+        const res = await sandboxService.rollbackSandboxRun(runId);
+        if (res.code === 0 && res.data) {
+          set(state => ({
+            runDetailsById: {
+              ...state.runDetailsById,
+              [runId]: res.data
+            }
+          }));
+        }
+      } catch (e) {
+        console.error('[Store] 撤销沙箱更改失败', e);
+        throw e;
+      }
+    } else {
+      set(state => {
+        const current = state.runDetailsById[runId];
+        if (!current) return {};
+        return {
+          runDetailsById: {
+            ...state.runDetailsById,
+            [runId]: {
+              ...current,
+              status: 'cancelled' as const,
+              finishedAt: getCurrentFullTime()
+            }
+          }
+        };
+      });
+    }
+  },
+
+  retrySandboxRun: async (runId) => {
+    const { useMockMode, activeConversationId } = get();
+    if (!useMockMode) {
+      try {
+        const res = await sandboxService.retrySandboxRun(runId);
+        if (res.code === 0 && res.data) {
+          const newRun = res.data.run;
+          const conversationId = newRun?.conversationId || activeConversationId;
+          if (conversationId && newRun) {
+            set(state => ({
+              runsByConversationId: {
+                ...state.runsByConversationId,
+                [conversationId]: state.runsByConversationId[conversationId]?.includes(newRun.id)
+                  ? state.runsByConversationId[conversationId]
+                  : [newRun.id, ...(state.runsByConversationId[conversationId] || [])]
+              },
+              activeRunIdByConversationId: {
+                ...state.activeRunIdByConversationId,
+                [conversationId]: newRun.id
+              },
+              runDetailsById: {
+                ...state.runDetailsById,
+                [newRun.id]: {
+                  ...newRun,
+                  steps: newRun.steps?.map((s: any) => ({
+                    ...s,
+                    log: s.log || s.logs || '',
+                    description: s.description || s.task || ''
+                  })) || []
+                }
+              },
+              rightPanelTab: 'sandbox'
+            }));
+            get().loadSandboxFileTree(newRun.id);
+          }
+        }
+      } catch (e) {
+        console.error('[Store] 重试沙箱运行失败', e);
+        throw e;
+      }
+    } else {
+      // Mock Mode retry simulation
+      const current = get().runDetailsById[runId];
+      if (!current) return;
+      const newRunId = `run-retry-${Date.now()}`;
+      const conversationId = current.conversationId || activeConversationId;
+      if (!conversationId) return;
+
+      const newRun = {
+        ...current,
+        id: newRunId,
+        status: 'running' as const,
+        createdAt: getCurrentFullTime(),
+        startedAt: getCurrentFullTime(),
+        finishedAt: null,
+        steps: [
+          {
+            id: 'step-1',
+            runId: newRunId,
+            agentId: 'system',
+            agentName: 'System',
+            status: 'completed' as const,
+            description: '重试初始化，清理工作区临时状态',
+            createdAt: getCurrentFullTime(),
+            updatedAt: getCurrentFullTime(),
+          },
+          {
+            id: 'step-2',
+            runId: newRunId,
+            agentId: 'agent-orchestrator',
+            agentName: 'Orchestrator',
+            status: 'running' as const,
+            description: '提示词重构：根据上次失败规避并重新运行中...',
+            createdAt: getCurrentFullTime(),
+            updatedAt: getCurrentFullTime(),
+          }
+        ],
+        dag: {
+          nodes: [
+            { id: 'step-1', label: 'System', agentId: 'system', status: 'completed' as const, dependencies: [] },
+            { id: 'step-2', label: 'Orchestrator', agentId: 'agent-orchestrator', status: 'running' as const, dependencies: ['step-1'] },
+          ]
+        },
+        files: [],
+        conflicts: []
+      };
+
+      set(state => ({
+        runsByConversationId: {
+          ...state.runsByConversationId,
+          [conversationId]: [newRunId, ...(state.runsByConversationId[conversationId] || [])]
+        },
+        activeRunIdByConversationId: {
+          ...state.activeRunIdByConversationId,
+          [conversationId]: newRunId
+        },
+        runDetailsById: {
+          ...state.runDetailsById,
+          [newRunId]: newRun
+        },
+        rightPanelTab: 'sandbox'
+      }));
+
+      // Simulate completion after a brief delay
+      setTimeout(() => {
+        set(state => {
+          const runToComplete = state.runDetailsById[newRunId];
+          if (!runToComplete) return {};
+          return {
+            runDetailsById: {
+              ...state.runDetailsById,
+              [newRunId]: {
+                ...runToComplete,
+                status: 'completed' as const,
+                finishedAt: getCurrentFullTime(),
+                steps: runToComplete.steps.map((s: any) =>
+                  s.id === 'step-2' ? { ...s, status: 'completed' as const, description: '自动规避上次失败原因并成功完成' } : s
+                ),
+                dag: {
+                  nodes: runToComplete.dag.nodes.map((n: any) =>
+                    n.id === 'step-2' ? { ...n, status: 'completed' as const } : n
+                  )
+                }
+              }
+            }
+          };
+        });
+      }, 5000);
     }
   },
 
@@ -4618,8 +5197,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       id,
       x: x ?? 100,
       y: y ?? 100,
-      width: 360,
-      height: 480,
+      width: 450,
+      height: 600,
       isMinimized: false,
       isMaximized: false,
     };
@@ -4642,7 +5221,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     }));
   },
 
-  sendMessageToConversation: async (convId, content, attachments, targetAgentId, useSandbox) => {
+  sendMessageToConversation: async (convId, content, attachments, targetAgentId, useSandbox, webSearchMode) => {
     const { useMockMode, conversations, agents } = get();
     const activeConv = conversations.find(c => c.id === convId);
     if (!activeConv) return;
@@ -4727,6 +5306,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           targetAgentId,
           useSandbox: useSandbox ? true : undefined,
           executionMode: useSandbox ? 'sandbox' : undefined,
+          webSearchMode,
         });
         const res = await getMessageList(convId);
         let messagesData: Message[] = [];

@@ -369,6 +369,14 @@ export const SettingsModal: React.FC = () => {
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in font-sans">
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-4xl h-[600px] flex shadow-2xl overflow-hidden animate-scale-in relative">
         
+        {/* Header Close button */}
+        <button
+          onClick={() => setIsOpen(false)}
+          className="absolute top-6 right-6 p-1.5 rounded-lg border border-slate-250 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-650 dark:hover:text-slate-250 transition-colors z-50 bg-white dark:bg-slate-900 shadow-sm active:scale-95"
+        >
+          <X className="w-4.5 h-4.5" />
+        </button>
+        
         {/* Save/Success Notification Overlay */}
         {savedNotice && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-emerald-600 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-lg flex items-center gap-1.5 z-50 animate-bounce-subtle">
@@ -461,13 +469,6 @@ export const SettingsModal: React.FC = () => {
 
         {/* Right Side Settings View */}
         <div className="flex-1 p-8 overflow-y-auto bg-white dark:bg-slate-900 relative">
-          {/* Header Close button */}
-          <button
-            onClick={() => setIsOpen(false)}
-            className="absolute top-6 right-6 p-1.5 rounded-lg border border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
 
           {/* TAB 1: PROFILE */}
           {activeTab === 'profile' && (
@@ -702,6 +703,11 @@ export const SettingsModal: React.FC = () => {
                           className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-850 dark:text-slate-100 outline-none focus:border-violet-600"
                           placeholder="例如 https://api.deepseek.com/v1 (留空则默认内置地址)"
                         />
+                        {configProvider === 'anthropic_compatible' && (
+                          <p className="text-[10px] text-amber-600 dark:text-amber-500 font-medium mt-1">
+                            请确保 Router / 网关已在该 baseUrl 运行。
+                          </p>
+                        )}
                       </div>
 
                       <div className="space-y-1.5">

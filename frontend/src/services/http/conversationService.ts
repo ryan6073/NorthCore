@@ -19,12 +19,18 @@ interface GetConversationListParams {
   pageSize?: number;
   mode?: ConversationMode;
   keyword?: string;
+  isArchived?: string;
 }
 
 export async function getConversationList(
   params?: GetConversationListParams
 ): Promise<BaseApiResponse<PaginatedData<Conversation>>> {
-  return await http.get('/conversations', { params });
+  return await http.get('/conversations', {
+    params: {
+      isArchived: 'all',
+      ...params
+    }
+  });
 }
 
 export async function createConversation(

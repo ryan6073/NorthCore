@@ -593,6 +593,11 @@ export interface AgentRunDetail {
   conflicts: SandboxConflict[];
   workspaceId?: string | null;
   workspace?: Workspace | null;
+  planningMessages?: Message[];
+  retryOfRunId?: string | null;
+  retryRootRunId?: string | null;
+  retryAttempt?: number;
+  maxRetryAttempts?: number;
 }
 
 export type AgentRunStepStatus =
@@ -799,6 +804,86 @@ export interface ExecutionModeDecidedEvent {
   };
 }
 
+// ============ Orchestrator Planning Events ============
+
+export type OrchestratorPlanningPhase =
+  | 'started'
+  | 'context_ready'
+  | 'agents_selected'
+  | 'model_started'
+  | 'model_completed'
+  | 'normalized'
+  | 'completed'
+  | 'failed';
+
+export interface OrchestratorPlanningPayload {
+  runId: string;
+  conversationId: string;
+  message: Message;
+  phase: OrchestratorPlanningPhase;
+  availableAgents?: Array<{
+    agentId: string;
+    name: string;
+    runtime: string;
+    description: string;
+  }>;
+  strategy?: string;
+  stepCount?: number;
+  dagPreview?: RunDag;
+  workspaceId?: string;
+  hasWorkspaceAgentsContext?: boolean;
+  workspaceAction?: string;
+  error?: string;
+}
+
+export interface OrchestratorPlanningStartedEvent {
+  type: 'orchestrator.planning.started';
+  eventId: string;
+  data: OrchestratorPlanningPayload;
+}
+
+export interface OrchestratorPlanningContextReadyEvent {
+  type: 'orchestrator.planning.context_ready';
+  eventId: string;
+  data: OrchestratorPlanningPayload;
+}
+
+export interface OrchestratorPlanningAgentsSelectedEvent {
+  type: 'orchestrator.planning.agents_selected';
+  eventId: string;
+  data: OrchestratorPlanningPayload;
+}
+
+export interface OrchestratorPlanningModelStartedEvent {
+  type: 'orchestrator.planning.model_started';
+  eventId: string;
+  data: OrchestratorPlanningPayload;
+}
+
+export interface OrchestratorPlanningModelCompletedEvent {
+  type: 'orchestrator.planning.model_completed';
+  eventId: string;
+  data: OrchestratorPlanningPayload;
+}
+
+export interface OrchestratorPlanningNormalizedEvent {
+  type: 'orchestrator.planning.normalized';
+  eventId: string;
+  data: OrchestratorPlanningPayload;
+}
+
+export interface OrchestratorPlanningCompletedEvent {
+  type: 'orchestrator.planning.completed';
+  eventId: string;
+  data: OrchestratorPlanningPayload;
+}
+
+export interface OrchestratorPlanningFailedEvent {
+  type: 'orchestrator.planning.failed';
+  eventId: string;
+  data: OrchestratorPlanningPayload;
+}
+
 export type AllWSEvent =
   | ConnectedEvent
   | PingEvent
@@ -822,7 +907,53 @@ export type AllWSEvent =
   | RunStepConflictEvent
   | RunCompletedEvent
   | RunFailedEvent
-  | ExecutionModeDecidedEvent;
+  | RunRetryScheduledEvent
+  | RunRetryCreatedEvent
+  | ExecutionModeDecidedEvent
+  | OrchestratorPlanningStartedEvent
+  | OrchestratorPlanningContextReadyEvent
+  | OrchestratorPlanningAgentsSelectedEvent
+  | OrchestratorPlanningModelStartedEvent
+  | OrchestratorPlanningModelCompletedEvent
+  | OrchestratorPlanningNormalizedEvent
+  | OrchestratorPlanningCompletedEvent
+  | OrchestratorPlanningFailedEvent;
+
+export interface RetryRunResponse {
+  run: AgentRunDetail;
+  retryOfRunId: string;
+  retryRootRunId?: string;
+  retryAttempt?: number;
+  maxRetryAttempts?: number;
+}
+
+export interface RunRetryScheduledEvent {
+  type: 'run.retry.scheduled';
+  eventId: string;
+  data: {
+    runId: string;
+    conversationId: string;
+    workspaceId: string;
+    retryRootRunId: string;
+    retryOfRunId: string;
+    retryAttempt: number;
+    maxRetryAttempts: number;
+    message: string;
+  };
+}
+
+export interface RunRetryCreatedEvent {
+  type: 'run.retry.created';
+  eventId: string;
+  data: {
+    runId: string;
+    retryOfRunId: string;
+    retryRootRunId: string;
+    retryAttempt: number;
+    maxRetryAttempts: number;
+    run: AgentRunDetail;
+  };
+}
 
 export interface WebSearchResult {
   title: string;

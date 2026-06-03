@@ -77,7 +77,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isSessionsExpanded, setIsSessionsExpanded] = useState(true);
   const [isAgentChatsExpanded, setIsAgentChatsExpanded] = useState(true);
-  const [showArchived, setShowArchived] = useState(false);
+  const [isArchivedExpanded, setIsArchivedExpanded] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
   const [userMenuAnchorRect, setUserMenuAnchorRect] = useState<DOMRect | null>(null);
@@ -176,7 +176,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
     });
   };
 
-  const activeConversations = filteredConversations.filter(conv => showArchived ? true : !conv.isArchived);
+  const activeConversations = filteredConversations.filter(conv => !conv.isArchived);
 
   const sessionConversations = sortConversations(
     activeConversations.filter(conv => conv.mode !== 'agent')
@@ -184,6 +184,10 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
 
   const agentConversations = sortConversations(
     activeConversations.filter(conv => conv.mode === 'agent' && conv.visible !== false)
+  );
+
+  const archivedConversations = sortConversations(
+    filteredConversations.filter(conv => conv.isArchived)
   );
 
   const renderConversationItem = (conv: Conversation) => {
@@ -305,7 +309,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                   <Pin className="w-3 h-3 text-slate-400 rotate-45 transform" />
                   <span>{conv.isPinned ? '取消置顶' : '置顶'}</span>
                 </button>
-                {conv.mode !== 'agent' && (
+                {!isAgentMode && (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -317,10 +321,10 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                     className="flex items-center gap-2 px-3 py-1.5 text-slate-700 dark:text-slate-350 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-colors"
                   >
                     <Archive className="w-3 h-3 text-slate-400" />
-                    <span>{conv.isArchived ? '激活' : '归档'}</span>
+                    <span>{conv.isArchived ? '取消归档' : '归档'}</span>
                   </button>
                 )}
-                <div className="h-px bg-slate-100 dark:bg-slate-800 my-0.5" />
+                {!isAgentMode && <div className="h-px bg-slate-100 dark:bg-slate-800 my-0.5" />}
                 <button
                   type="button"
                   onClick={(e) => {
@@ -382,24 +386,33 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
       )}
 
       {viewMode === 'conversations' && (
-        <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-3 min-h-0">
-          {/* Archived toggle */}
-          <div className="pb-2 px-1 flex justify-between items-center text-[10px] font-semibold uppercase tracking-wider text-lark-text-tertiary/70 dark:text-slate-500 border-b border-lark-border/20 dark:border-slate-850/30 select-none">
-            <span>归档设置</span>
-            <button
-              onClick={() => setShowArchived(!showArchived)}
-              className={`px-2 py-0.5 rounded text-[9px] transition-all flex items-center gap-1 select-none ${
-                showArchived
-                  ? 'bg-lark-primary/10 text-lark-primary dark:bg-violet-950/30 dark:text-violet-400 border border-lark-primary/20 dark:border-violet-500/20'
-                  : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 border border-transparent'
-              }`}
-            >
-              <Archive className="w-2.5 h-2.5" />
-              {showArchived ? '隐藏已归档' : '显示已归档'}
-            </button>
-          </div>
+        <div className="flex-grow overflow-y-auto px-3 pb-4 space-y-3 min-h-0">
+          {/* 1. 已归档会话 (Archived Conversations Section) - 移到最上面 */}
+          {archivedConversations.length > 0 && (
+            <div className="space-y-1">
+              <button
+                onClick={() => setIsArchivedExpanded(!isArchivedExpanded)}
+                className="w-full flex items-center justify-between px-1 py-1 text-[11px] font-bold text-lark-text-secondary dark:text-slate-450 hover:bg-slate-200/40 dark:hover:bg-slate-800/40 rounded-md transition-colors group select-none"
+              >
+                <div className="flex items-center gap-1.5">
+                  {isArchivedExpanded ? <ChevronDown className="w-3 h-3 text-slate-400" /> : <ChevronRight className="w-3 h-3 text-slate-400" />}
+                  <Archive className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                  <span>已归档会话</span>
+                  <span className="px-1 py-0.2 text-[9px] bg-slate-100 dark:bg-slate-900 text-lark-text-tertiary dark:text-slate-550 border border-lark-border/30 dark:border-slate-800/50 rounded ml-1 font-normal font-sans">
+                    {archivedConversations.length}
+                  </span>
+                </div>
+              </button>
 
-          {/* 1. Chat (Standard Sessions) */}
+              {isArchivedExpanded && (
+                <div className="space-y-0.5 animate-slide-up">
+                  {archivedConversations.map(conv => renderConversationItem(conv))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 2. Chat (Standard Sessions) */}
           <div className="space-y-1">
             <button
               onClick={() => setIsSessionsExpanded(!isSessionsExpanded)}
@@ -425,7 +438,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
             )}
           </div>
 
-          {/* 2. Agent chat (Agent long-term conversations) */}
+          {/* 3. Agent chat (Agent long-term conversations) */}
           <div className="space-y-1">
             <button
               onClick={() => setIsAgentChatsExpanded(!isAgentChatsExpanded)}

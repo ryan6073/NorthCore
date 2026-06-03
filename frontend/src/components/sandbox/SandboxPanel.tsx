@@ -3,7 +3,8 @@ import { useAgentHubStore } from '../../store/useAgentHubStore';
 import {
   CheckCircle2, AlertTriangle, Loader2, Terminal,
   FileText, GitMerge, ArrowLeft, Ban, ShieldAlert,
-  ChevronRight, FileCode, Check, Edit2, Undo, Globe
+  ChevronRight, FileCode, Check, Edit2, Undo, Globe,
+  Sparkles, Network, RotateCw
 } from 'lucide-react';
 import { AgentRunStep, SandboxFile, SandboxConflict } from '../../types';
 import { DeploymentView } from './DeploymentView';
@@ -26,12 +27,19 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
     loadSandboxConflicts,
     resolveSandboxConflict,
     cancelSandboxRun,
+    rollbackSandboxRun,
+    retrySandboxRun,
+    runRetryProgress,
     setSelectedSandboxFilePath,
     getSelectedSandboxFilePath,
-    conversations
+    conversations,
+    planningPhaseByRunId,
   } = useAgentHubStore();
 
   const activeConversationId = customConversationId || storeActiveId;
+
+  const [isRollingBack, setIsRollingBack] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
 
   const activeRunId = getActiveRunId(activeConversationId);
   const activeRun = getActiveRun(activeConversationId);
@@ -183,6 +191,30 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
     setManualContent(conflict.incomingContent || '');
   };
 
+  const handleRollback = async () => {
+    if (!activeRunId) return;
+    setIsRollingBack(true);
+    try {
+      await rollbackSandboxRun(activeRunId);
+    } catch (e) {
+      alert('撤销更改失败：' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setIsRollingBack(false);
+    }
+  };
+
+  const handleRetry = async () => {
+    if (!activeRunId) return;
+    setIsRetrying(true);
+    try {
+      await retrySandboxRun(activeRunId);
+    } catch (e) {
+      alert('重试沙箱运行失败：' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-slate-900 border-l border-slate-800 text-slate-200 overflow-hidden font-sans">
       <div className="p-4 border-b border-slate-800 bg-slate-950/60 backdrop-blur-md">
@@ -200,6 +232,14 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                 错误: {activeRun.error}
               </p>
             )}
+            {activeRunId && runRetryProgress[activeRunId] && (
+              <div className="flex items-center space-x-2 mt-2 px-3 py-2 rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-300 text-xs animate-pulse">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400 flex-shrink-0" />
+                <span className="font-medium">
+                  {runRetryProgress[activeRunId].message || `系统正在自动重试 (${runRetryProgress[activeRunId].attempt}/${runRetryProgress[activeRunId].maxAttempts})...`}
+                </span>
+              </div>
+            )}
           </div>
           {(activeRun.status === 'running' || activeRun.status === 'pending' || activeRun.status === 'conflict') && (
             <button
@@ -208,6 +248,34 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
             >
               <Ban className="w-3.5 h-3.5 mr-1" />
               终止
+            </button>
+          )}
+          {(activeRun.status === 'completed' || activeRun.status === 'failed') && (
+            <button
+              onClick={handleRollback}
+              disabled={isRollingBack}
+              className="text-xs flex items-center space-x-1 px-2.5 py-1.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 disabled:bg-slate-800 disabled:text-slate-500 text-indigo-400 border border-indigo-500/20 transition-all font-medium"
+            >
+              {isRollingBack ? (
+                <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+              ) : (
+                <Undo className="w-3.5 h-3.5 mr-1" />
+              )}
+              撤销更改
+            </button>
+          )}
+          {(activeRun.status === 'failed' || activeRun.status === 'conflict' || activeRun.status === 'cancelled') && (
+            <button
+              onClick={handleRetry}
+              disabled={isRetrying}
+              className="text-xs flex items-center space-x-1 px-2.5 py-1.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 disabled:bg-slate-800 disabled:text-slate-500 text-emerald-400 border border-emerald-500/20 transition-all font-medium shadow-lg hover:shadow-emerald-500/10"
+            >
+              {isRetrying ? (
+                <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+              ) : (
+                <RotateCw className="w-3.5 h-3.5 mr-1" />
+              )}
+              重试
             </button>
           )}
         </div>
@@ -280,6 +348,120 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                     ? 'Orchestrator 任务分派流程'
                     : '沙箱执行流程 (DAG)'}
               </div>
+
+              {/* ====== Orchestrator Planning Timeline ====== */}
+              {(() => {
+                const phases = activeRunId ? (planningPhaseByRunId[activeRunId] || []) : [];
+                const isGroupOrchestrator = activeRun.dag?.strategy === 'group_orchestrator_dag';
+                if (phases.length === 0 && !isGroupOrchestrator) return null;
+
+                const PHASE_LABELS: Record<string, string> = {
+                  started: 'Orchestrator 开始分析',
+                  context_ready: '已读取工作区上下文',
+                  agents_selected: '已确认可调度成员 Agent',
+                  model_started: '正在生成计划',
+                  model_completed: '初步计划生成',
+                  normalized: '计划规范化',
+                  completed: '规划完成 → 开始执行',
+                  failed: '规划失败',
+                };
+
+                const isRunning = activeRun.status === 'running' || activeRun.status === 'pending';
+                const planningComplete = phases.includes('completed') || phases.includes('failed');
+                const planningFailed = phases.includes('failed');
+
+                return (
+                  <div className="mb-4">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-2 select-none">
+                      <Sparkles className="w-3 h-3" />
+                      <span>Orchestrator 规划阶段</span>
+                      {!planningComplete && isRunning && (
+                        <span className="ml-auto flex items-center gap-1 text-blue-400 font-medium normal-case tracking-normal">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping" />
+                          规划中
+                        </span>
+                      )}
+                      {planningFailed && (
+                        <span className="ml-auto text-rose-400 font-medium normal-case tracking-normal">规划失败</span>
+                      )}
+                    </div>
+
+                    <div className="relative pl-4">
+                      {/* Vertical connector line */}
+                      {phases.length > 1 && (
+                        <div className="absolute left-[7px] top-3 bottom-3 w-px bg-slate-700/60" />
+                      )}
+
+                      <div className="space-y-1.5">
+                        {phases.map((phase, idx) => {
+                          const isLast = idx === phases.length - 1;
+                          const isFailed = phase === 'failed';
+                          const isCompleted = phase === 'completed';
+                          const isActive = isLast && !planningComplete;
+
+                          return (
+                            <div key={phase} className="flex items-center gap-2.5">
+                              {/* Phase dot/icon */}
+                              <div className="relative z-10 flex-shrink-0">
+                                {isFailed ? (
+                                  <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                                ) : isCompleted ? (
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                ) : isActive ? (
+                                  <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-indigo-400/70" />
+                                )}
+                              </div>
+
+                              {/* Phase label */}
+                              <span className={`text-[11px] font-medium ${
+                                isFailed
+                                  ? 'text-rose-400'
+                                  : isCompleted
+                                    ? 'text-emerald-400'
+                                    : isActive
+                                      ? 'text-blue-300'
+                                      : 'text-slate-400'
+                              }`}>
+                                {PHASE_LABELS[phase] || phase}
+                              </span>
+                            </div>
+                          );
+                        })}
+
+                        {/* Placeholder when no phases yet but is a group orchestrator run and is still active */}
+                        {phases.length === 0 && isGroupOrchestrator && (activeRun.status === 'running' || activeRun.status === 'pending') && (
+                          <div className="flex items-center gap-2.5">
+                            <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin flex-shrink-0" />
+                            <span className="text-[11px] text-blue-300 font-medium">Orchestrator 规划中...</span>
+                          </div>
+                        )}
+                        {/* Placeholder when no phases yet but is a group orchestrator run and is completed/inactive */}
+                        {phases.length === 0 && isGroupOrchestrator && !(activeRun.status === 'running' || activeRun.status === 'pending') && (
+                          <div className="flex items-center gap-2.5">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                            <span className="text-[11px] text-emerald-400 font-medium">Orchestrator 规划完毕</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Separator before steps */}
+                    {(activeRun.steps?.length ?? 0) > 0 && (
+                      <div className="flex items-center gap-2 mt-3 mb-1">
+                        <div className="flex-1 h-px bg-slate-800/80" />
+                        <div className="flex items-center gap-1 text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
+                          <Network className="w-3 h-3" />
+                          <span>执行步骤</span>
+                        </div>
+                        <div className="flex-1 h-px bg-slate-800/80" />
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               <div className="space-y-2">
                 {activeRun.steps?.map((step: AgentRunStep, idx: number) => {
                   const isSelected = step.id === selectedStepId;

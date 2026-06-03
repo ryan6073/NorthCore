@@ -10,7 +10,7 @@ interface ChatPanelProps {
   agents: Agent[];
   messages: Message[];
   artifacts: Artifact[];
-  onSendMessage: (content: string, attachments?: MessageAttachment[], targetAgentId?: string, useSandbox?: boolean) => void;
+  onSendMessage: (content: string, attachments?: MessageAttachment[], targetAgentId?: string, useSandbox?: boolean, webSearchMode?: 'auto' | 'force' | 'off') => void;
 }
 
 const COMMON_EMOJIS = [
@@ -343,7 +343,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     const trimmed = inputValue.trim();
     if (!trimmed && pendingAttachments.length === 0) return;
     const targetAgentId = parseTargetAgentId(trimmed);
-    onSendMessage(trimmed, pendingAttachments, targetAgentId || undefined);
+    onSendMessage(trimmed, pendingAttachments, targetAgentId || undefined, undefined, webSearchMode);
     setInputValue('');
     setPendingAttachments([]);
     setShowEmojiPicker(false);
@@ -973,7 +973,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         style={{ height: inputAreaHeight }}
       >
         <div
-          onMouseDown={handleDragStart}
+          onMouseDown={!conversation?.isArchived ? handleDragStart : undefined}
           className="h-[6px] bg-transparent hover:bg-slate-100/80 cursor-ns-resize transition-colors flex items-center justify-center group relative z-10 before:content-[''] before:absolute before:-top-2 before:bottom-2 before:left-0 before:right-0"
         >
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
@@ -981,22 +981,26 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
           </div>
         </div>
 
-      {/* Input Area — callable guard for single-agent conversations */}
-      {conversation?.mode === 'agent' && agents.length > 0 && !(agents[0].enabled === true && agents[0].status !== 'disabled') ? (
-        <div className="flex-shrink-0 bg-white dark:bg-slate-900 border-t border-lark-border dark:border-slate-800 px-6 py-4 flex items-center gap-3 transition-colors">
-          <div className="flex-1 flex items-center gap-3 px-4 py-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-xl">
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M5.07 19H19a2 2 0 001.73-3L13.73 4a2 2 0 00-3.46 0L3.27 16a2 2 0 001.8 3z" />
-            </svg>
-            <span className="text-sm text-amber-700 dark:text-amber-400 font-medium">
-              {agents[0].status === 'disabled' ? `${agents[0].name} 已被隐藏停用，无法继续发送消息。` : `该智能体当前不可用，无法发送消息。`}
-            </span>
+        {/* 归档会话提示条 */}
+        {conversation?.isArchived && (
+          <div className="px-6 py-2 bg-slate-50 dark:bg-slate-950/30 border-t border-b border-lark-border dark:border-slate-800">
+            <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+              </svg>
+              <span>当前会话已归档，处于只读状态，不允许发送消息。您可以在左侧侧边栏中对其取消归档以恢复正常会话。</span>
+            </div>
           </div>
-        </div>
-      ) : (
-        <div className="flex-1 p-4 pt-1 border-t border-lark-border dark:border-slate-800 bg-white dark:bg-slate-900 h-full flex flex-col min-h-0 z-20 transition-colors">
-          <div className="border rounded-xl bg-white dark:bg-slate-950 transition-all flex flex-col relative z-30 flex-1 min-h-0 overflow-hidden border-lark-border dark:border-slate-800 hover:border-lark-border/80 dark:hover:border-slate-700 focus-within:border-lark-primary dark:focus-within:border-violet-650 focus-within:ring-2 focus-within:ring-lark-primary/10 dark:focus-within:ring-violet-600/10">
-            
+        )}
+
+        {!(conversation?.mode === 'agent' && agents.length > 0 && !(agents[0].enabled === true && agents[0].status !== 'disabled')) ? (
+          <div className="flex-1 p-4 pt-1 border-t border-lark-border dark:border-slate-800 bg-white dark:bg-slate-900 h-full flex flex-col min-h-0 z-20 transition-colors">
+            <div className={`border rounded-xl bg-white dark:bg-slate-950 transition-all flex flex-col relative z-30 flex-1 min-h-0 overflow-hidden ${
+              conversation?.isArchived 
+                ? 'border-slate-200/50 dark:border-slate-800/50 opacity-60' 
+                : 'border-lark-border dark:border-slate-800 hover:border-lark-border/80 dark:hover:border-slate-700 focus-within:border-lark-primary dark:focus-within:border-violet-650 focus-within:ring-2 focus-within:ring-lark-primary/10 dark:focus-within:ring-violet-600/10'
+            }`}>
+              
             {replyContext && (
               <div className="flex items-center justify-between px-3.5 py-1.5 bg-slate-50 dark:bg-slate-900/60 border-b border-lark-border/40 dark:border-slate-800/40 text-[11px] text-slate-500 dark:text-slate-400 animate-slide-up flex-shrink-0 rounded-t-xl">
                 <span className="truncate flex items-center gap-1 min-w-0">
@@ -1076,6 +1080,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
               onChange={handleFileChange} 
               multiple 
               className="hidden" 
+              disabled={conversation?.isArchived}
             />
 
             <div className={`flex items-center gap-1.5 px-3 py-1.5 bg-slate-50/50 dark:bg-slate-900/20 border-b border-lark-border/30 dark:border-slate-800/20 relative flex-shrink-0 ${hasHeader ? '' : 'rounded-t-xl'}`}>
@@ -1083,7 +1088,12 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                 <button 
                   type="button"
                   onClick={handleFileClick}
-                  className="p-1 rounded-lg text-lark-text-secondary dark:text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 hover:bg-lark-bg-hover dark:hover:bg-slate-800 transition-colors"
+                  disabled={conversation?.isArchived}
+                  className={`p-1 rounded-lg transition-colors ${
+                    conversation?.isArchived 
+                      ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed' 
+                      : 'text-lark-text-secondary dark:text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 hover:bg-lark-bg-hover dark:hover:bg-slate-800'
+                  }`}
                   title="添加附件"
                 >
                   <Paperclip className="w-3.5 h-3.5" />
@@ -1094,7 +1104,14 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                 <button 
                   type="button"
                   onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                  className={`p-1 rounded-lg transition-colors ${showEmojiPicker ? 'text-lark-primary bg-lark-primary-light dark:bg-violet-950/45 dark:text-violet-400' : 'text-lark-text-secondary dark:text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 hover:bg-lark-bg-hover dark:hover:bg-slate-800'}`}
+                  disabled={conversation?.isArchived}
+                  className={`p-1 rounded-lg transition-colors ${
+                    conversation?.isArchived 
+                      ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                      : showEmojiPicker 
+                        ? 'text-lark-primary bg-lark-primary-light dark:bg-violet-950/45 dark:text-violet-400' 
+                        : 'text-lark-text-secondary dark:text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 hover:bg-lark-bg-hover dark:hover:bg-slate-800'
+                  }`}
                   title="表情符号"
                 >
                   <Smile className="w-3.5 h-3.5" />
@@ -1106,7 +1123,12 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                   <button
                     type="button"
                     onClick={handleAtButtonClick}
-                    className="p-1 rounded-lg text-lark-text-secondary dark:text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 hover:bg-lark-bg-hover dark:hover:bg-slate-800 transition-colors"
+                    disabled={conversation?.isArchived}
+                    className={`p-1 rounded-lg transition-colors ${
+                      conversation?.isArchived 
+                        ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                        : 'text-lark-text-secondary dark:text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 hover:bg-lark-bg-hover dark:hover:bg-slate-800'
+                    }`}
                     title="提及 Agent (@)"
                   >
                     <AtSign className="w-3.5 h-3.5" />
@@ -1126,12 +1148,15 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                   const nextIndex = (modes.indexOf(webSearchMode) + 1) % modes.length;
                   setWebSearchMode(modes[nextIndex]);
                 }}
+                disabled={conversation?.isArchived}
                 className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-bold transition-all border ${
-                  webSearchMode === 'force'
-                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-450 border-emerald-500/35 ring-1 ring-emerald-500/20'
-                    : webSearchMode === 'auto'
-                      ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
-                      : 'text-slate-400 dark:text-slate-500 hover:text-slate-500 hover:bg-slate-500/5 border-transparent'
+                  conversation?.isArchived 
+                    ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed border-transparent'
+                    : webSearchMode === 'force'
+                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-450 border-emerald-500/35 ring-1 ring-emerald-500/20'
+                      : webSearchMode === 'auto'
+                        ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
+                        : 'text-slate-400 dark:text-slate-500 hover:text-slate-500 hover:bg-slate-500/5 border-transparent'
                 }`}
                 title={`联网搜索模式: ${
                   webSearchMode === 'auto'
@@ -1159,10 +1184,13 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                   <button
                     type="button"
                     onClick={() => setIsApplyToLocal(!isApplyToLocal)}
+                    disabled={conversation?.isArchived}
                     className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-bold transition-all border ${
-                      isApplyToLocal
-                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/35 ring-1 ring-emerald-500/20'
-                        : 'text-slate-400 dark:text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/5 border-transparent'
+                      conversation?.isArchived 
+                        ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed border-transparent'
+                        : isApplyToLocal
+                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/35 ring-1 ring-emerald-500/20'
+                          : 'text-slate-400 dark:text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/5 border-transparent'
                     }`}
                     title="自动将生成的代码产物写入到本地工作区文件"
                   >
@@ -1194,28 +1222,31 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                 <textarea
                   ref={textareaRef}
                   value={inputValue}
-                  onChange={handleInputChange}
-                  onKeyDown={handleKeyDown}
+                  onChange={conversation?.isArchived ? undefined : handleInputChange}
+                  onKeyDown={conversation?.isArchived ? undefined : handleKeyDown}
                   onScroll={(e) => {
-                    if (overlayRef.current) {
+                    if (overlayRef.current && !conversation?.isArchived) {
                       overlayRef.current.scrollTop = e.currentTarget.scrollTop;
                       overlayRef.current.scrollLeft = e.currentTarget.scrollLeft;
                     }
                   }}
-                  placeholder="输入消息，输入 @ 唤起 Agent 选择器..."
+                  placeholder={conversation?.isArchived ? '会话已归档，无法输入消息' : '输入消息，输入 @ 唤起 Agent 选择器...'}
+                  disabled={conversation?.isArchived}
                   className={`absolute inset-0 w-full h-full px-2 py-1.5 text-sm font-sans leading-normal outline-none resize-none bg-transparent focus:ring-0 border border-transparent ${
-                    inputValue ? 'text-transparent' : 'text-lark-text-primary dark:text-slate-150 placeholder:text-lark-text-tertiary dark:placeholder:text-slate-650'
+                    conversation?.isArchived 
+                      ? 'text-slate-300 dark:text-slate-600 placeholder:text-slate-400 dark:placeholder:text-slate-600'
+                      : inputValue ? 'text-transparent' : 'text-lark-text-primary dark:text-slate-150 placeholder:text-lark-text-tertiary dark:placeholder:text-slate-650'
                   }`}
-                  style={{ wordBreak: 'break-word', caretColor: '#7c3aed' }}
+                  style={{ wordBreak: 'break-word', caretColor: conversation?.isArchived ? 'transparent' : '#7c3aed' }}
                 />
               </div>
               <button
                 onClick={handleSend}
-                disabled={!canSend}
+                disabled={!canSend || conversation?.isArchived}
                 className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all flex-shrink-0 active:scale-95 mb-0.5 ${
-                  canSend
-                    ? 'bg-lark-primary text-white shadow-sm hover:bg-lark-primary-hover'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
+                  conversation?.isArchived || !canSend
+                    ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed'
+                    : 'bg-lark-primary text-white shadow-sm hover:bg-lark-primary-hover'
                 }`}
                 title="发送消息"
               >
@@ -1224,7 +1255,18 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
             </div>
           </div>
         </div>
-      )}
+        ) : (
+          <div className="flex-shrink-0 bg-white dark:bg-slate-900 border-t border-lark-border dark:border-slate-800 px-6 py-4 flex items-center gap-3 transition-colors">
+            <div className="flex-1 flex items-center gap-3 px-4 py-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-xl">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M5.07 19H19a2 2 0 001.73-3L13.73 4a2 2 0 00-3.46 0L3.27 16a2 2 0 001.8 3z" />
+              </svg>
+              <span className="text-sm text-amber-700 dark:text-amber-400 font-medium">
+                {agents[0].status === 'disabled' ? `${agents[0].name} 已被隐藏停用，无法继续发送消息。` : `该智能体当前不可用，无法发送消息。`}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
