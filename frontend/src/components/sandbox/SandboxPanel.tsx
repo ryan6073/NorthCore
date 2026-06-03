@@ -34,6 +34,8 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
     getSelectedSandboxFilePath,
     conversations,
     planningPhaseByRunId,
+    sandboxDebugLogs,
+    clearSandboxDebugLogs,
   } = useAgentHubStore();
 
   const activeConversationId = customConversationId || storeActiveId;
@@ -50,7 +52,7 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
   const activeConversation = conversations.find(c => c.id === activeConversationId);
   const workspaceId = activeRun?.workspaceId || activeConversation?.workspaceId;
 
-  const [activeTab, setActiveTab] = useState<'workflow' | 'files' | 'conflicts' | 'deployment'>('workflow');
+  const [activeTab, setActiveTab] = useState<'workflow' | 'files' | 'conflicts' | 'deployment' | 'debug'>('workflow');
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
 
   const [editingConflict, setEditingConflict] = useState<SandboxConflict | null>(null);
@@ -333,6 +335,16 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
               一键部署
             </button>
           )}
+          <button
+            onClick={() => setActiveTab('debug')}
+            className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === 'debug'
+                ? 'bg-slate-800 text-indigo-400 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+              }`}
+          >
+            <Network className="w-3.5 h-3.5 mr-1" />
+            通信调试
+          </button>
         </div>
       </div>
 
@@ -784,6 +796,168 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
           />
         )}
 
+        {activeTab === 'debug' && (
+          <SandboxDebugView
+            logs={sandboxDebugLogs}
+            onClear={clearSandboxDebugLogs}
+          />
+        )}
+
+      </div>
+    </div>
+  );
+};
+
+interface SandboxDebugViewProps {
+  logs: any[];
+  onClear: () => void;
+}
+
+const SandboxDebugView: React.FC<SandboxDebugViewProps> = ({ logs, onClear }) => {
+  const [filter, setFilter] = useState<'all' | 'ws' | 'http'>('all');
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+
+  const filteredLogs = logs.filter(log => {
+    if (filter === 'ws') return log.type === 'ws_in' || log.type === 'ws_out';
+    if (filter === 'http') return log.type.startsWith('http_');
+    return true;
+  });
+
+  const getLogTypeBadge = (type: string) => {
+    switch (type) {
+      case 'ws_in':
+        return (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/10 text-purple-400 border border-purple-500/20 font-mono">
+            WS IN
+          </span>
+        );
+      case 'ws_out':
+        return (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20 font-mono">
+            WS OUT
+          </span>
+        );
+      case 'http_req':
+        return (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
+            HTTP REQ
+          </span>
+        );
+      case 'http_res':
+        return (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 font-mono">
+            HTTP RES
+          </span>
+        );
+      case 'http_err':
+        return (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20 font-mono">
+            HTTP ERR
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="p-4 flex flex-col h-full min-h-0 text-xs">
+      <div className="flex items-center justify-between mb-4 flex-shrink-0">
+        <div className="text-[11px] uppercase text-slate-500 font-bold tracking-wider">
+          沙箱通信监控 (WS / HTTP 捕获)
+        </div>
+        <button
+          onClick={onClear}
+          className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-750 transition-colors"
+        >
+          清空面板
+        </button>
+      </div>
+
+      {/* Filter Tabs */}
+      <div className="flex space-x-2 mb-3 flex-shrink-0">
+        <button
+          onClick={() => setFilter('all')}
+          className={`px-3 py-1 rounded-md border font-medium ${
+            filter === 'all'
+              ? 'bg-slate-850 border-indigo-500/40 text-indigo-400 font-bold'
+              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          全部 ({logs.length})
+        </button>
+        <button
+          onClick={() => setFilter('ws')}
+          className={`px-3 py-1 rounded-md border font-medium ${
+            filter === 'ws'
+              ? 'bg-slate-850 border-indigo-500/40 text-indigo-400 font-bold'
+              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          WebSocket ({logs.filter(l => l.type.startsWith('ws_')).length})
+        </button>
+        <button
+          onClick={() => setFilter('http')}
+          className={`px-3 py-1 rounded-md border font-medium ${
+            filter === 'http'
+              ? 'bg-slate-850 border-indigo-500/40 text-indigo-400 font-bold'
+              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          HTTP 请求 ({logs.filter(l => l.type.startsWith('http_')).length})
+        </button>
+      </div>
+
+      {/* Logs list */}
+      <div className="flex-grow overflow-y-auto min-h-0 space-y-2 select-text">
+        {filteredLogs.length === 0 ? (
+          <div className="text-center py-12 text-slate-600 italic">
+            暂无被捕获的沙箱通信数据
+          </div>
+        ) : (
+          filteredLogs.map(log => {
+            const isExpanded = expandedLogId === log.id;
+            const isError = log.type === 'http_err' || (log.type === 'ws_in' && log.payload?.type?.includes('failed'));
+            
+            return (
+              <div
+                key={log.id}
+                className={`border rounded-lg bg-slate-950/40 overflow-hidden transition-all ${
+                  isExpanded ? 'border-indigo-500/50 shadow-md shadow-indigo-500/5' : 'border-slate-850 hover:border-slate-750'
+                }`}
+              >
+                <div
+                  onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
+                  className="flex items-center justify-between p-2.5 cursor-pointer hover:bg-slate-900/20"
+                >
+                  <div className="flex items-center space-x-2 min-w-0 flex-1">
+                    {getLogTypeBadge(log.type)}
+                    <span className="text-[10px] text-slate-500 font-mono">{log.timestamp}</span>
+                    {log.method && (
+                      <span className={`px-1 py-0.2 rounded text-[9px] font-bold font-mono ${
+                        log.method === 'GET' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-blue-500/10 text-blue-400'
+                      }`}>
+                        {log.method}
+                      </span>
+                    )}
+                    <span className={`font-mono text-xs truncate font-medium ${isError ? 'text-rose-400' : 'text-slate-300'}`} title={log.name}>
+                      {log.name}
+                    </span>
+                  </div>
+                  <ChevronRight className={`w-4 h-4 text-slate-500 transform transition-transform ${isExpanded ? 'rotate-90 text-indigo-400' : ''}`} />
+                </div>
+
+                {isExpanded && (
+                  <div className="border-t border-slate-900 bg-slate-950/80 p-3 font-mono text-[11px] overflow-x-auto max-h-96">
+                    <pre className="text-slate-300 leading-relaxed max-w-full">
+                      {JSON.stringify(log.payload, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );

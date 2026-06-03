@@ -99,9 +99,10 @@ function App() {
     activeConversation?.agentIds.includes(agent.id)
   ).map(agent => {
     if (activeConversationId && conversationAgentConfigs[activeConversationId]?.[agent.id]) {
+      const { status, ...configs } = conversationAgentConfigs[activeConversationId][agent.id];
       return {
         ...agent,
-        ...conversationAgentConfigs[activeConversationId][agent.id]
+        ...configs
       };
     }
     return agent;

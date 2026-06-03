@@ -10,6 +10,11 @@ try {
 
 const USE_MOCK = (import.meta as any).env?.VITE_USE_MOCK === 'true';
 
+export let storeLogger: any = null;
+export function registerHttpLogger(logger: any) {
+  storeLogger = logger;
+}
+
 const http = axios.create({
   baseURL,
   timeout: 120000,
@@ -24,6 +29,15 @@ http.interceptors.request.use(
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    
+    // Log sandbox relevant HTTP requests
+    if (storeLogger && config.url && (config.url.includes('/runs') || config.url.includes('/conversations/'))) {
+      try {
+        storeLogger('http_req', config.url, config.data || null, config.method?.toUpperCase());
+      } catch (err) {
+        // ignore
+      }
+    }
     return config;
   },
   (error) => Promise.reject(error)
@@ -35,12 +49,30 @@ http.interceptors.response.use(
     if (res.code !== 0) {
       console.warn('[API Error]', res);
     }
+    
+    // Log sandbox relevant HTTP responses
+    if (storeLogger && response.config.url && (response.config.url.includes('/runs') || response.config.url.includes('/conversations/'))) {
+      try {
+        storeLogger('http_res', response.config.url, res, response.config.method?.toUpperCase());
+      } catch (err) {
+        // ignore
+      }
+    }
     return res as any;
   },
   (error) => {
     console.error('[HTTP Request Failed]', error);
     if (error.response?.status === 401) {
       localStorage.removeItem('auth_token');
+    }
+    
+    // Log sandbox relevant HTTP errors
+    if (storeLogger && error.config?.url && (error.config.url.includes('/runs') || error.config.url.includes('/conversations/'))) {
+      try {
+        storeLogger('http_err', error.config.url, error.response?.data || error.message, error.config.method?.toUpperCase());
+      } catch (err) {
+        // ignore
+      }
     }
     return Promise.reject(error);
   }

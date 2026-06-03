@@ -11,6 +11,7 @@ class AgentHubWSClient {
   private readonly MAX_RECONNECT_DELAY = 30000;
   private readonly HEARTBEAT_INTERVAL = 25000;
   private isManualClose = false;
+  public messageInterceptor: ((event: any) => void) | null = null;
   private url: string = '';
 
   connect(url?: string): Promise<ConnectedEvent> {
@@ -53,6 +54,9 @@ class AgentHubWSClient {
       this.ws.onmessage = (event) => {
         try {
           const parsed = JSON.parse(event.data);
+          if (this.messageInterceptor) {
+            this.messageInterceptor(parsed);
+          }
           this.dispatchEvent(parsed);
 
           if (parsed.type === 'connected') {

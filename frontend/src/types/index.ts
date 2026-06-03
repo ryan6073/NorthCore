@@ -209,6 +209,7 @@ export interface Artifact {
   latestVersion: number;
   createdAt: string;
   updatedAt: string;
+  metadata?: Record<string, any>;
 }
 
 export interface ArtifactVersion {
@@ -314,9 +315,14 @@ export interface SendMessageRequest {
   artifactRef?: ArtifactReference;
   attachments?: MessageAttachment[];
   useSandbox?: boolean;
-  executionMode?: 'chat' | 'sandbox';
-  runMode?: 'chat' | 'sandbox';
+  executionMode?: 'chat' | 'sandbox' | 'deployment';
+  runMode?: 'chat' | 'sandbox' | 'deployment';
   webSearchMode?: 'auto' | 'force' | 'off';
+  deploymentConfig?: {
+    projectDir?: string;
+    startCommand?: string;
+    containerPort?: number;
+  };
 }
 
 export interface SendMessageResponse {
@@ -324,10 +330,11 @@ export interface SendMessageResponse {
   agentMessages: Message[];
   artifacts: Artifact[];
   contextUsage?: ContextUsage;
-  executionMode?: 'chat' | 'sandbox';
+  executionMode?: 'chat' | 'sandbox' | 'deployment';
   intent?: string;
   reason?: string;
   run?: AgentRunDetail;
+  deployment?: any;
   workspaceId?: string;
 }
 

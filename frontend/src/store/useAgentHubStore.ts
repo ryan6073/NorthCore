@@ -9,7 +9,7 @@ import { mockConversations, mockMessages, mockAgents as initialAgents, mockArtif
 import { createId } from '@/utils/id';
 import { getCurrentFullTime } from '@/utils/time';
 import { generateMockReply } from '@/utils/mockReply';
-import { USE_MOCK } from '@/services';
+import { USE_MOCK, registerHttpLogger } from '@/services';
 import { healthCheck } from '@/services/http/healthService';
 import { registerApi, loginApi, loginAsGuestApi, getMeApi, logoutApi, updateProfileApi } from '@/services/http/authService';
 import sandboxService from '@/services/http/sandboxService';
@@ -78,6 +78,101 @@ const mapMessageMetadata = (m: Message): Message => {
     quotedMessage: m.quotedMessage || metadata?.quotedMessage || undefined,
     artifactRef: artifactRef || undefined,
   };
+};
+
+const updateTaskPlanStepStatus = (
+  messages: Message[],
+  taskPlanStep: any,
+  newStatus: 'pending' | 'running' | 'completed'
+): Message[] => {
+  if (!taskPlanStep || !taskPlanStep.agentId) return messages;
+
+  const taskPlanMsgIndex = [...messages]
+    .reverse()
+    .findIndex(
+      m => m.type === 'task-plan' && m.metadata?.source === 'groupChatCollaboration'
+    );
+  if (taskPlanMsgIndex === -1) return messages;
+
+  const actualIndex = messages.length - 1 - taskPlanMsgIndex;
+  const taskPlanMsg = messages[actualIndex];
+  const steps = taskPlanMsg.metadata?.taskPlan || [];
+
+  let updated = false;
+  const updatedSteps = steps.map((step: any) => {
+    if (updated || step.agentId !== taskPlanStep.agentId) {
+      return step;
+    }
+    if (step.status === 'completed' && newStatus !== 'completed') {
+      return step;
+    }
+    updated = true;
+    return { ...step, status: newStatus };
+  });
+
+  if (!updated) {
+    let fallbackUpdated = false;
+    const finalSteps = steps.map((step: any) => {
+      if (!fallbackUpdated && step.agentId === taskPlanStep.agentId) {
+        fallbackUpdated = true;
+        return { ...step, status: newStatus };
+      }
+      return step;
+    });
+    return messages.map((m, idx) =>
+      idx === actualIndex
+        ? {
+            ...m,
+            metadata: {
+              ...m.metadata,
+              taskPlan: finalSteps,
+            },
+          }
+        : m
+    );
+  }
+
+  return messages.map((m, idx) =>
+    idx === actualIndex
+      ? {
+          ...m,
+          metadata: {
+            ...m.metadata,
+            taskPlan: updatedSteps,
+          },
+        }
+      : m
+  );
+};
+
+const completeAllTaskPlanSteps = (messages: Message[]): Message[] => {
+  const taskPlanMsgIndex = [...messages]
+    .reverse()
+    .findIndex(
+      m => m.type === 'task-plan' && m.metadata?.source === 'groupChatCollaboration'
+    );
+  if (taskPlanMsgIndex === -1) return messages;
+
+  const actualIndex = messages.length - 1 - taskPlanMsgIndex;
+  const taskPlanMsg = messages[actualIndex];
+  const steps = taskPlanMsg.metadata?.taskPlan || [];
+
+  const updatedSteps = steps.map((step: any) => ({
+    ...step,
+    status: 'completed' as const,
+  }));
+
+  return messages.map((m, idx) =>
+    idx === actualIndex
+      ? {
+          ...m,
+          metadata: {
+            ...m.metadata,
+            taskPlan: updatedSteps,
+          },
+        }
+      : m
+  );
 };
 
 const mergeRunSteps = (
@@ -369,8 +464,23 @@ interface AgentHubStore {
   /** Orchestrator 规划阶段追踪，key=runId，value=已到达的 phase 列表（按时序） */
   planningPhaseByRunId: Record<string, string[]>;
   runRetryProgress: Record<string, { attempt: number; maxAttempts: number; message: string }>;
+  sandboxDebugLogs: {
+    id: string;
+    timestamp: string;
+    type: 'ws_in' | 'ws_out' | 'http_req' | 'http_res' | 'http_err';
+    name: string;
+    payload: any;
+    method?: string;
+  }[];
   
   // Sandbox V1 Actions
+  addSandboxDebugLog: (
+    type: 'ws_in' | 'ws_out' | 'http_req' | 'http_res' | 'http_err',
+    name: string,
+    payload: any,
+    method?: string
+  ) => void;
+  clearSandboxDebugLogs: () => void;
   setRightPanelTab: (tab: 'artifacts' | 'sandbox') => void;
   getActiveRunId: (conversationId: string | null) => string | null;
   getActiveRun: (conversationId: string | null) => any | null;
@@ -531,6 +641,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   fileTreeByRunId: {},
   planningPhaseByRunId: {},
   runRetryProgress: {},
+  sandboxDebugLogs: [],
 
   loadBusinessData: async () => {
     try {
@@ -562,6 +673,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
 
   initStore: async () => {
+    // Register HTTP logger for debugging sandbox
+    registerHttpLogger(get().addSandboxDebugLog);
+
     // Initialize registered users database if not present
     try {
       if (!localStorage.getItem('ag_registered_users')) {
@@ -1867,16 +1981,21 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
           set(state => {
             // Replace the optimistic message with the actual user message, preserving local reply/citation fields
-            const updatedMessages = state.messages.map(m => {
-              if (m.id === newUserMessage.id) {
-                return mappedUserMessage ? {
-                  ...mappedUserMessage,
-                  quotedMessage: mappedUserMessage.quotedMessage || m.quotedMessage,
-                  artifactRef: finalArtifactRef,
-                } : m;
-              }
-              return m;
-            });
+            let updatedMessages = state.messages;
+            if (userMessage && state.messages.some(m => m.id === userMessage.id)) {
+              updatedMessages = state.messages.filter(m => m.id !== newUserMessage.id);
+            } else {
+              updatedMessages = state.messages.map(m => {
+                if (m.id === newUserMessage.id) {
+                  return mappedUserMessage ? {
+                    ...mappedUserMessage,
+                    quotedMessage: mappedUserMessage.quotedMessage || m.quotedMessage,
+                    artifactRef: finalArtifactRef,
+                  } : m;
+                }
+                return m;
+              });
+            }
 
             // Filter out thinking indicators and append new agent messages
             let finalMessages = [...updatedMessages];
@@ -1886,6 +2005,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
                 finalMessages.push(mapMessageMetadata(msg));
               }
             });
+
+            // Mark collaboration task plan steps as completed since REST response signifies completed round
+            finalMessages = completeAllTaskPlanSteps(finalMessages);
 
             // Merge new artifacts
             const currentArtifacts = [...state.artifacts];
@@ -1909,6 +2031,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               isProcessing: false,
             };
           });
+        } else if (res.code === 40002) {
+          alert(`❌ 发送失败：${res.message || '客户端不允许创建 system/status 消息'}`);
+          get().addDesktopNotification('发送失败', res.message || '客户端不允许创建 system/status 消息', 'error', 'error');
+          set(state => ({
+            messages: state.messages.filter(m => m.id !== newUserMessage.id),
+            isProcessing: false,
+          }));
         } else {
           const errorMsg: Message = {
             id: createId('msg'),
@@ -1927,21 +2056,31 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         }
       } catch (e: any) {
         console.error('[Store] 发送消息 HTTP 失败', e);
+        const errCode = e.response?.data?.code;
         const errMsg = e.response?.data?.message || e.message || '网络请求失败';
-        const errorMsg: Message = {
-          id: createId('msg'),
-          conversationId: activeConversationId,
-          senderId: 'system',
-          senderName: '系统',
-          role: 'system',
-          type: 'status',
-          content: `❌ 发送失败：${errMsg}`,
-          createdAt: getCurrentFullTime(),
-        };
-        set(state => ({
-          messages: [...state.messages, errorMsg],
-          isProcessing: false,
-        }));
+        if (errCode === 40002) {
+          alert(`❌ 发送失败：${errMsg}`);
+          get().addDesktopNotification('发送失败', errMsg, 'error', 'error');
+          set(state => ({
+            messages: state.messages.filter(m => m.id !== newUserMessage.id),
+            isProcessing: false,
+          }));
+        } else {
+          const errorMsg: Message = {
+            id: createId('msg'),
+            conversationId: activeConversationId,
+            senderId: 'system',
+            senderName: '系统',
+            role: 'system',
+            type: 'status',
+            content: `❌ 发送失败：${errMsg}`,
+            createdAt: getCurrentFullTime(),
+          };
+          set(state => ({
+            messages: [...state.messages, errorMsg],
+            isProcessing: false,
+          }));
+        }
       }
     }
   },
@@ -2353,19 +2492,79 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       await wsClient.connect();
       set({ wsStatus: 'connected' });
 
+      // Bind global message interceptor
+      wsClient.messageInterceptor = (event: any) => {
+        if (event && event.type && (event.type.startsWith('run.') || event.type.startsWith('orchestrator.planning.'))) {
+          get().addSandboxDebugLog('ws_in', event.type, event);
+        }
+      };
+
       const activeConvId = get().activeConversationId;
       if (activeConvId && !get().useMockMode) {
         wsClient.send('conversation.subscribe', { conversationId: activeConvId });
       }
 
+      const unsubUserCreated = wsClient.on('conversation.message.user_created', (event: any) => {
+        const { message, conversationId } = event.data;
+        set(state => {
+          if (state.activeConversationId !== conversationId) return {};
+          if (state.messages.some(m => m.id === message.id)) return {};
+          
+          const mappedMessage = mapMessageMetadata(message);
+          const optimisticIndex = state.messages.findIndex(m => m.id.startsWith('msg-') && m.role === 'user');
+          if (optimisticIndex > -1) {
+            const updatedMessages = [...state.messages];
+            updatedMessages[optimisticIndex] = {
+              ...mappedMessage,
+              quotedMessage: state.messages[optimisticIndex].quotedMessage,
+              artifactRef: state.messages[optimisticIndex].artifactRef || mappedMessage.artifactRef,
+            };
+            return {
+              messages: updatedMessages,
+              isProcessing: true,
+            };
+          }
+          
+          return {
+            messages: [...state.messages, mappedMessage],
+            isProcessing: true,
+          };
+        });
+      });
+
+      const unsubError = wsClient.on('error', (event: any) => {
+        const { code, message } = event.data || {};
+        if (code === 40002) {
+          alert(`❌ 发送失败：${message || '客户端不允许创建 system/status 消息'}`);
+          get().addDesktopNotification('发送失败', message || '客户端不允许创建 system/status 消息', 'error', 'error');
+          set(state => {
+            const updatedMessages = [...state.messages];
+            const lastUserMsgIdx = [...updatedMessages].reverse().findIndex(m => m.senderId === 'user' || m.role === 'user');
+            if (lastUserMsgIdx > -1) {
+              const actualIdx = updatedMessages.length - 1 - lastUserMsgIdx;
+              updatedMessages.splice(actualIdx, 1);
+            }
+            return {
+              messages: updatedMessages,
+              isProcessing: false
+            };
+          });
+        }
+      });
+
       const unsubThinking = wsClient.on('agent.thinking.started', (event: any) => {
-        const { agentId, agentName, conversationId } = event.data;
+        const { agentId, agentName, conversationId, source, taskPlanStep } = event.data;
         set(state => {
           if (state.activeConversationId !== conversationId) return {};
 
           const updatedAgents = state.agents.map(a =>
             a.id === agentId ? { ...a, status: 'thinking' as const } : a
           );
+
+          let updatedMessages = state.messages;
+          if (source === 'groupChatCollaboration') {
+            updatedMessages = updateTaskPlanStepStatus(state.messages, taskPlanStep || { agentId }, 'running');
+          }
 
           const thinkingMsg: Message = {
             id: `thinking-${agentId}`,
@@ -2376,17 +2575,22 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             type: 'status',
             content: '正在思考...',
             createdAt: getCurrentFullTime(),
+            metadata: source ? { source, readOnly: true } : undefined
           };
+
+          const alreadyHasMsg = updatedMessages.some(
+            m => m.id === `thinking-${agentId}` || (m.senderId === agentId && m.createdAt > thinkingMsg.createdAt)
+          );
 
           return {
             agents: updatedAgents,
-            messages: [...state.messages, thinkingMsg],
+            messages: alreadyHasMsg ? updatedMessages : [...updatedMessages, thinkingMsg],
           };
         });
       });
 
       const unsubChunk = wsClient.on('conversation.message.chunk', (event: any) => {
-        const { messageId, conversationId, senderId, senderName, role, messageType, chunk, language } = event.data;
+        const { messageId, conversationId, senderId, senderName, role, messageType, chunk, language, source, readOnly, taskPlanStep } = event.data;
         set(state => {
           if (state.activeConversationId !== conversationId) return {};
 
@@ -2400,18 +2604,29 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             return { messages: updatedMessages };
           } else {
             const filteredMessages = state.messages.filter(m => m.id !== `thinking-${senderId}`);
+            
+            let updatedMessages = filteredMessages;
+            if (source === 'groupChatCollaboration' && taskPlanStep) {
+              updatedMessages = updateTaskPlanStepStatus(filteredMessages, taskPlanStep, 'running');
+            }
+
             const newMsg: Message = {
               id: messageId,
               conversationId,
               senderId,
               senderName,
               role,
-              type: messageType,
+              type: messageType || 'text',
               content: chunk,
               language,
               createdAt: getCurrentFullTime(),
+              metadata: source ? {
+                source,
+                readOnly,
+                taskPlanStep
+              } : undefined
             };
-            return { messages: [...filteredMessages, newMsg] };
+            return { messages: [...updatedMessages, newMsg] };
           }
         });
       });
@@ -2422,11 +2637,20 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           if (state.activeConversationId !== fullMessage.conversationId) return {};
 
           const mappedMessage = mapMessageMetadata(fullMessage);
-          const updatedMessages = state.messages.map(m =>
+          let updatedMessages = state.messages.map(m =>
             m.id === fullMessage.id ? mappedMessage : m
           );
           if (!state.messages.some(m => m.id === fullMessage.id)) {
             updatedMessages.push(mappedMessage);
+          }
+
+          updatedMessages = updatedMessages.filter(m => m.id !== `thinking-${fullMessage.senderId}`);
+
+          if (fullMessage.metadata?.source === 'groupChatCollaboration') {
+            const step = fullMessage.metadata?.taskPlanStep;
+            if (step) {
+              updatedMessages = updateTaskPlanStepStatus(updatedMessages, step, 'completed');
+            }
           }
 
           const updatedAgents = state.agents.map(a =>
@@ -2506,8 +2730,11 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             });
           }
 
+          let updatedMessages = completeAllTaskPlanSteps(state.messages);
+          updatedMessages = [...updatedMessages, systemMsg];
+
           let newState: Partial<AgentHubStore> = {
-            messages: [...state.messages, systemMsg],
+            messages: updatedMessages,
             agents: updatedAgents,
             artifacts: updatedArtifacts,
             isProcessing: false,
@@ -3250,6 +3477,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       });
 
       (wsClient as any)._unsubs = [
+        unsubUserCreated,
+        unsubError,
         unsubThinking,
         unsubChunk,
         unsubCompleted,
@@ -3836,6 +4065,21 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
   // ============ Sandbox V1: 按会话和 runId 分离的状态模型 ============
   setRightPanelTab: (tab) => set({ rightPanelTab: tab }),
+
+  addSandboxDebugLog: (type, name, payload, method) => {
+    const newLog = {
+      id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      timestamp: new Date().toLocaleTimeString(),
+      type,
+      name,
+      payload,
+      method,
+    };
+    set(state => ({
+      sandboxDebugLogs: [newLog, ...state.sandboxDebugLogs].slice(0, 100), // Keep last 100 logs
+    }));
+  },
+  clearSandboxDebugLogs: () => set({ sandboxDebugLogs: [] }),
 
   getActiveRunId: (conversationId) => {
     const { activeRunIdByConversationId } = get();
@@ -5300,7 +5544,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       }, 1000);
     } else {
       try {
-        await sendMessageNonStreaming(convId, { 
+        const sendRes = await sendMessageNonStreaming(convId, { 
           content,
           attachments,
           targetAgentId,
@@ -5308,6 +5552,25 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           executionMode: useSandbox ? 'sandbox' : undefined,
           webSearchMode,
         });
+
+        if (sendRes.code === 40002) {
+          alert(`❌ 发送失败：${sendRes.message || '客户端不允许创建 system/status 消息'}`);
+          get().addDesktopNotification('发送失败', sendRes.message || '客户端不允许创建 system/status 消息', 'error', 'error');
+          set(state => {
+            const currentMsgs = state.conversationMessages[convId] || [];
+            const filtered = currentMsgs.filter((m: any) => m.id !== newUserMessage.id);
+            const syncActive = state.activeConversationId === convId;
+            return {
+              conversationMessages: {
+                ...state.conversationMessages,
+                [convId]: filtered
+              },
+              ...(syncActive ? { messages: filtered } : {})
+            };
+          });
+          return;
+        }
+
         const res = await getMessageList(convId);
         let messagesData: Message[] = [];
         if (res && (res as any).code === 0 && (res as any).data?.list) {
@@ -5325,8 +5588,26 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             ...(syncActive ? { messages: messagesData } : {})
           };
         });
-      } catch (e) {
+      } catch (e: any) {
         console.error('[Store] 发送消息失败', e);
+        const errCode = e.response?.data?.code;
+        const errMsg = e.response?.data?.message || e.message || '网络请求失败';
+        if (errCode === 40002) {
+          alert(`❌ 发送失败：${errMsg}`);
+          get().addDesktopNotification('发送失败', errMsg, 'error', 'error');
+          set(state => {
+            const currentMsgs = state.conversationMessages[convId] || [];
+            const filtered = currentMsgs.filter((m: any) => m.id !== newUserMessage.id);
+            const syncActive = state.activeConversationId === convId;
+            return {
+              conversationMessages: {
+                ...state.conversationMessages,
+                [convId]: filtered
+              },
+              ...(syncActive ? { messages: filtered } : {})
+            };
+          });
+        }
       }
     }
   },

@@ -940,7 +940,8 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   };
 
   const needTabs = currentArtifact.type !== undefined && ['code', 'markdown', 'html', 'image', 'mermaid'].includes(currentArtifact.type);
-  const isEditable = currentArtifact.type !== 'image';
+  const isReadOnly = currentArtifact.metadata?.readOnly === true;
+  const isEditable = currentArtifact.type !== 'image' && !isReadOnly;
 
   return (
     <div className="h-full w-full flex flex-col overflow-hidden text-lark-text-primary dark:text-slate-100 bg-white dark:bg-slate-900 relative">
@@ -948,6 +949,11 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
         <div className="flex items-center gap-2 min-w-0">
           <span className="flex-shrink-0">{getTypeIcon()}</span>
           <h4 className="text-xs font-semibold text-lark-text-primary dark:text-slate-200 truncate max-w-[120px]" title={currentArtifact.title}>{currentArtifact.title}</h4>
+          {isReadOnly && (
+            <span className="text-[9px] px-1.5 py-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 rounded font-medium select-none flex-shrink-0">
+              只读分析 / 建议
+            </span>
+          )}
           
           {/* Version Dropdown Select */}
           {!isEditing && versions.length > 1 && currentVersion && (
@@ -1084,7 +1090,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       </div>
 
       {/* Workspace Action Bar */}
-      {isDesktop && currentWorkspace && currentArtifact && (
+      {isDesktop && currentWorkspace && currentArtifact && !isReadOnly && (
         <div className="flex items-center justify-between px-4 py-2 border-b border-lark-border/60 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/20 text-xs flex-shrink-0 flex-wrap gap-2 select-none">
           <div className="flex items-center gap-1.5 min-w-0 text-slate-500 dark:text-slate-400">
             <Folder className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />

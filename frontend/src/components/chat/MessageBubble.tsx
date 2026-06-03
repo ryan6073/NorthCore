@@ -2,12 +2,13 @@ import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Message, Agent as AgentType } from '@/types';
-import { User, Bot, Sparkles, CornerUpLeft, Pin, Copy, Check, Navigation, FileCode, Globe } from 'lucide-react';
+import { User, Bot, Sparkles, CornerUpLeft, Pin, Copy, Check, Navigation, FileCode, Globe, Loader2 } from 'lucide-react';
 import CodeBlock from './CodeBlock';
 import TaskPlanCard from './TaskPlanCard';
 import ArtifactMessage from './ArtifactMessage';
 import AttachmentCard from './AttachmentCard';
 import GroupedArtifactsCard from './GroupedArtifactsCard';
+import DeploymentCard from './DeploymentCard';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface MessageBubbleProps {
@@ -16,6 +17,12 @@ interface MessageBubbleProps {
   onCustomReply?: (msg: Message) => void;
   onCustomPin?: (msgId: string) => void;
 }
+
+const getPreciseTime = (timeStr: string) => {
+  if (!timeStr) return '';
+  const parts = timeStr.split(' ');
+  return parts[1] || parts[0];
+};
 
 const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustomReply, onCustomPin }) => {
   const [copied, setCopied] = useState(false);
@@ -27,6 +34,24 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
   const agentInfo = !isUser && message.senderName 
     ? agents.find(a => a.name === message.senderName) 
     : null;
+
+  if (message.metadata?.source === 'sandboxRunProgress') {
+    const timeText = getPreciseTime(message.createdAt);
+    return (
+      <div 
+        id={`msg-${message.id}`} 
+        className="flex gap-3.5 mb-3.5 w-full animate-fade-in transition-all duration-300"
+      >
+        <div className="w-9 h-9 flex-shrink-0" />
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50/50 dark:bg-slate-900/20 border border-slate-200/50 dark:border-slate-800/60 rounded-xl text-slate-550 dark:text-slate-400 text-[11px] w-fit max-w-[90%] shadow-xs">
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500 dark:text-indigo-400 flex-shrink-0" />
+          <span className="font-bold text-slate-700 dark:text-slate-350">{message.senderName || 'Agent'}:</span>
+          <span className="break-all">{message.content}</span>
+          <span className="text-[9px] text-slate-400 dark:text-slate-500 font-mono ml-2 select-none">{timeText}</span>
+        </div>
+      </div>
+    );
+  }
 
   const globalSetReplyContext = useAgentHubStore(state => state.setReplyContext);
   const globalTogglePinMessage = useAgentHubStore(state => state.togglePinMessage);
@@ -49,12 +74,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
 
   const handleMouseLeave = () => {
     setIsHoveringBar(false);
-  };
-
-  const getPreciseTime = (timeStr: string) => {
-    if (!timeStr) return '';
-    const parts = timeStr.split(' ');
-    return parts[1] || parts[0];
   };
 
   const handleReply = (e?: React.MouseEvent) => {
@@ -188,14 +207,59 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
   };
 
   const renderContent = () => {
+    if (message.metadata?.source === 'chatDeployment') {
+      return <DeploymentCard metadata={message.metadata as any} />;
+    }
     if (message.metadata?.isGroupedArtifacts) {
       return <GroupedArtifactsCard message={message} />;
+    }
+    if (message.metadata?.summary === true) {
+      return (
+        <div className="bg-gradient-to-br from-indigo-50/50 to-slate-50/50 dark:from-slate-900/50 dark:to-indigo-950/20 border border-indigo-100 dark:border-indigo-950 rounded-xl p-4 my-2 w-full shadow-sm max-w-2xl relative overflow-hidden transition-colors">
+          <div className="flex items-center gap-2 mb-3 pb-2 border-b border-indigo-100/50 dark:border-indigo-950/50 flex-shrink-0">
+            <div className="w-6 h-6 rounded-lg bg-indigo-100 dark:bg-indigo-900/60 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+              <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+            </div>
+            <span className="text-sm font-semibold text-indigo-950 dark:text-indigo-200">协同规划总结</span>
+          </div>
+          <div className="prose prose-sm dark:prose-invert max-w-none text-xs leading-relaxed break-words overflow-x-auto text-lark-text-primary dark:text-slate-200">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                a({ node, href, children, ...props }) {
+                  if (href?.startsWith('mention:')) {
+                    const agentId = href.split(':')[1];
+                    return (
+                      <span
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openAgentProfile(agentId);
+                        }}
+                        className="text-blue-600 dark:text-blue-400 font-semibold hover:underline cursor-pointer select-none"
+                      >
+                        {children}
+                      </span>
+                    );
+                  }
+                  return (
+                    <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline" {...props}>
+                      {children}
+                    </a>
+                  );
+                }
+              }}
+            >
+              {prepareMarkdownContent(message.content)}
+            </ReactMarkdown>
+          </div>
+        </div>
+      );
     }
     if (message.type === 'code') {
       return <CodeBlock code={message.content} language={message.language} />;
     }
     if (message.type === 'task-plan') {
-      return <TaskPlanCard content={message.content} />;
+      return <TaskPlanCard content={message.content} stepsData={message.metadata?.taskPlan} />;
     }
     if (message.type === 'artifact') {
       return <ArtifactMessage message={message} />;
@@ -234,7 +298,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     );
   };
 
-  const isBlockType = message.type === 'code' || message.type === 'task-plan' || message.type === 'artifact' || message.metadata?.isGroupedArtifacts;
+  const isBlockType = message.type === 'code' || message.type === 'task-plan' || message.type === 'artifact' || message.metadata?.isGroupedArtifacts || message.metadata?.summary === true || message.metadata?.source === 'chatDeployment';
   const hasContent = message.content && message.content.trim().length > 0;
   const hasAttachments = message.attachments && message.attachments.length > 0;
   const shouldShowBubble = isBlockType || hasContent;
