@@ -149,11 +149,12 @@ export const useDeploymentStore = create<DeploymentState>((set, get) => ({
 
     set((state) => {
       const currentList = state.deploymentsByWorkspaceId[workspaceId] || [];
-      const updatedList = currentList.map((d) => 
-        d.id === detail.id ? detail : d
-      );
+      const exists = currentList.some((d) => d.id === detail.id);
+      const updatedList = exists
+        ? currentList.map((d) => d.id === detail.id ? detail : d)
+        : [detail, ...currentList];
       const currentActive = state.activeDeploymentByWorkspaceId[workspaceId];
-      const newActive = currentActive?.id === detail.id ? detail : currentActive;
+      const newActive = (currentActive?.id === detail.id || !currentActive) ? detail : currentActive;
 
       return {
         deploymentsByWorkspaceId: {

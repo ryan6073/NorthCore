@@ -108,8 +108,8 @@ export const createNormalCompleteSandboxRun = (conversationId: string): AgentRun
   ];
   
   run.files = [
-    generateFileBase(run.id, run.sandboxId, 'README.md', 'hash-readme-1', 1),
-    generateFileBase(run.id, run.sandboxId, 'package.json', 'hash-pkg-1', 1)
+    generateFileBase(run.id, run.sandboxId || '', 'README.md', 'hash-readme-1', 1),
+    generateFileBase(run.id, run.sandboxId || '', 'package.json', 'hash-pkg-1', 1)
   ];
   
   run.summary = '✅ 任务完成！已成功生成 README.md 和 package.json，全部 2 个文件通过静态验证。';
@@ -161,7 +161,7 @@ export const createConflictScenarioSandboxRun = (conversationId: string): AgentR
     {
       id: 'conf-app-1',
       runId: run.id,
-      sandboxId: run.sandboxId,
+      sandboxId: run.sandboxId || '',
       fileId: 'file-conflict-app',
       filePath: 'src/App.tsx',
       baseVersion: 1,
@@ -251,6 +251,18 @@ export const createCancelledScenarioSandboxRun = (conversationId: string): Agent
   return run;
 };
 
+export const createQueuedScenarioSandboxRun = (conversationId: string): AgentRunDetail => {
+  const run = generateBaseSandboxRun(
+    conversationId,
+    '正在排队等待锁定工作区中的写任务...',
+    'queued'
+  );
+  run.sandboxId = null;
+  run.queuePosition = 2;
+  run.queuedReason = 'workspace_mutation_lock_held';
+  return run;
+};
+
 export const getMockFileContent = (filePath: string): string => {
   const contents: Record<string, string> = {
     'README.md': `# NorthCore Project\n\n这是一个在 Docker 沙箱中自动生成的演示项目。\n\n## 特性\n- ✅ 沙箱安全隔离\n- ✅ uv 依赖管理\n- ✅ TypeScript 支持\n\n生成时间: ${getCurrentFullTime()}`,
@@ -278,6 +290,7 @@ export const sandboxMockScenarios = {
   createConflictScenarioSandboxRun,
   createFailedScenarioSandboxRun,
   createCancelledScenarioSandboxRun,
+  createQueuedScenarioSandboxRun,
   getMockFileContent,
   createMockHtmlPreview
 };

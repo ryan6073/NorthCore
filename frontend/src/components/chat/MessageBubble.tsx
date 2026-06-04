@@ -39,16 +39,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     state.conversationMessages[message.conversationId] || state.messages
   );
 
-  if (message.metadata?.source === 'chatDeployment') {
-    const deploymentMessages = allMessages.filter(m => m.metadata?.source === 'chatDeployment');
-    const isLatestDeployment = deploymentMessages.length > 0 && deploymentMessages[deploymentMessages.length - 1].id === message.id;
-    if (!isLatestDeployment) {
-      return null;
-    }
-  }
-
-
-
   const globalSetReplyContext = useAgentHubStore(state => state.setReplyContext);
   const globalTogglePinMessage = useAgentHubStore(state => state.togglePinMessage);
   const setSelectedArtifactId = useAgentHubStore(state => state.setSelectedArtifactId);
@@ -127,6 +117,14 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
       document.removeEventListener('click', handleDocumentClick, true);
     };
   }, [showTouchActions, message.id]);
+
+  if (message.metadata?.source === 'chatDeployment') {
+    const deploymentMessages = allMessages.filter(m => m.metadata?.source === 'chatDeployment');
+    const isLatestDeployment = deploymentMessages.length > 0 && deploymentMessages[deploymentMessages.length - 1].id === message.id;
+    if (!isLatestDeployment) {
+      return null;
+    }
+  }
 
   const handleRefClick = () => {
     if (!message.artifactRef) return;
@@ -261,7 +259,9 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
       return <ArtifactMessage message={message} />;
     }
     return (
-      <div className="prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed break-words overflow-x-auto select-text">
+      <div className={`prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed break-words overflow-x-auto select-text ${
+        isUser ? 'prose-white text-white' : 'text-slate-800 dark:text-slate-100'
+      }`}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
@@ -305,15 +305,17 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     return (
       <div 
         id={`msg-${message.id}`} 
-        className={`group relative flex gap-3.5 mb-5 w-full ${
+        className={`group relative flex gap-3.5 mb-3 w-full ${
           isUser ? 'flex-row-reverse' : ''
         } animate-fade-in transition-all duration-300`}
       >
         {/* Avatar */}
         <div 
-          className={`w-9 h-9 flex-shrink-0 overflow-hidden flex items-center justify-center shadow-sm transition-colors ${
-            isUser ? 'rounded-full bg-lark-primary' : 'rounded-lg bg-white dark:bg-slate-950 border border-lark-border dark:border-slate-800'
-          } ${agentInfo ? 'cursor-pointer hover:scale-105 transition-transform' : ''}`}
+          className={`w-9 h-9 flex-shrink-0 overflow-hidden flex items-center justify-center shadow-md transition-all duration-300 ${
+            isUser 
+              ? 'rounded-full bg-gradient-to-br from-indigo-500 to-blue-600 hover:shadow-indigo-500/20' 
+              : 'rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800/80'
+          } hover:scale-105 active:scale-95 ${agentInfo ? 'cursor-pointer' : ''}`}
           onClick={(e) => {
             e.stopPropagation();
             if (agentInfo) {
@@ -359,12 +361,16 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
             {message.quotedMessage && (
               <div 
                 onClick={handleQuoteClick}
-                className={`${isUser ? 'w-auto self-end max-w-[90%]' : 'w-full self-stretch'} p-2 bg-slate-50 dark:bg-slate-900 border-l-2 border-slate-300 dark:border-slate-700 rounded-r-lg text-[10px] text-slate-500 dark:text-slate-400 mb-1 flex flex-col gap-0.5 select-none shadow-sm cursor-pointer hover:bg-slate-100/80 dark:hover:bg-slate-850 hover:border-slate-400 dark:hover:border-slate-650 transition-all`}
+                className={`${
+                  isUser 
+                    ? 'w-auto self-end max-w-[90%] bg-white/10 border-l border-white/30 text-white/80 hover:bg-white/15 hover:border-white/50' 
+                    : 'w-full self-stretch bg-slate-50 dark:bg-slate-900 border-l-2 border-slate-300 dark:border-slate-700 hover:bg-slate-100/80 dark:hover:bg-slate-850 hover:border-slate-400 dark:hover:border-slate-650'
+                } p-2.5 rounded-r-xl text-[10.5px] mb-1.5 flex flex-col gap-0.5 select-none shadow-sm cursor-pointer transition-all`}
                 title="点击跳转到被引用的原始消息"
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-700 dark:text-slate-300">回复 @{message.quotedMessage.senderName}：</span>
-                  <span className="text-[9px] text-indigo-500 dark:text-indigo-400 font-medium">点击跳转</span>
+                  <span className={`font-semibold ${isUser ? 'text-white' : 'text-slate-700 dark:text-slate-350'}`}>回复 @{message.quotedMessage.senderName}：</span>
+                  <span className={`text-[9px] font-medium ${isUser ? 'text-blue-200/90' : 'text-indigo-500 dark:text-indigo-400'}`}>点击跳转</span>
                 </div>
                 <span className="truncate">{message.quotedMessage.content}</span>
               </div>
@@ -431,26 +437,26 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
                   onMouseEnter={() => setIsHoveringBar(true)}
                   onMouseLeave={() => setIsHoveringBar(false)}
                   style={{ top: mouseY !== null ? `${mouseY}px` : '8px' }}
-                  className={`absolute opacity-0 group-hover/bubble-content:opacity-100 transition-opacity duration-150 flex items-center gap-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 shadow-md rounded-lg p-1 z-30 transition-colors
+                  className={`absolute opacity-0 group-hover/bubble-content:opacity-100 flex items-center gap-1 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-150 dark:border-slate-800 shadow-[0_4px_16px_rgba(0,0,0,0.12)] rounded-xl p-1 z-30 transition-all duration-200 scale-95 origin-center group-hover/bubble-content:scale-100
                     ${isUser 
                       ? 'right-full mr-3 after:absolute after:-right-4 after:top-0 after:bottom-0 after:w-4 after:content-[\'\']' 
                       : 'left-full ml-3 before:absolute before:-left-4 before:top-0 before:bottom-0 before:w-4 before:content-[\'\']'}
                     max-lg:!-top-9 max-lg:left-1/2 max-lg:-translate-x-1/2 max-lg:right-auto max-lg:mr-0 max-lg:ml-0 max-lg:before:hidden max-lg:after:hidden
-                    ${showTouchActions ? 'opacity-100 pointer-events-auto' : ''}`}
+                    ${showTouchActions ? 'opacity-100 pointer-events-auto scale-100' : ''}`}
                 >
                   <button
                     onClick={handleReply}
-                    className="p-1 rounded text-slate-400 hover:text-lark-primary hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-lark-primary hover:bg-slate-50 dark:hover:bg-slate-850 hover:scale-105 active:scale-95 transition-all"
                     title="回复此消息"
                   >
                     <CornerUpLeft className="w-3.5 h-3.5" />
                   </button>
                   <button
                     onClick={handlePin}
-                    className={`p-1 rounded transition-colors ${
+                    className={`p-1.5 rounded-lg hover:scale-105 active:scale-95 transition-all ${
                       message.isPinned 
                         ? 'text-amber-600 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/40' 
-                        : 'text-slate-400 hover:text-amber-600 hover:bg-slate-50/50 dark:hover:bg-slate-800/50'
+                        : 'text-slate-400 hover:text-amber-600 hover:bg-slate-50/50 dark:hover:bg-slate-850/50'
                     }`}
                     title={message.isPinned ? "取消 Pin 长期记忆" : "Pin 为长期记忆"}
                   >
@@ -458,7 +464,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
                   </button>
                   <button
                     onClick={handleCopy}
-                    className="p-1 rounded text-slate-400 hover:text-lark-primary hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-lark-primary hover:bg-slate-50 dark:hover:bg-slate-850 hover:scale-105 active:scale-95 transition-all"
                     title="复制消息内容"
                   >
                     {copied ? (
@@ -479,16 +485,16 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
                     {renderContent()}
                   </div>
                 ) : (
-                  <div className={`px-4 py-2.5 rounded-xl text-sm leading-relaxed shadow-sm transition-all duration-300 break-all ${
+                  <div className={`px-4 py-2 rounded-2xl text-sm leading-relaxed transition-all duration-300 break-words ${
                     message.isPinned
-                      ? `bg-amber-50/60 dark:bg-amber-950/15 border border-amber-300 dark:border-amber-900 text-lark-text-primary dark:text-amber-200 shadow-[0_0_12px_rgba(245,158,11,0.15)] ring-1 ring-amber-400/20 ${
+                      ? `bg-amber-50/70 dark:bg-amber-950/15 border border-amber-300 dark:border-amber-900 text-lark-text-primary dark:text-amber-200 shadow-[0_4px_16px_rgba(245,158,11,0.12)] ring-1 ring-amber-400/20 ${
                           isUser ? 'rounded-tr-none' : 'rounded-tl-none'
                         }`
                       : isUser 
-                        ? 'bg-[#deebff] dark:bg-violet-950/40 text-lark-text-primary dark:text-violet-300 rounded-tr-none border border-[#c3dbff] dark:border-violet-900/50' 
+                        ? 'bg-gradient-to-br from-indigo-500 via-blue-600 to-blue-600 dark:from-indigo-600/90 dark:to-blue-600/90 text-white rounded-tr-none shadow-md shadow-blue-500/10 dark:shadow-none hover:shadow-lg hover:shadow-blue-500/15 dark:hover:shadow-none' 
                         : isOrchestrator
-                          ? 'bg-[#f5f5fc] dark:bg-slate-900 border border-indigo-100 dark:border-indigo-950/60 text-lark-text-primary dark:text-slate-100 rounded-tl-none shadow-[0_0_12px_rgba(99,102,241,0.05)]'
-                          : 'bg-white dark:bg-slate-950 border border-lark-border dark:border-slate-800 text-lark-text-primary dark:text-slate-100 rounded-tl-none'
+                          ? 'bg-gradient-to-br from-indigo-50/40 via-white to-indigo-50/20 dark:from-slate-900/80 dark:to-indigo-950/25 border border-indigo-150/70 dark:border-indigo-950/70 rounded-tl-none shadow-sm hover:shadow-md hover:border-indigo-200 dark:hover:border-indigo-900 transition-all duration-300'
+                          : 'bg-white dark:bg-slate-900/90 backdrop-blur-sm border border-slate-200/80 dark:border-slate-800/80 rounded-tl-none shadow-sm hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700 transition-all duration-300'
                   }`}>
                     {renderContent()}
                   </div>

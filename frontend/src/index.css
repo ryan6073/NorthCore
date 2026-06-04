@@ -357,3 +357,43 @@ html.dark body {
 .dark .prose hr {
   border-top-color: rgba(255, 255, 255, 0.15);
 }
+
+/* Custom markdown prose inside user chat bubbles with vibrant gradient backgrounds */
+.prose-white {
+  color: rgba(255, 255, 255, 0.96) !important;
+}
+.prose-white h1, .prose-white h2, .prose-white h3, .prose-white h4, .prose-white h5, .prose-white h6 {
+  color: #ffffff !important;
+}
+.prose-white strong {
+  color: #ffffff !important;
+}
+.prose-white a {
+  color: #e0f2fe !important;
+  text-decoration: underline !important;
+}
+.prose-white a:hover {
+  color: #ffffff !important;
+}
+.prose-white code {
+  background-color: rgba(255, 255, 255, 0.18) !important;
+  color: #ffffff !important;
+}
+.prose-white blockquote {
+  border-left-color: rgba(255, 255, 255, 0.4) !important;
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  color: rgba(255, 255, 255, 0.85) !important;
+}
+.prose-white table, .prose-white th, .prose-white td {
+  border-color: rgba(255, 255, 255, 0.2) !important;
+}
+.prose-white th {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+}
+.prose-white tr:nth-child(even) {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+}
+.prose-white p, .prose-white span, .prose-white li {
+  color: rgba(255, 255, 255, 0.95) !important;
+}
+

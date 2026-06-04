@@ -16,7 +16,8 @@ import { PptxPreview } from '@/components/file/PptxPreview';
 
 interface ArtifactPreviewProps {
   artifact: Artifact | null;
-  onOpenFullScreen?: (artifactId: string) => void;
+  onOpenFullScreen?: (artifactId: string, versionNumber?: number) => void;
+  initialVersion?: number;
 }
 
 mermaid.initialize({
@@ -101,7 +102,7 @@ const MermaidRenderer: React.FC<{ chart: string }> = ({ chart }) => {
   );
 };
 
-const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullScreen }) => {
+const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullScreen, initialVersion }) => {
   const [activeTab, setActiveTab] = useState<'preview' | 'source' | 'diff'>('preview');
   const [copied, setCopied] = useState(false);
   const [splitView, setSplitView] = useState(true);
@@ -174,6 +175,9 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   // Phase 4 editing states
   const [isEditing, setIsEditing] = useState(false);
   const [editedContent, setEditedContent] = useState('');
+  const [localVersionNumber, setLocalVersionNumber] = useState<number | null>(
+    initialVersion !== undefined ? initialVersion : null
+  );
 
   // Floating Selection Popover states
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; text: string; startLine?: number; endLine?: number } | null>(null);
@@ -197,14 +201,22 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       .sort((a, b) => a.version - b.version);
   }, [currentArtifact, artifactVersions]);
 
+  // Reset local version when artifact changes or initialVersion changes
+  useEffect(() => {
+    setLocalVersionNumber(initialVersion !== undefined ? initialVersion : null);
+  }, [artifact?.id, initialVersion]);
+
   // Active version that is currently selected or default currentVersionId
   const currentVersion: ArtifactVersion | null = useMemo(() => {
     if (!versions.length) return null;
+    if (localVersionNumber !== null) {
+      return versions.find(v => v.version === localVersionNumber) || versions[versions.length - 1];
+    }
     if (selectedArtifactId && artifact && selectedArtifactId === artifact.id && selectedArtifactVersion !== null) {
       return versions.find(v => v.version === selectedArtifactVersion) || versions[versions.length - 1];
     }
     return versions.find(v => v.id === currentArtifact?.currentVersionId) || versions[versions.length - 1];
-  }, [versions, selectedArtifactId, selectedArtifactVersion, currentArtifact]);
+  }, [versions, selectedArtifactId, selectedArtifactVersion, currentArtifact, localVersionNumber]);
 
   const currentVersionIndex = useMemo(() => {
     if (!currentVersion || !versions.length) return -1;
@@ -449,27 +461,36 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
           : useAgentHubStore.getState().getActiveRunId(useAgentHubStore.getState().activeConversationId);
         
         if (runId) {
-          setIsPreviewLoading(true);
-          sandboxService.getSandboxHtmlPreview(runId, currentArtifact.title)
-            .then(res => {
-              if (active) {
-                if (res.code === 0 && res.data) {
-                  const resolvedHtml = rewriteRelativeUrls(res.data.html, runId);
-                  setServerPreviewHtml(resolvedHtml);
-                } else {
-                  setServerPreviewHtml(null);
+          if (currentVersion.version !== currentArtifact.latestVersion) {
+            const resolvedHtml = rewriteRelativeUrls(currentVersion.content, runId);
+            setServerPreviewHtml(resolvedHtml);
+          } else {
+            setIsPreviewLoading(true);
+            sandboxService.getSandboxHtmlPreview(runId, currentArtifact.title)
+              .then(res => {
+                if (active) {
+                  if (res.code === 0 && res.data) {
+                    const resolvedHtml = rewriteRelativeUrls(res.data.html, runId);
+                    setServerPreviewHtml(resolvedHtml);
+                  } else {
+                    const resolvedHtml = rewriteRelativeUrls(currentVersion.content, runId);
+                    setServerPreviewHtml(resolvedHtml);
+                  }
                 }
-              }
-            })
-            .catch(err => {
-              console.error('Failed to get sandbox html preview:', err);
-              if (active) setServerPreviewHtml(null);
-            })
-            .finally(() => {
-              if (active) setIsPreviewLoading(false);
-            });
+              })
+              .catch(err => {
+                console.error('Failed to get sandbox html preview:', err);
+                if (active) {
+                  const resolvedHtml = rewriteRelativeUrls(currentVersion.content, runId);
+                  setServerPreviewHtml(resolvedHtml);
+                }
+              })
+              .finally(() => {
+                if (active) setIsPreviewLoading(false);
+              });
+          }
         } else {
-          setServerPreviewHtml(null);
+          setServerPreviewHtml(currentVersion.content);
         }
       }
     } else {
@@ -1020,10 +1041,13 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
               onChange={(e) => {
                 const selectedVer = versions.find(v => v.id === e.target.value);
                 if (selectedVer) {
-                  useAgentHubStore.getState().setSelectedArtifactVersion(selectedVer.version);
+                  setLocalVersionNumber(selectedVer.version);
+                  if (selectedArtifactId && artifact && selectedArtifactId === artifact.id) {
+                    useAgentHubStore.getState().setSelectedArtifactVersion(selectedVer.version);
+                  }
                 }
               }}
-              className="bg-[#f2f4f6] dark:bg-slate-800 border border-lark-border/60 dark:border-slate-700 text-lark-text-secondary dark:text-slate-300 text-[10px] rounded px-1.5 py-0.5 outline-none font-medium focus:ring-1 focus:ring-lark-primary dark:focus:ring-violet-600 cursor-pointer hover:bg-lark-bg-hover dark:hover:bg-slate-700"
+              className="bg-[#f2f4f6] dark:bg-slate-800 border border-lark-border/60 dark:border-slate-700 text-lark-text-secondary dark:text-slate-330 text-[10px] rounded px-1.5 py-0.5 outline-none font-medium focus:ring-1 focus:ring-lark-primary dark:focus:ring-violet-600 cursor-pointer hover:bg-lark-bg-hover dark:hover:bg-slate-700"
             >
               {versions.slice().reverse().map((v) => {
                 return (
@@ -1136,7 +1160,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
             </button>
             {onOpenFullScreen && (
               <button
-                onClick={() => onOpenFullScreen(currentArtifact.id)}
+                onClick={() => onOpenFullScreen(currentArtifact.id, currentVersion?.version)}
                 className="p-1.5 rounded-lg hover:bg-lark-bg-hover dark:hover:bg-slate-800 text-lark-text-secondary dark:text-slate-350 hover:text-lark-primary dark:hover:text-violet-400 transition-all border border-lark-border dark:border-slate-800 shadow-sm bg-white dark:bg-slate-900"
                 title="放大全屏预览"
               >
@@ -1217,7 +1241,12 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
                       ? 'border-lark-primary/50 dark:border-violet-500/50 bg-lark-primary-light/10 dark:bg-violet-950/10 shadow-sm'
                       : 'border-slate-100 dark:border-slate-850 hover:border-slate-205 dark:hover:border-slate-750'
                   }`}
-                  onClick={() => useAgentHubStore.getState().setSelectedArtifactVersion(v.version)}
+                  onClick={() => {
+                    setLocalVersionNumber(v.version);
+                    if (selectedArtifactId && artifact && selectedArtifactId === artifact.id) {
+                      useAgentHubStore.getState().setSelectedArtifactVersion(v.version);
+                    }
+                  }}
                 >
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200">v{v.version}</span>

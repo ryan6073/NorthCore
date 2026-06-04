@@ -45,6 +45,10 @@ export interface WorkspaceDeployment {
   updatedAt: string;
   startedAt?: string | null;
   finishedAt?: string | null;
+  queuedReason?: string | null;
+  queuePosition?: number | null;
+  lockOwnerId?: string | null;
+  lockFencingToken?: string | null;
 }
 
 export interface CreateDeploymentPayload {
@@ -52,6 +56,8 @@ export interface CreateDeploymentPayload {
   runId?: string;
   publicBaseUrl?: string;
   config?: DeploymentConfig;
+  agentId?: string;
+  targetAgentId?: string;
 }
 
 export interface DeploymentLogsResponse {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Message } from '@/types';
+import { Message, Artifact } from '@/types';
 import { FileText, RefreshCw } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 import ArtifactPreview from '../artifact/ArtifactPreview';
@@ -11,17 +11,104 @@ interface ArtifactMessageProps {
 const ArtifactMessage: React.FC<ArtifactMessageProps> = ({ message }) => {
   const allArtifacts = useAgentHubStore(state => state.artifacts);
   const setSelectedArtifactId = useAgentHubStore(state => state.setSelectedArtifactId);
+  const setSelectedArtifactVersion = useAgentHubStore(state => state.setSelectedArtifactVersion);
   const setIsFullScreenOpen = useAgentHubStore(state => state.setIsFullScreenOpen);
 
-  const artifact = allArtifacts.find(a => a.id === message.artifactId);
+  const conversationMessages = useAgentHubStore(state => 
+    state.conversationMessages[message.conversationId] || state.messages
+  );
+
+  const conversationArtifacts = useAgentHubStore(state => 
+    state.conversationArtifacts[message.conversationId] || []
+  );
+
+  // Filter messages of type 'artifact' and match the same artifactId
+  const artifactMessages = conversationMessages.filter(
+    m => m.type === 'artifact' && m.artifactId === message.artifactId
+  );
+
+  const sourceRunId = message.metadata?.sourceRunId || message.metadata?.runId;
+
+  // Find the matching artifact
+  let artifact: Artifact | undefined = undefined;
+  if (sourceRunId) {
+    // Search in conversation-level artifacts
+    artifact = conversationArtifacts.find(a => 
+      (a.id === message.artifactId || a.artifactId === message.artifactId) && 
+      (a.runId === sourceRunId || (a as any).versionMetadata?.sourceRunId === sourceRunId)
+    ) || conversationArtifacts.find(a => 
+      a.id === message.artifactId || a.artifactId === message.artifactId
+    ) || allArtifacts.find(a => 
+      a.id === message.artifactId || a.artifactId === message.artifactId
+    );
+  } else {
+    artifact = allArtifacts.find(a => a.id === message.artifactId || a.artifactId === message.artifactId);
+  }
+
+  // Determine the version number
+  let resolvedVersion: number | undefined = undefined;
+
+  // 1. Try to get version from message metadata
+  if (message.metadata?.version !== undefined && message.metadata?.version !== null) {
+    resolvedVersion = Number(message.metadata.version);
+  } else if (message.metadata?.artifactVersion !== undefined && message.metadata?.artifactVersion !== null) {
+    resolvedVersion = Number(message.metadata.artifactVersion);
+  }
+
+  // 2. Try to get version from conversationArtifacts matching runId / versionMetadata
+  if (resolvedVersion === undefined && sourceRunId) {
+    const matchedArt = conversationArtifacts.find(a => 
+      (a.id === message.artifactId || a.artifactId === message.artifactId) && 
+      (a.runId === sourceRunId || (a as any).versionMetadata?.sourceRunId === sourceRunId)
+    );
+    if (matchedArt) {
+      resolvedVersion = (matchedArt as any).versionMetadata?.sourceFileVersion || matchedArt.latestVersion;
+    }
+  }
+
+  // 3. Try to search in versions history list in store
+  if (resolvedVersion === undefined && sourceRunId && message.artifactId) {
+    const versions = useAgentHubStore.getState().artifactVersions[message.artifactId] || [];
+    const matchedVer = versions.find((v: any) => 
+      v.metadata?.sourceRunId === sourceRunId || 
+      v.sourceRunId === sourceRunId ||
+      v.metadata?.runId === sourceRunId
+    );
+    if (matchedVer) {
+      resolvedVersion = matchedVer.version;
+    }
+  }
+
+  // 4. Try to parse version from message content (e.g., "更新产物 xxx 到 v7" or "新版本 v2" or "生成产物 xxx")
+  if (resolvedVersion === undefined && message.content) {
+    const match = message.content.match(/(?:到\s*v|新版本\s*v)(\d+)/i);
+    if (match) {
+      resolvedVersion = parseInt(match[1], 10);
+    } else if (message.content.includes('生成产物')) {
+      resolvedVersion = 1;
+    }
+  }
+
+  // 5. Fallback: use matched artifact's latestVersion if sourceRunId matched
+  if (resolvedVersion === undefined && sourceRunId && artifact && (artifact.runId === sourceRunId || (artifact as any).versionMetadata?.sourceRunId === sourceRunId)) {
+    resolvedVersion = (artifact as any).versionMetadata?.sourceFileVersion || artifact.latestVersion;
+  }
+
+  // 6. Fallback: use sequential index if no other version matches
+  if (resolvedVersion === undefined) {
+    const msgIndex = artifactMessages.findIndex(m => m.id === message.id);
+    resolvedVersion = msgIndex !== -1 ? msgIndex + 1 : undefined;
+  }
 
   if (artifact) {
     return (
       <div className="w-full h-[420px] border border-lark-border dark:border-slate-800 rounded-xl overflow-hidden shadow-sm my-2 bg-white dark:bg-slate-900 flex flex-col animate-fade-in transition-colors">
         <ArtifactPreview
           artifact={artifact}
-          onOpenFullScreen={(artId) => {
+          initialVersion={resolvedVersion}
+          onOpenFullScreen={(artId, verNum) => {
             setSelectedArtifactId(artId);
+            setSelectedArtifactVersion(verNum || resolvedVersion || null);
             setIsFullScreenOpen(true);
           }}
         />
@@ -54,7 +141,6 @@ const ArtifactMessage: React.FC<ArtifactMessageProps> = ({ message }) => {
       </div>
     </div>
   );
-
 };
 
 export default ArtifactMessage;

@@ -20,7 +20,9 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
   const [isUndone, setIsUndone] = useState(false);
   const [auditStatus, setAuditStatus] = useState<'pending' | 'approved'>('pending');
   const setSelectedArtifactId = useAgentHubStore(state => state.setSelectedArtifactId);
+  const setSelectedArtifactVersion = useAgentHubStore(state => state.setSelectedArtifactVersion);
   const setIsFullScreenOpen = useAgentHubStore(state => state.setIsFullScreenOpen);
+  const conversationMessages = useAgentHubStore(state => state.conversationMessages[message.conversationId] || state.messages || []);
 
   const groupedMessages: Message[] = message.metadata?.groupedMessages || [];
   if (groupedMessages.length === 0) {
@@ -56,7 +58,7 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
     return { additions, deletions };
   };
 
-  const fileStats: FileDiffStat[] = groupedMessages.map(msg => {
+  const fileStats: (FileDiffStat & { msgId: string })[] = groupedMessages.map(msg => {
     const filePath = msg.metadata?.sourceFilePath || msg.content.replace(/^(生成产物|更新产物)\s*/, '');
     const action = msg.metadata?.action || 'created';
     const { additions, deletions } = getFileDiff(filePath, action);
@@ -65,7 +67,8 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
       additions,
       deletions,
       action,
-      artifactId: msg.artifactId
+      artifactId: msg.artifactId,
+      msgId: msg.id
     };
   });
 
@@ -91,9 +94,32 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
     }
   };
 
-  const handleFileClick = (artifactId?: string) => {
+  const handleFileClick = (artifactId?: string, msgId?: string) => {
     if (artifactId) {
       setSelectedArtifactId(artifactId);
+      
+      let resolvedVersion = null;
+      if (msgId) {
+        const msg = groupedMessages.find(m => m.id === msgId);
+        if (msg) {
+          if (msg.metadata?.version !== undefined && msg.metadata?.version !== null) {
+            resolvedVersion = Number(msg.metadata.version);
+          } else if (msg.metadata?.artifactVersion !== undefined && msg.metadata?.artifactVersion !== null) {
+            resolvedVersion = Number(msg.metadata.artifactVersion);
+          } else if (msg.artifactRef?.version !== undefined && msg.artifactRef?.version !== null) {
+            resolvedVersion = Number(msg.artifactRef.version);
+          } else if (msg.type === 'artifact' && msg.artifactId) {
+            const artifactMsgs = conversationMessages.filter(
+              m => m.artifactId === msg.artifactId && m.type === 'artifact'
+            );
+            const index = artifactMsgs.findIndex(m => m.id === msg.id);
+            if (index !== -1) {
+              resolvedVersion = index + 1;
+            }
+          }
+        }
+      }
+      setSelectedArtifactVersion(resolvedVersion);
       setIsFullScreenOpen(true);
     }
   };
@@ -153,7 +179,7 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
         {visibleStats.map((file, idx) => (
           <div 
             key={idx}
-            onClick={() => handleFileClick(file.artifactId)}
+            onClick={() => handleFileClick(file.artifactId, file.msgId)}
             className={`flex items-center justify-between py-2.5 text-xs border-b border-slate-100 dark:border-slate-800 last:border-0 hover:bg-white dark:hover:bg-slate-800/40 rounded-lg px-2 -mx-2 transition-colors cursor-pointer group`}
           >
             <span className="text-slate-600 dark:text-slate-350 font-mono truncate flex-1 pr-4 group-hover:text-lark-primary dark:group-hover:text-violet-400">

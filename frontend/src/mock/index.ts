@@ -282,7 +282,8 @@ export const mockConversations: Conversation[] = [
     agentIds: ['agent-claude-code'],
     lastMessage: '已生成LoginPage.tsx',
     updatedAt: '2026-05-22 14:30',
-    createdAt: '2026-05-22 14:00'
+    createdAt: '2026-05-22 14:00',
+    workspaceId: 'workspace-a'
   },
   {
     id: 'conv-group-website',
@@ -291,7 +292,8 @@ export const mockConversations: Conversation[] = [
     agentIds: ['agent-orchestrator', 'agent-design', 'agent-codex', 'agent-review', 'agent-doc'],
     lastMessage: '所有产物已生成完毕',
     updatedAt: '2026-05-22 15:20',
-    createdAt: '2026-05-22 14:50'
+    createdAt: '2026-05-22 14:50',
+    workspaceId: 'workspace-a'
   },
   {
     id: 'conv-desktop-workspace',
@@ -523,7 +525,8 @@ export const mockArtifacts: Artifact[] = [
     currentVersionId: 'ver-login-page-1',
     latestVersion: 1,
     createdAt: '2026-05-22 14:30',
-    updatedAt: '2026-05-22 14:30'
+    updatedAt: '2026-05-22 14:30',
+    workspaceId: 'workspace-a'
   },
   {
     id: 'art-home-page',
@@ -534,7 +537,8 @@ export const mockArtifacts: Artifact[] = [
     currentVersionId: 'ver-home-page-1',
     latestVersion: 1,
     createdAt: '2026-05-22 15:15',
-    updatedAt: '2026-05-22 15:15'
+    updatedAt: '2026-05-22 15:15',
+    workspaceId: 'workspace-a'
   },
   {
     id: 'art-readme',
@@ -545,7 +549,8 @@ export const mockArtifacts: Artifact[] = [
     currentVersionId: 'ver-readme-1',
     latestVersion: 1,
     createdAt: '2026-05-22 15:20',
-    updatedAt: '2026-05-22 15:20'
+    updatedAt: '2026-05-22 15:20',
+    workspaceId: 'workspace-a'
   },
   {
     id: 'art-desktop-gitignore',
@@ -567,7 +572,8 @@ export const mockArtifacts: Artifact[] = [
     currentVersionId: 'ver-demo-image-1',
     latestVersion: 1,
     createdAt: '2026-06-01 16:00',
-    updatedAt: '2026-06-01 16:00'
+    updatedAt: '2026-06-01 16:00',
+    workspaceId: 'workspace-a'
   },
   {
     id: 'art-demo-image-2',
@@ -578,7 +584,8 @@ export const mockArtifacts: Artifact[] = [
     currentVersionId: 'ver-demo-image-2',
     latestVersion: 1,
     createdAt: '2026-06-01 16:05',
-    updatedAt: '2026-06-01 16:05'
+    updatedAt: '2026-06-01 16:05',
+    workspaceId: 'workspace-a'
   },
   {
     id: 'art-demo-mermaid-1',
@@ -589,7 +596,8 @@ export const mockArtifacts: Artifact[] = [
     currentVersionId: 'ver-demo-mermaid-1',
     latestVersion: 1,
     createdAt: '2026-06-01 16:10',
-    updatedAt: '2026-06-01 16:10'
+    updatedAt: '2026-06-01 16:10',
+    workspaceId: 'workspace-a'
   },
   {
     id: 'art-demo-mermaid-2',
@@ -600,7 +608,8 @@ export const mockArtifacts: Artifact[] = [
     currentVersionId: 'ver-demo-mermaid-2',
     latestVersion: 1,
     createdAt: '2026-06-01 16:15',
-    updatedAt: '2026-06-01 16:15'
+    updatedAt: '2026-06-01 16:15',
+    workspaceId: 'workspace-a'
   },
   {
     id: 'art-demo-document-1',
@@ -611,7 +620,8 @@ export const mockArtifacts: Artifact[] = [
     currentVersionId: 'ver-demo-doc-1',
     latestVersion: 1,
     createdAt: '2026-06-01 16:20',
-    updatedAt: '2026-06-01 16:20'
+    updatedAt: '2026-06-01 16:20',
+    workspaceId: 'workspace-a'
   },
   {
     id: 'art-demo-ppt-1',
@@ -622,7 +632,8 @@ export const mockArtifacts: Artifact[] = [
     currentVersionId: 'ver-demo-ppt-1',
     latestVersion: 1,
     createdAt: '2026-06-01 16:25',
-    updatedAt: '2026-06-01 16:25'
+    updatedAt: '2026-06-01 16:25',
+    workspaceId: 'workspace-a'
   }
 ];
 

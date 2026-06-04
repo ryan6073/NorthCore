@@ -12,6 +12,12 @@ export async function getArtifactMetaList(
   return await http.get(`/conversations/${conversationId}/artifacts`);
 }
 
+export async function getWorkspaceArtifacts(
+  workspaceId: string
+): Promise<BaseApiResponse<Artifact[]>> {
+  return await http.get(`/workspaces/${workspaceId}/artifacts`);
+}
+
 export async function getArtifactDetail(
   artifactId: string
 ): Promise<BaseApiResponse<ArtifactDetail>> {
@@ -26,13 +32,14 @@ export async function getArtifactVersions(
 
 export async function updateArtifactContent(
   artifactId: string,
-  payload: { content: string; changeSummary?: string }
+  payload: { content: string; changeSummary?: string; conversationId?: string }
 ): Promise<BaseApiResponse<ArtifactDetail>> {
   return await http.put(`/artifacts/${artifactId}`, payload);
 }
 
 const artifactService = {
   getArtifactMetaList,
+  getWorkspaceArtifacts,
   getArtifactDetail,
   getArtifactVersions,
   updateArtifactContent,

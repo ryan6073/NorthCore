@@ -1,9 +1,9 @@
 import { create } from 'zustand';
-import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem, MemoryCategory, SendMessageRequest, ContextUsage, AgentChat, AgentChatMessage, Workspace, WorkspaceTreeNode, AgentRunDetail, SandboxFile, ModelProvider, ModelCredential, ModelConfig } from '@/types';
-import { getAgentList, updateAgentDetail, createAgent as createAgentApi, deleteAgent as deleteAgentApi, getAgentContact } from '@/services/http/agentService';
+import { Conversation, Message, Agent, Artifact, ArtifactVersion, CreateConversationPayload, ArtifactReference, MessageAttachment, AgentMentionItem, PinItem, MemoryItem, MemoryCategory, SendMessageRequest, ContextUsage, AgentChat, AgentChatMessage, Workspace, WorkspaceTreeNode, AgentRunDetail, SandboxFile, ModelProvider, ModelCredential, ModelConfig, AgentToolCatalogItem } from '@/types';
+import { getAgentList, updateAgentDetail, createAgent as createAgentApi, deleteAgent as deleteAgentApi, getAgentContact, getAgentToolCatalog } from '@/services/http/agentService';
 import { getConversationList, createConversation as createConversationApi, updateConversation, compressContext, pinMessage, unpinMessage, getPins, getMemories, deleteMemory, updateMemory, deleteConversation, getContextUsage as getContextUsageApi, pinConversation, archiveConversation, getConversationAgentConfig, updateConversationAgentConfig, addAgentToConversation, removeAgentFromConversation } from '@/services/http/conversationService';
 import { getMessageList, sendMessageNonStreaming } from '@/services/http/messageService';
-import { getArtifactMetaList, getArtifactDetail, getArtifactVersions, updateArtifactContent } from '@/services/http/artifactService';
+import { getArtifactMetaList, getArtifactDetail, getArtifactVersions, updateArtifactContent, getWorkspaceArtifacts } from '@/services/http/artifactService';
 import wsClient from '@/services/ws/wsClient';
 import { mockConversations, mockMessages, mockAgents as initialAgents, mockArtifacts, mockArtifactVersions, mockSandboxNormalScenarios } from '@/mock';
 import { createId } from '@/utils/id';
@@ -454,7 +454,8 @@ const updateSandboxStatusMessage = (state: any, conversationId: string, runId: s
   if (!run) return state;
 
   const msgId = `sandbox-status-${runId}`;
-  const existingMsgIndex = state.messages.findIndex((m: any) => m.id === msgId);
+  const targetMessages = state.conversationMessages[conversationId] || (state.activeConversationId === conversationId ? state.messages : []);
+  const existingMsgIndex = targetMessages.findIndex((m: any) => m.id === msgId);
 
   // Format steps status list
   const stepsMarkdown = (run.steps || []).map((step: any, idx: number) => {
@@ -483,7 +484,21 @@ const updateSandboxStatusMessage = (state: any, conversationId: string, runId: s
 
   let titleEmoji = '⚙️';
   let runStatusText = '任务进行中';
-  if (run.status === 'completed') {
+  let runModeLabel = '';
+  if (run.runMode === 'write') {
+    runModeLabel = ' (写入任务)';
+  } else if (run.runMode === 'deploy') {
+    runModeLabel = ' (部署任务)';
+  } else if (run.runMode === 'read') {
+    runModeLabel = ' (只读任务)';
+  }
+
+  let subtext = '';
+  if (run.status === 'queued') {
+    titleEmoji = '⏳';
+    runStatusText = `任务排队中${run.queuePosition ? ` (队列位置: 第 ${run.queuePosition} 位)` : ''}`;
+    subtext = '\n\n> ⚠️ **同一工作区已有写入/部署任务正在执行，本任务将在前一个任务完成后自动开始。**';
+  } else if (run.status === 'completed') {
     titleEmoji = '✅';
     runStatusText = '任务已完成';
   } else if (run.status === 'failed') {
@@ -497,7 +512,11 @@ const updateSandboxStatusMessage = (state: any, conversationId: string, runId: s
     runStatusText = '任务已取消';
   }
 
-  const content = `### ${titleEmoji} 沙箱运行: ${runStatusText}\n\n**任务**: ${run.prompt}\n\n**子 Agent 执行过程**:\n${stepsMarkdown || '*暂无规划步骤*'}\n\n${run.summary ? `**结果总结**: ${run.summary}` : ''}`;
+  const defaultPlaceholder = run.status === 'queued'
+    ? '*排队等待锁定工作区 (沙箱启动后将生成执行计划)*'
+    : '*暂无规划步骤*';
+
+  const content = `### ${titleEmoji} 沙箱运行: ${runStatusText}${runModeLabel}\n\n**任务**: ${run.prompt}${subtext}\n\n**子 Agent 执行过程**:\n${stepsMarkdown || defaultPlaceholder}\n\n${run.summary ? `**结果总结**: ${run.summary}` : ''}`;
 
   const message: Message = {
     id: msgId,
@@ -510,16 +529,80 @@ const updateSandboxStatusMessage = (state: any, conversationId: string, runId: s
     createdAt: run.createdAt || getCurrentFullTime()
   };
 
-  const updatedMessages = [...state.messages];
+  const updatedMessages = [...targetMessages];
   if (existingMsgIndex > -1) {
     updatedMessages[existingMsgIndex] = message;
   } else {
     updatedMessages.push(message);
   }
 
-  return {
+  const nextState = {
     ...state,
-    messages: updatedMessages
+    conversationMessages: {
+      ...(state.conversationMessages || {}),
+      [conversationId]: updatedMessages
+    }
+  };
+
+  if (state.activeConversationId === conversationId) {
+    nextState.messages = updatedMessages;
+  }
+
+  return nextState;
+};
+
+const updateArtifactsInState = (state: any, conversationId: string, artifactsList: Artifact[], runId?: string) => {
+  const activeConv = state.conversations.find((c: any) => c.id === conversationId);
+  const workspaceId = activeConv?.workspaceId;
+
+  // 1. Update conversation level
+  const updatedConversationArtifacts = { ...state.conversationArtifacts };
+  const convList = [...(updatedConversationArtifacts[conversationId] || [])];
+  artifactsList.forEach((art: any) => {
+    const artWithRunId = { ...art, runId: runId || art.runId, workspaceId };
+    const idx = convList.findIndex(a => a.id === artWithRunId.id && a.runId === artWithRunId.runId);
+    if (idx > -1) {
+      convList[idx] = { ...convList[idx], ...artWithRunId };
+    } else {
+      convList.push(artWithRunId);
+    }
+  });
+  updatedConversationArtifacts[conversationId] = convList;
+
+  // 2. Update workspace level
+  const updatedWorkspaceArtifacts = { ...state.workspaceArtifacts };
+  if (workspaceId) {
+    const wsList = [...(updatedWorkspaceArtifacts[workspaceId] || [])];
+    artifactsList.forEach((art: any) => {
+      const artWithRunId = { ...art, runId: runId || art.runId, workspaceId };
+      const idx = wsList.findIndex(a => a.id === artWithRunId.id && a.runId === artWithRunId.runId);
+      if (idx > -1) {
+        wsList[idx] = { ...wsList[idx], ...artWithRunId };
+      } else {
+        wsList.push(artWithRunId);
+      }
+    });
+    updatedWorkspaceArtifacts[workspaceId] = wsList;
+  }
+
+  // 3. Compute active artifacts (for the CURRENTLY ACTIVE conversation)
+  const currentActiveConvId = state.activeConversationId;
+  const currentActiveConv = state.conversations.find((c: any) => c.id === currentActiveConvId);
+  const currentWorkspaceId = currentActiveConv?.workspaceId;
+  const updatedArtifacts = currentWorkspaceId 
+    ? (updatedWorkspaceArtifacts[currentWorkspaceId] || []) 
+    : (updatedConversationArtifacts[currentActiveConvId || ''] || []);
+
+  const updatedVersions = { ...state.artifactVersions };
+  artifactsList.forEach((art: any) => {
+    delete updatedVersions[art.id];
+  });
+
+  return {
+    artifacts: updatedArtifacts,
+    conversationArtifacts: updatedConversationArtifacts,
+    workspaceArtifacts: updatedWorkspaceArtifacts,
+    artifactVersions: updatedVersions
   };
 };
 
@@ -535,6 +618,7 @@ interface AgentHubStore {
   modelProviders: ModelProvider[];
   modelCredentials: ModelCredential[];
   modelConfigs: ModelConfig[];
+  toolCatalog: AgentToolCatalogItem[];
   messages: Message[];
   artifacts: Artifact[];
   artifactVersions: Record<string, ArtifactVersion[]>;
@@ -643,6 +727,7 @@ interface AgentHubStore {
   loadModelProviders: () => Promise<void>;
   loadModelCredentials: () => Promise<void>;
   loadModelConfigs: () => Promise<void>;
+  loadToolCatalog: () => Promise<void>;
   createModelCredential: (payload: { name: string; provider: string; credentialType: string; secret: string }) => Promise<void>;
   updateModelCredential: (id: string, payload: { name?: string; provider?: string; credentialType?: string; secret?: string }) => Promise<void>;
   deleteModelCredential: (id: string) => Promise<void>;
@@ -758,7 +843,10 @@ interface AgentHubStore {
   floatingConversations: FloatingConversation[];
   conversationMessages: Record<string, Message[]>;
   conversationArtifacts: Record<string, Artifact[]>;
+  workspaceArtifacts: Record<string, Artifact[]>;
   conversationSelectedArtifactId: Record<string, string | null>;
+  conversationPins: Record<string, PinItem[]>;
+  conversationMemories: Record<string, MemoryItem[]>;
   addFloatingConversation: (id: string, x?: number, y?: number) => void;
   removeFloatingConversation: (id: string) => void;
   updateFloatingConversation: (id: string, updates: Partial<FloatingConversation>) => void;
@@ -787,11 +875,15 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   modelProviders: [],
   modelCredentials: [],
   modelConfigs: [],
+  toolCatalog: [],
   messages: [],
   floatingConversations: [],
   conversationMessages: {},
   conversationArtifacts: {},
+  workspaceArtifacts: {},
   conversationSelectedArtifactId: {},
+  conversationPins: {},
+  conversationMemories: {},
   artifacts: [],
   artifactVersions: {},
   pins: [],
@@ -898,6 +990,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       await get().loadModelProviders();
       await get().loadModelCredentials();
       await get().loadModelConfigs();
+      await get().loadToolCatalog();
       
       await get().connectWS();
     } catch (e) {
@@ -1020,6 +1113,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         await get().loadModelProviders();
         await get().loadModelCredentials();
         await get().loadModelConfigs();
+        await get().loadToolCatalog();
         if (mockConversations[0]?.id) {
           await get().loadConversationData(mockConversations[0].id);
         }
@@ -1048,6 +1142,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       await get().loadModelProviders();
       await get().loadModelCredentials();
       await get().loadModelConfigs();
+      await get().loadToolCatalog();
       if (mockConversations[0]?.id) {
         await get().loadConversationData(mockConversations[0].id);
       }
@@ -1126,17 +1221,28 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
 
   setActiveConversationId: async (id) => {
+    const state = get();
+    const activeConv = id ? state.conversations.find(c => c.id === id) : null;
+    const workspaceId = activeConv?.workspaceId;
+    const cachedMessages = id ? (state.conversationMessages[id] || []) : [];
+    const cachedArtifacts = id 
+      ? (workspaceId ? (state.workspaceArtifacts[workspaceId] || []) : (state.conversationArtifacts[id] || []))
+      : [];
+    const cachedSelectedArtifactId = id ? (state.conversationSelectedArtifactId[id] || (cachedArtifacts[0]?.id || null)) : null;
+    const cachedPins = id ? (state.conversationPins[id] || []) : [];
+    const cachedMemories = id ? (state.conversationMemories[id] || []) : [];
+
     set({ 
       activeConversationId: id,
-      selectedArtifactId: null,
+      selectedArtifactId: cachedSelectedArtifactId,
       selectedArtifactVersion: null,
       isProcessing: false,
       replyContext: null,
       quoteArtifactRef: null,
-      messages: [],
-      artifacts: [],
-      pins: [],
-      memories: [],
+      messages: cachedMessages,
+      artifacts: cachedArtifacts,
+      pins: cachedPins,
+      memories: cachedMemories,
       artifactVersions: {},
     });
     if (id) {
@@ -1204,6 +1310,137 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       }
     } catch (e) {
       console.error('Failed to load model configs', e);
+    }
+  },
+
+  loadToolCatalog: async () => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      const mockCatalog: AgentToolCatalogItem[] = [
+        {
+          id: 'workspace.read',
+          name: '读取工作区',
+          description: '读取工作区文件树、文件内容及扫描元数据',
+          displayGroup: 'context',
+          riskGroup: 'context_read',
+          riskLevel: 'low',
+          runtimes: ['native', 'claude_code', 'codex', 'opencode'],
+          permissionKeys: ['canReadFiles'],
+          requiresWorkspace: true,
+          mutatesWorkspace: false
+        },
+        {
+          id: 'memory.use',
+          name: '长期记忆',
+          description: '读取及更新与用户的长期记忆库',
+          displayGroup: 'context',
+          riskGroup: 'memory',
+          riskLevel: 'low',
+          runtimes: ['native'],
+          permissionKeys: [],
+          requiresWorkspace: false,
+          mutatesWorkspace: false
+        },
+        {
+          id: 'web.search',
+          name: '联网搜索',
+          description: '允许智能体通过搜索引擎获取最新外部资讯',
+          displayGroup: 'context',
+          riskGroup: 'external',
+          riskLevel: 'medium',
+          runtimes: ['native', 'opencode'],
+          permissionKeys: [],
+          requiresWorkspace: false,
+          mutatesWorkspace: false
+        },
+        {
+          id: 'workspace.write',
+          name: '修改工作区',
+          description: '在工作区直接创建或重写修改源代码文件',
+          displayGroup: 'workspace',
+          riskGroup: 'workspace_write',
+          riskLevel: 'medium',
+          runtimes: ['native', 'claude_code', 'codex', 'opencode'],
+          permissionKeys: ['canReadFiles', 'canWriteFiles'],
+          requiresWorkspace: true,
+          mutatesWorkspace: true
+        },
+        {
+          id: 'platform.runtime_write',
+          name: '平台运行期写入',
+          description: '允许运行期框架（Codex/Claude Code等）自由修改工作区文件',
+          displayGroup: 'workspace',
+          riskGroup: 'platform_write',
+          riskLevel: 'medium',
+          runtimes: ['claude_code', 'codex', 'opencode'],
+          permissionKeys: ['canReadFiles', 'canWriteFiles'],
+          requiresWorkspace: true,
+          mutatesWorkspace: true
+        },
+        {
+          id: 'environment.setup',
+          name: '配置运行环境',
+          description: '安装软件包及配置Python虚拟环境等环境变更操作',
+          displayGroup: 'sandbox',
+          riskGroup: 'command',
+          riskLevel: 'high',
+          runtimes: ['claude_code', 'codex', 'opencode'],
+          permissionKeys: ['canRunCommands'],
+          requiresWorkspace: true,
+          mutatesWorkspace: true
+        },
+        {
+          id: 'command.run',
+          name: '执行系统命令',
+          description: '在安全沙箱的本地终端内执行任意 Shell 命令行指令',
+          displayGroup: 'sandbox',
+          riskGroup: 'command',
+          riskLevel: 'critical',
+          runtimes: ['claude_code', 'opencode'],
+          permissionKeys: ['canRunCommands'],
+          requiresWorkspace: true,
+          mutatesWorkspace: true
+        },
+        {
+          id: 'artifact.generate',
+          name: '生成交互产物',
+          description: '生成独立前端交互产物（Artifact）并在右侧面板实时渲染预览',
+          displayGroup: 'artifact',
+          riskGroup: 'platform_write',
+          riskLevel: 'low',
+          runtimes: ['native', 'claude_code', 'codex', 'opencode'],
+          permissionKeys: ['canGenerateArtifacts'],
+          requiresWorkspace: false,
+          mutatesWorkspace: false
+        },
+        {
+          id: 'deploy.run',
+          name: '发布部署应用',
+          description: '将当前项目编译并一键发布部署为独立容器，可供公网访问',
+          displayGroup: 'artifact',
+          riskGroup: 'deploy',
+          riskLevel: 'critical',
+          runtimes: ['native', 'claude_code', 'codex', 'opencode'],
+          permissionKeys: ['canDeploy'],
+          requiresWorkspace: true,
+          mutatesWorkspace: false
+        }
+      ];
+      set({ toolCatalog: mockCatalog });
+      return;
+    }
+    try {
+      const res = await getAgentToolCatalog();
+      if (res.code === 0 && res.data) {
+        const catalogList = Array.isArray(res.data) 
+          ? res.data 
+          : (res.data && Array.isArray((res.data as any).list)) 
+            ? (res.data as any).list 
+            : [];
+        set({ toolCatalog: catalogList });
+      }
+    } catch (e) {
+      console.error('Failed to load agent tool catalog', e);
     }
   },
 
@@ -1357,7 +1594,23 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     const { useMockMode } = get();
     if (useMockMode) {
       const activeMsgs = mockMessages.filter(m => m.conversationId === convId);
-      const activeArts = mockArtifacts.filter(a => a.conversationId === convId);
+      const activeConv = get().conversations.find(c => c.id === convId);
+      const workspaceId = activeConv?.workspaceId;
+
+      // 1. Get conversation level artifacts
+      const activeConvArts = mockArtifacts.filter(a => a.conversationId === convId);
+      
+      // 2. Get workspace level artifacts
+      let activeWorkspaceArts: Artifact[] = [];
+      if (workspaceId) {
+        const siblingConvIds = get().conversations
+          .filter(c => c.workspaceId === workspaceId)
+          .map(c => c.id);
+        activeWorkspaceArts = mockArtifacts.filter(
+          a => a.workspaceId === workspaceId || siblingConvIds.includes(a.conversationId) || a.conversationId === convId
+        ).map(a => ({ ...a, workspaceId }));
+      }
+
       const activePins = activeMsgs.filter(m => m.isPinned).map(m => ({
         id: `pin-${m.id}`,
         conversationId: convId,
@@ -1400,28 +1653,138 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           updatedAt: getCurrentFullTime()
         }
       ];
-      set({
-        messages: activeMsgs,
-        artifacts: activeArts,
-        pins: activePins,
-        memories: mockMemories,
+      const currentMessages = get().messages;
+      const currentArtifacts = get().artifacts;
+      const currentPins = get().pins;
+      const currentMemories = get().memories;
+
+      const mergedMessages = activeMsgs.map(newMsg => {
+        const existing = currentMessages.find(m => m.id === newMsg.id);
+        if (existing) {
+          const hasChanged = existing.content !== newMsg.content || 
+                             existing.type !== newMsg.type ||
+                             existing.isPinned !== newMsg.isPinned ||
+                             JSON.stringify(existing.metadata) !== JSON.stringify(newMsg.metadata);
+          return hasChanged ? { ...existing, ...newMsg } : existing;
+        }
+        return newMsg;
       });
-      if (activeArts.length > 0) {
-        set({ selectedArtifactId: activeArts[0].id });
+
+      const mergedConvArtifacts = activeConvArts.map(newArt => {
+        const existing = currentArtifacts.find(a => a.id === newArt.id);
+        if (existing) {
+          const hasChanged = existing.latestVersion !== newArt.latestVersion || 
+                             existing.title !== newArt.title ||
+                             existing.currentVersionId !== newArt.currentVersionId;
+          return hasChanged ? { ...existing, ...newArt } : existing;
+        }
+        return newArt;
+      });
+
+      const mergedWorkspaceArtifacts = activeWorkspaceArts.map(newArt => {
+        const existing = currentArtifacts.find(a => a.id === newArt.id);
+        if (existing) {
+          const hasChanged = existing.latestVersion !== newArt.latestVersion || 
+                             existing.title !== newArt.title ||
+                             existing.currentVersionId !== newArt.currentVersionId;
+          return hasChanged ? { ...existing, ...newArt } : existing;
+        }
+        return newArt;
+      });
+
+      const mergedPins = activePins.map(newPin => {
+        const existing = currentPins.find(p => p.id === newPin.id);
+        if (existing) {
+          const hasChanged = JSON.stringify(existing.message) !== JSON.stringify(newPin.message);
+          return hasChanged ? { ...existing, ...newPin } : existing;
+        }
+        return newPin;
+      });
+
+      const mergedMemories = mockMemories.map(newMem => {
+        const existing = currentMemories.find(m => m.id === newMem.id);
+        if (existing) {
+          const hasChanged = existing.content !== newMem.content || existing.category !== newMem.category;
+          return hasChanged ? { ...existing, ...newMem } : existing;
+        }
+        return newMem;
+      });
+
+      const isActive = get().activeConversationId === convId;
+      
+      const nextState: any = {
+        conversationMessages: {
+          ...get().conversationMessages,
+          [convId]: mergedMessages
+        },
+        conversationArtifacts: {
+          ...get().conversationArtifacts,
+          [convId]: mergedConvArtifacts
+        },
+        workspaceArtifacts: {
+          ...get().workspaceArtifacts,
+          ...(workspaceId ? { [workspaceId]: mergedWorkspaceArtifacts } : {})
+        },
+        conversationPins: {
+          ...get().conversationPins,
+          [convId]: mergedPins
+        },
+        conversationMemories: {
+          ...get().conversationMemories,
+          [convId]: mergedMemories
+        }
+      };
+
+      const finalArtifacts = workspaceId ? mergedWorkspaceArtifacts : mergedConvArtifacts;
+
+      if (isActive) {
+        nextState.messages = mergedMessages;
+        nextState.artifacts = finalArtifacts;
+        nextState.pins = mergedPins;
+        nextState.memories = mergedMemories;
+      }
+
+      set(nextState);
+
+      if (finalArtifacts.length > 0) {
+        const cachedSelected = get().conversationSelectedArtifactId[convId] || finalArtifacts[0].id;
+        const currentSelected = isActive ? get().selectedArtifactId : cachedSelected;
+        const stillExists = finalArtifacts.some(a => a.id === currentSelected);
+        const nextSelectedId = stillExists ? currentSelected : finalArtifacts[0].id;
+
+        set({
+          conversationSelectedArtifactId: {
+            ...get().conversationSelectedArtifactId,
+            [convId]: nextSelectedId
+          },
+          ...(isActive ? { selectedArtifactId: nextSelectedId } : {})
+        });
       }
       return;
     }
 
     try {
-      const [msgRes, pinsRes, memoriesRes, artifactRes] = await Promise.all([
+      const activeConv = get().conversations.find(c => c.id === convId);
+      const workspaceId = activeConv?.workspaceId;
+
+      const [msgRes, pinsRes, memoriesRes, artifactRes, wsArtifactRes] = await Promise.all([
         getMessageList(convId),
         getPins(convId),
         getMemories(convId),
-        getArtifactMetaList(convId)
+        getArtifactMetaList(convId),
+        workspaceId ? getWorkspaceArtifacts(workspaceId) : Promise.resolve(null)
       ]);
 
+      if (msgRes && msgRes.code === 40002) {
+        set({
+          messages: [],
+          pins: [],
+          memories: []
+        });
+        return;
+      }
+
       // Load conversation-level agent configurations in parallel
-      const activeConv = get().conversations.find(c => c.id === convId);
       if (activeConv && activeConv.mode !== 'agent') {
         const agentIds = activeConv.agentIds || [];
         const configPromises = agentIds.map(async (agentId) => {
@@ -1479,24 +1842,146 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         });
       }
 
-      set({
-        messages: messagesData,
-        pins: pinsData,
-        memories: memoriesData
+      const currentMessages = get().messages;
+      const currentArtifacts = get().artifacts;
+      const currentPins = get().pins;
+      const currentMemories = get().memories;
+
+      const mergedMessages = messagesData.map(newMsg => {
+        const existing = currentMessages.find(m => m.id === newMsg.id);
+        if (existing) {
+          const hasChanged = existing.content !== newMsg.content || 
+                             existing.type !== newMsg.type ||
+                             existing.isPinned !== newMsg.isPinned ||
+                             JSON.stringify(existing.metadata) !== JSON.stringify(newMsg.metadata);
+          return hasChanged ? { ...existing, ...newMsg } : existing;
+        }
+        return newMsg;
       });
 
+      const mergedPins = pinsData.map(newPin => {
+        const existing = currentPins.find(p => p.id === newPin.id);
+        if (existing) {
+          const hasChanged = JSON.stringify(existing.message) !== JSON.stringify(newPin.message);
+          return hasChanged ? { ...existing, ...newPin } : existing;
+        }
+        return newPin;
+      });
+
+      const mergedMemories = memoriesData.map(newMem => {
+        const existing = currentMemories.find(m => m.id === newMem.id);
+        if (existing) {
+          const hasChanged = existing.content !== newMem.content || existing.category !== newMem.category;
+          return hasChanged ? { ...existing, ...newMem } : existing;
+        }
+        return newMem;
+      });
+
+      let mergedArtifacts: Artifact[] = [];
       if (artifactRes.code === 0 && artifactRes.data) {
         const arts: Artifact[] = artifactRes.data;
-        set({ artifacts: arts });
-        if (arts.length > 0) {
-          set({ selectedArtifactId: arts[0].id });
-          await get().loadArtifactContent(arts[0].id);
+        mergedArtifacts = arts.map(newArt => {
+          // Use composite unique key: artifact id + runId
+          const existing = currentArtifacts.find(
+            a => a.id === newArt.id && a.runId === newArt.runId
+          );
+          if (existing) {
+            const hasChanged = existing.latestVersion !== newArt.latestVersion || 
+                               existing.title !== newArt.title ||
+                               existing.currentVersionId !== newArt.currentVersionId;
+            return hasChanged ? { ...existing, ...newArt } : existing;
+          }
+          return newArt;
+        });
+      }
+
+      let mergedWorkspaceArtifacts: Artifact[] = [];
+      if (wsArtifactRes && wsArtifactRes.code === 0 && wsArtifactRes.data) {
+        const arts: Artifact[] = wsArtifactRes.data;
+        mergedWorkspaceArtifacts = arts.map(newArt => {
+          const existing = currentArtifacts.find(
+            a => a.id === newArt.id && a.runId === newArt.runId
+          );
+          if (existing) {
+            const hasChanged = existing.latestVersion !== newArt.latestVersion || 
+                               existing.title !== newArt.title ||
+                               existing.currentVersionId !== newArt.currentVersionId;
+            return hasChanged ? { ...existing, ...newArt } : existing;
+          }
+          return newArt;
+        });
+      }
+
+      const isActive = get().activeConversationId === convId;
+
+      const nextState: any = {
+        conversationMessages: {
+          ...get().conversationMessages,
+          [convId]: mergedMessages
+        },
+        conversationPins: {
+          ...get().conversationPins,
+          [convId]: mergedPins
+        },
+        conversationMemories: {
+          ...get().conversationMemories,
+          [convId]: mergedMemories
+        },
+        conversationArtifacts: {
+          ...get().conversationArtifacts,
+          [convId]: mergedArtifacts
+        },
+        workspaceArtifacts: {
+          ...get().workspaceArtifacts,
+          ...(workspaceId ? { [workspaceId]: mergedWorkspaceArtifacts } : {})
+        }
+      };
+
+      const finalArtifacts = workspaceId ? mergedWorkspaceArtifacts : mergedArtifacts;
+
+      if (isActive) {
+        nextState.artifacts = finalArtifacts;
+        nextState.messages = mergedMessages;
+        nextState.pins = mergedPins;
+        nextState.memories = mergedMemories;
+      }
+
+      set(nextState);
+
+      if (finalArtifacts.length > 0) {
+        const cachedSelected = get().conversationSelectedArtifactId[convId] || finalArtifacts[0].id;
+        const currentSelected = isActive ? get().selectedArtifactId : cachedSelected;
+        const stillExists = finalArtifacts.some(a => a.id === currentSelected);
+        const nextSelectedId = stillExists ? currentSelected : finalArtifacts[0].id;
+
+        set({
+          conversationSelectedArtifactId: {
+            ...get().conversationSelectedArtifactId,
+            [convId]: nextSelectedId
+          },
+          ...(isActive ? { selectedArtifactId: nextSelectedId } : {})
+        });
+
+        if (nextSelectedId && isActive) {
+          await get().loadArtifactContent(nextSelectedId);
         }
       }
-      await get().getContextUsage();
-      await get().loadSandboxRunList(convId);
-    } catch (e) {
+
+      if (isActive) {
+        await get().getContextUsage();
+        await get().loadSandboxRunList(convId);
+      }
+    } catch (e: any) {
       console.error('[Store] 加载会话数据失败', e);
+      const errCode = e?.response?.data?.code || e?.code;
+      const errMsg = e?.response?.data?.message || e?.message || '';
+      if (errCode === 40002 || errMsg.includes('40002') || (e?.response?.status === 400 && errCode === 40002)) {
+        set({
+          messages: [],
+          pins: [],
+          memories: []
+        });
+      }
     }
   },
 
@@ -1970,7 +2455,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           const mockFiles: SandboxFile[] = [
             {
               id: 'file-1',
-              sandboxId: mockRunDetail.sandboxId,
+              sandboxId: mockRunDetail.sandboxId || '',
               runId: mockRunId,
               path: 'src/components/Login.tsx',
               contentHash: 'hash1',
@@ -1980,7 +2465,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             },
             {
               id: 'file-2',
-              sandboxId: mockRunDetail.sandboxId,
+              sandboxId: mockRunDetail.sandboxId || '',
               runId: mockRunId,
               path: 'src/styles/Login.css',
               contentHash: 'hash2',
@@ -2082,7 +2567,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       let messagesToStream = replyResult.messages;
       let artifactsToStream = replyResult.artifacts;
 
-      const finalTargetAgentId = targetAgentId || agents.find(a => content.includes(`@${a.name}`))?.id;
+      const finalTargetAgentId = targetAgentId || agents.find(a => content.includes(`@${a.name}`) && a.enabled === true && a.status !== 'disabled')?.id;
       if (finalTargetAgentId && activeConv.mode === 'group') {
         const targetAgent = agents.find(a => a.id === finalTargetAgentId);
         if (targetAgent) {
@@ -2165,8 +2650,30 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
                 updatedVersions[v.artifactId].push(v);
               }
             });
+
+            const workspaceId = activeConv?.workspaceId;
+            const updatedArtsToStream = artifactsToStream.map(art => ({ ...art, workspaceId }));
+
+            const updatedWorkspaceArtifacts = { ...state.workspaceArtifacts };
+            if (workspaceId) {
+              updatedWorkspaceArtifacts[workspaceId] = [
+                ...(updatedWorkspaceArtifacts[workspaceId] || []),
+                ...updatedArtsToStream
+              ];
+            }
+
+            const updatedConversationArtifacts = { ...state.conversationArtifacts };
+            updatedConversationArtifacts[activeConversationId] = [
+              ...(updatedConversationArtifacts[activeConversationId] || []),
+              ...updatedArtsToStream
+            ];
+
             return {
-              artifacts: [...state.artifacts, ...artifactsToStream],
+              artifacts: workspaceId
+                ? [...(state.workspaceArtifacts[workspaceId] || []), ...updatedArtsToStream]
+                : [...(state.conversationArtifacts[activeConversationId] || []), ...updatedArtsToStream],
+              workspaceArtifacts: updatedWorkspaceArtifacts,
+              conversationArtifacts: updatedConversationArtifacts,
               artifactVersions: updatedVersions,
               selectedArtifactId: artifactsToStream[0].id,
             };
@@ -2306,12 +2813,32 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             finalMessages = completeAllTaskPlanSteps(finalMessages);
 
             // Merge new artifacts
-            const currentArtifacts = [...state.artifacts];
-            artifacts.forEach(art => {
-              if (!currentArtifacts.some(a => a.id === art.id)) {
-                currentArtifacts.push(art);
+            const activeConv = state.conversations.find((c: any) => c.id === activeConversationId);
+            const wId = workspaceId || activeConv?.workspaceId;
+
+            const updatedWorkspaceArtifacts = { ...state.workspaceArtifacts };
+            if (wId) {
+              const wsList = [...(updatedWorkspaceArtifacts[wId] || [])];
+              artifacts.forEach((art: any) => {
+                const item = { ...art, workspaceId: wId };
+                if (!wsList.some(a => a.id === item.id)) {
+                  wsList.push(item);
+                }
+              });
+              updatedWorkspaceArtifacts[wId] = wsList;
+            }
+
+            const updatedConversationArtifacts = { ...state.conversationArtifacts };
+            const convList = [...(updatedConversationArtifacts[activeConversationId] || [])];
+            artifacts.forEach((art: any) => {
+              const item = { ...art, workspaceId: wId };
+              if (!convList.some(a => a.id === item.id)) {
+                convList.push(item);
               }
             });
+            updatedConversationArtifacts[activeConversationId] = convList;
+
+            const currentArtifacts = wId ? (updatedWorkspaceArtifacts[wId] || []) : convList;
 
             // Update active conversation usage if returned
             const updatedConversations = state.conversations.map(c =>
@@ -2323,6 +2850,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             return {
               messages: finalMessages,
               artifacts: currentArtifacts,
+              workspaceArtifacts: updatedWorkspaceArtifacts,
+              conversationArtifacts: updatedConversationArtifacts,
               conversations: updatedConversations,
               isProcessing: false,
             };
@@ -2560,7 +3089,10 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     try {
       const res = await getAgentList({ includeDisabled: true });
       if (res.code === 0) {
-        set({ allAgents: res.data.list as Agent[] });
+        const list = (res.data.list as Agent[]).filter(a => 
+          !(a.id === 'agent-orchestrator' && a.enabled === false)
+        );
+        set({ allAgents: list });
       }
     } catch (e) {
       console.error('[Store] 加载全量 Agent 列表失败', e);
@@ -2857,20 +3389,22 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       const unsubThinking = wsClient.on('agent.thinking.started', (event: any) => {
         const { agentId, agentName, conversationId, source, taskPlanStep } = event.data;
         set(state => {
-          if (state.activeConversationId !== conversationId) return {};
+          const targetConvId = conversationId || state.activeConversationId;
+          if (!targetConvId) return {};
 
           const updatedAgents = state.agents.map(a =>
             a.id === agentId ? { ...a, status: 'thinking' as const } : a
           );
 
-          let updatedMessages = state.messages;
+          const targetMessages = state.conversationMessages[targetConvId] || (state.activeConversationId === targetConvId ? state.messages : []);
+          let updatedMessages = targetMessages;
           if (source === 'groupChatCollaboration') {
-            updatedMessages = updateTaskPlanStepStatus(state.messages, taskPlanStep || { agentId }, 'running');
+            updatedMessages = updateTaskPlanStepStatus(targetMessages, taskPlanStep || { agentId }, 'running');
           }
 
           const thinkingMsg: Message = {
             id: `thinking-${agentId}`,
-            conversationId,
+            conversationId: targetConvId,
             senderId: agentId,
             senderName: agentName,
             role: 'agent',
@@ -2884,37 +3418,49 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             m => m.id === `thinking-${agentId}` || (m.senderId === agentId && m.createdAt > thinkingMsg.createdAt)
           );
 
-          return {
+          const finalMessages = alreadyHasMsg ? updatedMessages : [...updatedMessages, thinkingMsg];
+
+          const nextState: any = {
             agents: updatedAgents,
-            messages: alreadyHasMsg ? updatedMessages : [...updatedMessages, thinkingMsg],
+            conversationMessages: {
+              ...(state.conversationMessages || {}),
+              [targetConvId]: finalMessages
+            }
           };
+
+          if (state.activeConversationId === targetConvId) {
+            nextState.messages = finalMessages;
+          }
+
+          return nextState;
         });
       });
 
       const unsubChunk = wsClient.on('conversation.message.chunk', (event: any) => {
         const { messageId, conversationId, senderId, senderName, role, messageType, chunk, language, source, readOnly, taskPlanStep } = event.data;
         set(state => {
-          if (state.activeConversationId !== conversationId) return {};
+          const targetConvId = conversationId || state.activeConversationId;
+          if (!targetConvId) return {};
 
-          const existingIndex = state.messages.findIndex(m => m.id === messageId);
+          const targetMessages = state.conversationMessages[targetConvId] || (state.activeConversationId === targetConvId ? state.messages : []);
+          let updatedMessages = [...targetMessages];
+          const existingIndex = targetMessages.findIndex(m => m.id === messageId);
           if (existingIndex > -1) {
-            const updatedMessages = [...state.messages];
             updatedMessages[existingIndex] = {
               ...updatedMessages[existingIndex],
               content: updatedMessages[existingIndex].content + chunk,
             };
-            return { messages: updatedMessages };
           } else {
-            const filteredMessages = state.messages.filter(m => m.id !== `thinking-${senderId}`);
+            const filteredMessages = targetMessages.filter(m => m.id !== `thinking-${senderId}`);
             
-            let updatedMessages = filteredMessages;
+            let tmpMessages = filteredMessages;
             if (source === 'groupChatCollaboration' && taskPlanStep) {
-              updatedMessages = updateTaskPlanStepStatus(filteredMessages, taskPlanStep, 'running');
+              tmpMessages = updateTaskPlanStepStatus(filteredMessages, taskPlanStep, 'running');
             }
 
             const newMsg: Message = {
               id: messageId,
-              conversationId,
+              conversationId: targetConvId,
               senderId,
               senderName,
               role,
@@ -2928,21 +3474,36 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
                 taskPlanStep
               } : undefined
             };
-            return { messages: [...updatedMessages, newMsg] };
+            updatedMessages = [...tmpMessages, newMsg];
           }
+
+          const nextState: any = {
+            conversationMessages: {
+              ...(state.conversationMessages || {}),
+              [targetConvId]: updatedMessages
+            }
+          };
+
+          if (state.activeConversationId === targetConvId) {
+            nextState.messages = updatedMessages;
+          }
+
+          return nextState;
         });
       });
 
       const unsubCompleted = wsClient.on('conversation.message.completed', (event: any) => {
         const { fullMessage } = event.data;
         set(state => {
-          if (state.activeConversationId !== fullMessage.conversationId) return {};
+          const targetConvId = fullMessage.conversationId || state.activeConversationId;
+          if (!targetConvId) return {};
 
+          const targetMessages = state.conversationMessages[targetConvId] || (state.activeConversationId === targetConvId ? state.messages : []);
           const mappedMessage = mapMessageMetadata(fullMessage);
-          let updatedMessages = state.messages.map(m =>
+          let updatedMessages = targetMessages.map(m =>
             m.id === fullMessage.id ? mappedMessage : m
           );
-          if (!state.messages.some(m => m.id === fullMessage.id)) {
+          if (!targetMessages.some(m => m.id === fullMessage.id)) {
             updatedMessages.push(mappedMessage);
           }
 
@@ -2959,15 +3520,24 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             a.id === fullMessage.senderId ? { ...a, status: 'online' as const } : a
           );
 
-          return {
-            messages: updatedMessages,
+          const nextState: any = {
+            conversationMessages: {
+              ...(state.conversationMessages || {}),
+              [targetConvId]: updatedMessages
+            },
             agents: updatedAgents,
             conversations: state.conversations.map(c =>
-              c.id === fullMessage.conversationId
+              c.id === targetConvId
                 ? { ...c, lastMessage: fullMessage.content, updatedAt: getCurrentFullTime() }
                 : c
             ),
           };
+
+          if (state.activeConversationId === targetConvId) {
+            nextState.messages = updatedMessages;
+          }
+
+          return nextState;
         });
       });
 
@@ -2978,16 +3548,60 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           runId: runId || artifact.runId
         };
         set(state => {
-          if (state.activeConversationId !== artifactWithRunId.conversationId) return {};
+          if (!state.activeConversationId) return {};
 
-          const exists = state.artifacts.some(a => a.id === artifactWithRunId.id);
-          const updatedArtifacts = exists
-            ? state.artifacts.map(a => a.id === artifactWithRunId.id ? { ...a, ...artifactWithRunId } : a)
-            : [...state.artifacts, artifactWithRunId];
+          const activeId = state.activeConversationId;
+          const activeConv = state.conversations.find((c: any) => c.id === activeId);
+          const workspaceId = activeConv?.workspaceId;
+
+          // If the artifact belongs to neither the current conversation nor the current workspace, ignore
+          const belongs = (state.activeConversationId === artifactWithRunId.conversationId) ||
+            (workspaceId && artifactWithRunId.workspaceId === workspaceId);
+          if (!belongs) return {};
+
+          const artWithWs = { ...artifactWithRunId, workspaceId: artifactWithRunId.workspaceId || workspaceId };
+
+          // Update conversationArtifacts
+          const updatedConversationArtifacts = { ...state.conversationArtifacts };
+          if (artifactWithRunId.conversationId) {
+            const cId = artifactWithRunId.conversationId;
+            const convList = [...(updatedConversationArtifacts[cId] || [])];
+            const existsConv = convList.findIndex(a => a.id === artWithWs.id && a.runId === artWithWs.runId);
+            if (existsConv > -1) {
+              convList[existsConv] = { ...convList[existsConv], ...artWithWs };
+            } else {
+              convList.push(artWithWs);
+            }
+            updatedConversationArtifacts[cId] = convList;
+          }
+
+          // Update workspaceArtifacts
+          const updatedWorkspaceArtifacts = { ...state.workspaceArtifacts };
+          const artWorkspaceId = artifactWithRunId.workspaceId || workspaceId;
+          if (artWorkspaceId) {
+            const wsList = [...(updatedWorkspaceArtifacts[artWorkspaceId] || [])];
+            const existsWs = wsList.findIndex(a => a.id === artWithWs.id && a.runId === artWithWs.runId);
+            if (existsWs > -1) {
+              wsList[existsWs] = { ...wsList[existsWs], ...artWithWs };
+            } else {
+              wsList.push(artWithWs);
+            }
+            updatedWorkspaceArtifacts[artWorkspaceId] = wsList;
+          }
+
+          const updatedArtifacts = workspaceId 
+            ? (updatedWorkspaceArtifacts[workspaceId] || []) 
+            : (updatedConversationArtifacts[activeId] || []);
+
+          const updatedVersions = { ...state.artifactVersions };
+          delete updatedVersions[artifactWithRunId.id];
 
           return {
             artifacts: updatedArtifacts,
+            conversationArtifacts: updatedConversationArtifacts,
+            workspaceArtifacts: updatedWorkspaceArtifacts,
             selectedArtifactId: artifactWithRunId.id,
+            artifactVersions: updatedVersions
           };
         });
         get().loadArtifactContent(artifactWithRunId.id);
@@ -3004,6 +3618,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         set(state => {
           if (state.activeConversationId !== conversationId) return {};
 
+          const activeConv = state.conversations.find((c: any) => c.id === conversationId);
+          const workspaceId = activeConv?.workspaceId;
+
           const systemMsg: Message = {
             id: `system-completed-${Date.now()}`,
             conversationId,
@@ -3019,18 +3636,41 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             a.status === 'thinking' ? { ...a, status: 'online' as const } : a
           );
 
-          let updatedArtifacts = [...state.artifacts];
+          // Update conversationArtifacts
+          const updatedConversationArtifacts = { ...state.conversationArtifacts };
+          const convList = [...(updatedConversationArtifacts[conversationId] || [])];
           if (artifacts && artifacts.length > 0) {
             artifacts.forEach((art: any) => {
-              const artWithRunId = { ...art, runId: runId || art.runId };
-              const idx = updatedArtifacts.findIndex(a => a.id === artWithRunId.id);
+              const artWithRunId = { ...art, runId: runId || art.runId, workspaceId };
+              const idx = convList.findIndex(a => a.id === artWithRunId.id && a.runId === artWithRunId.runId);
               if (idx > -1) {
-                updatedArtifacts[idx] = { ...updatedArtifacts[idx], ...artWithRunId };
+                convList[idx] = { ...convList[idx], ...artWithRunId };
               } else {
-                updatedArtifacts.push(artWithRunId);
+                convList.push(artWithRunId);
               }
             });
           }
+          updatedConversationArtifacts[conversationId] = convList;
+
+          // Update workspaceArtifacts
+          const updatedWorkspaceArtifacts = { ...state.workspaceArtifacts };
+          if (workspaceId) {
+            const wsList = [...(updatedWorkspaceArtifacts[workspaceId] || [])];
+            if (artifacts && artifacts.length > 0) {
+              artifacts.forEach((art: any) => {
+                const artWithRunId = { ...art, runId: runId || art.runId, workspaceId };
+                const idx = wsList.findIndex(a => a.id === artWithRunId.id && a.runId === artWithRunId.runId);
+                if (idx > -1) {
+                  wsList[idx] = { ...wsList[idx], ...artWithRunId };
+                } else {
+                  wsList.push(artWithRunId);
+                }
+              });
+            }
+            updatedWorkspaceArtifacts[workspaceId] = wsList;
+          }
+
+          const updatedArtifacts = workspaceId ? (updatedWorkspaceArtifacts[workspaceId] || []) : convList;
 
           let updatedMessages = completeAllTaskPlanSteps(state.messages);
           updatedMessages = [...updatedMessages, systemMsg];
@@ -3039,6 +3679,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             messages: updatedMessages,
             agents: updatedAgents,
             artifacts: updatedArtifacts,
+            conversationArtifacts: updatedConversationArtifacts,
+            workspaceArtifacts: updatedWorkspaceArtifacts,
             isProcessing: false,
           };
 
@@ -3075,6 +3717,85 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         if (executionMode === 'sandbox') {
           set({ rightPanelTab: 'sandbox' });
         }
+      });
+
+      const unsubRunQueued = wsClient.on('run.queued', (event: any) => {
+        const { runId, conversationId, run } = event.data;
+        const targetConvId = conversationId || get().activeConversationId;
+
+        set(state => {
+          const runDetail = run ? {
+            ...run,
+            steps: run.steps?.map((s: any) => ({
+              ...s,
+              log: s.log || s.logs || '',
+              description: s.description || s.task || ''
+            })) || []
+          } : undefined;
+
+          const baseStateUpdates: any = {
+            rightPanelTab: 'sandbox'
+          };
+
+          if (targetConvId) {
+            baseStateUpdates.runsByConversationId = {
+              ...state.runsByConversationId,
+              [targetConvId]: state.runsByConversationId[targetConvId]?.includes(runId)
+                ? state.runsByConversationId[targetConvId]
+                : [runId, ...(state.runsByConversationId[targetConvId] || [])]
+            };
+            baseStateUpdates.activeRunIdByConversationId = {
+              ...state.activeRunIdByConversationId,
+              [targetConvId]: runId
+            };
+          }
+
+          if (runDetail) {
+            baseStateUpdates.runDetailsById = {
+              ...state.runDetailsById,
+              [runId]: runDetail
+            };
+          }
+
+          return { ...state, ...baseStateUpdates };
+        });
+      });
+
+      const unsubRunStarted = wsClient.on('run.started', (event: any) => {
+        const { runId, conversationId, run } = event.data;
+        const targetConvId = conversationId || get().activeConversationId;
+
+        set(state => {
+          const runDetail = run ? {
+            ...run,
+            steps: run.steps?.map((s: any) => ({
+              ...s,
+              log: s.log || s.logs || '',
+              description: s.description || s.task || ''
+            })) || []
+          } : undefined;
+
+          const baseStateUpdates: any = {};
+          if (runDetail) {
+            baseStateUpdates.runDetailsById = {
+              ...state.runDetailsById,
+              [runId]: runDetail
+            };
+          }
+          return { ...state, ...baseStateUpdates };
+        });
+
+        if (runId) {
+          get().loadSandboxFileTree(runId);
+        }
+      });
+
+      const unsubLockAcquired = wsClient.on('workspace.mutation_lock.acquired', (event: any) => {
+        console.log('[WS] workspace.mutation_lock.acquired', event.data);
+      });
+
+      const unsubLockReleased = wsClient.on('workspace.mutation_lock.released', (event: any) => {
+        console.log('[WS] workspace.mutation_lock.released', event.data);
       });
 
       const unsubRunCreated = wsClient.on('run.created', (event: any) => {
@@ -3389,19 +4110,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
       const unsubRunCompleted = wsClient.on('run.completed', (event: any) => {
         const { runId, run, files, artifacts } = event.data;
-        
-        let updatedArtifacts = [...get().artifacts];
-        if (artifacts && artifacts.length > 0) {
-          artifacts.forEach((art: any) => {
-            const artWithRunId = { ...art, runId: runId || art.runId };
-            const idx = updatedArtifacts.findIndex(a => a.id === artWithRunId.id);
-            if (idx > -1) {
-              updatedArtifacts[idx] = { ...updatedArtifacts[idx], ...artWithRunId };
-            } else {
-              updatedArtifacts.push(artWithRunId);
-            }
-          });
-        }
+        const targetConvId = run?.conversationId || get().activeConversationId;
 
         if (run) {
           set(state => {
@@ -3414,12 +4123,15 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             const updatedAgents = state.agents.map(a =>
               a.status === 'thinking' ? { ...a, status: 'online' as const } : a
             );
+
+            const artifactsState = updateArtifactsInState(state, targetConvId || '', artifacts || [], runId);
+
             const nextState = {
+              ...artifactsState,
               runDetailsById: {
                 ...state.runDetailsById,
                 [runId]: runDetail
               },
-              artifacts: updatedArtifacts,
               agents: updatedAgents
             };
             return updateSandboxStatusMessage({ ...state, ...nextState }, runDetail.conversationId || state.activeConversationId, runId);
@@ -3430,8 +4142,11 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               a.status === 'thinking' ? { ...a, status: 'online' as const } : a
             );
             const targetRun = state.runDetailsById[runId];
+
+            const artifactsState = updateArtifactsInState(state, targetConvId || '', artifacts || [], runId);
+
             const nextState = {
-              artifacts: updatedArtifacts,
+              ...artifactsState,
               agents: updatedAgents
             };
             if (targetRun) {
@@ -3474,19 +4189,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
       const unsubRunFailed = wsClient.on('run.failed', (event: any) => {
         const { runId, run, artifacts } = event.data;
-
-        let updatedArtifacts = [...get().artifacts];
-        if (artifacts && artifacts.length > 0) {
-          artifacts.forEach((art: any) => {
-            const artWithRunId = { ...art, runId: runId || art.runId };
-            const idx = updatedArtifacts.findIndex(a => a.id === artWithRunId.id);
-            if (idx > -1) {
-              updatedArtifacts[idx] = { ...updatedArtifacts[idx], ...artWithRunId };
-            } else {
-              updatedArtifacts.push(artWithRunId);
-            }
-          });
-        }
+        const targetConvId = run?.conversationId || get().activeConversationId;
 
         if (run) {
           set(state => {
@@ -3499,12 +4202,15 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             const updatedAgents = state.agents.map(a =>
               a.status === 'thinking' ? { ...a, status: 'online' as const } : a
             );
+
+            const artifactsState = updateArtifactsInState(state, targetConvId || '', artifacts || [], runId);
+
             const nextState = {
+              ...artifactsState,
               runDetailsById: {
                 ...state.runDetailsById,
                 [runId]: runDetail
               },
-              artifacts: updatedArtifacts,
               agents: updatedAgents
             };
             return updateSandboxStatusMessage({ ...state, ...nextState }, runDetail.conversationId || state.activeConversationId, runId);
@@ -3515,8 +4221,11 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               a.status === 'thinking' ? { ...a, status: 'online' as const } : a
             );
             const targetRun = state.runDetailsById[runId];
+
+            const artifactsState = updateArtifactsInState(state, targetConvId || '', artifacts || [], runId);
+
             const nextState = {
-              artifacts: updatedArtifacts,
+              ...artifactsState,
               agents: updatedAgents
             };
             if (targetRun) {
@@ -3788,6 +4497,10 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         unsubAllCompleted,
         unsubStatusChanged,
         unsubRunCreated,
+        unsubRunQueued,
+        unsubRunStarted,
+        unsubLockAcquired,
+        unsubLockReleased,
         unsubRunStepStarted,
         unsubRunStepLog,
         unsubRunStepCompleted,
@@ -4098,7 +4811,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     }
   },
   saveEditedArtifact: async (artifactId, newContent) => {
-    const { artifacts, useMockMode } = get();
+    const { artifacts, useMockMode, activeConversationId } = get();
     const originalArt = artifacts.find(a => a.id === artifactId);
     if (!originalArt) return;
 
@@ -4112,7 +4825,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       try {
         const res = await updateArtifactContent(artifactId, { 
           content: newContent,
-          changeSummary: `用户手动修改`
+          changeSummary: `用户手动修改`,
+          conversationId: activeConversationId || undefined
         });
         if (res.code === 0) {
           updatedArt = res.data;
@@ -4160,14 +4874,16 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       };
     }
 
+    const targetConvId = activeConversationId || originalArt.conversationId;
     const editLogMsg: Message = {
       id: createId('msg'),
-      conversationId: originalArt.conversationId,
+      conversationId: targetConvId,
       senderId: 'system',
       senderName: '系统',
       role: 'system',
-      type: 'status',
-      content: `用户手动编辑了产物 ${originalArt.title}，已生成新版本 v${nextVer}`,
+      type: 'artifact',
+      artifactId: artifactId,
+      content: `生成产物 ${originalArt.title}`,
       createdAt: getCurrentFullTime(),
     };
 
@@ -4176,31 +4892,45 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       if (!updatedVersionsList.some(v => v.id === newVersion.id)) {
         updatedVersionsList.push(newVersion);
       }
+
+      // Map across conversationArtifacts
+      const updatedConversationArtifacts = { ...state.conversationArtifacts };
+      Object.keys(updatedConversationArtifacts).forEach(cId => {
+        updatedConversationArtifacts[cId] = updatedConversationArtifacts[cId].map(a => 
+          a.id === artifactId ? { ...a, ...updatedArt } : a
+        );
+      });
+
+      // Map across workspaceArtifacts
+      const updatedWorkspaceArtifacts = { ...state.workspaceArtifacts };
+      Object.keys(updatedWorkspaceArtifacts).forEach(wsId => {
+        updatedWorkspaceArtifacts[wsId] = updatedWorkspaceArtifacts[wsId].map(a => 
+          a.id === artifactId ? { ...a, ...updatedArt } : a
+        );
+      });
+
+      const updatedConversationMessages = { ...state.conversationMessages };
+      if (useMockMode && targetConvId) {
+        updatedConversationMessages[targetConvId] = [
+          ...(updatedConversationMessages[targetConvId] || []),
+          editLogMsg
+        ];
+      }
+
       return {
         artifacts: state.artifacts.map(a => a.id === artifactId ? updatedArt : a),
+        conversationArtifacts: updatedConversationArtifacts,
+        workspaceArtifacts: updatedWorkspaceArtifacts,
         artifactVersions: {
           ...state.artifactVersions,
           [artifactId]: updatedVersionsList,
         },
         selectedArtifactId: artifactId,
         selectedArtifactVersion: nextVer,
-        messages: [...state.messages, editLogMsg],
+        messages: useMockMode ? [...state.messages, editLogMsg] : state.messages,
+        conversationMessages: updatedConversationMessages,
       };
     });
-
-    if (!useMockMode) {
-      try {
-        await sendMessageNonStreaming(originalArt.conversationId, {
-          content: editLogMsg.content,
-          role: 'system',
-          senderId: 'system',
-          senderName: '系统',
-          type: 'status',
-        } as any);
-      } catch (e) {
-        console.warn('Failed to save edit log system message to backend', e);
-      }
-    }
   },
 
   getContextUsage: async () => {
@@ -4248,8 +4978,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
   getOrCreateAgentChat: async (agentId: string) => {
     const { conversations, agents, useMockMode, currentUser } = get();
+    const targetAgent = agents.find(a => a.id === agentId) || get().allAgents.find(a => a.id === agentId);
 
-    const targetAgent = agents.find(a => a.id === agentId);
     if (targetAgent && (targetAgent.requiresWorkspace === true || targetAgent.supportsContactConversation === false)) {
       set({ preselectedAgentId: agentId, isNewConversationOpen: true });
       alert(`智能体 "${targetAgent.name}" 仅能在工作区会话内使用，请选择或新建一个工作区开始。`);
@@ -4260,7 +4990,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       try {
         const userId = currentUser.id || 'user-admin';
         const res = await getAgentContact(userId, agentId);
-        if (res.code === 0 && res.data) {
+        if (res && res.code === 40002) {
+          console.warn("Backend returned 40002, falling back to local fallback conversation");
+        } else if (res.code === 0 && res.data) {
           const apiConv = res.data.conversation;
           const mappedConv: Conversation = {
             ...apiConv,
@@ -4280,8 +5012,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           await get().setActiveConversationId(mappedConv.id);
           return mappedConv;
         }
-      } catch (e) {
-        console.error('Failed to get or create backend agent contact session', e);
+      } catch (e: any) {
+        console.error('Failed to get or create backend agent contact session, falling back to local creation', e);
       }
     }
 
@@ -4996,7 +5728,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         const mockFiles = [
           {
             id: 'file-readme',
-            sandboxId: currentRun.sandboxId,
+            sandboxId: currentRun.sandboxId || '',
             runId,
             path: conflict.filePath,
             contentHash: 'hash-resolved',
@@ -5068,35 +5800,72 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
   cancelSandboxRun: async (runId) => {
     const { useMockMode } = get();
+
+    // 1. Optimistic Update (Immediate UI response)
+    set(state => {
+      const current = state.runDetailsById[runId];
+      if (!current) return {};
+      
+      const updatedSteps = current.steps?.map((s: any) => {
+        if (s.status === 'running' || s.status === 'pending') {
+          return { 
+            ...s, 
+            status: 'failed' as const, 
+            log: (s.log || '') + '\n[System] 用户已终止任务执行。' 
+          };
+        }
+        return s;
+      }) || [];
+
+      const updatedAgents = state.agents.map(a => {
+        if (a.status === 'thinking') {
+          return { ...a, status: 'online' as const };
+        }
+        return a;
+      });
+
+      return {
+        runDetailsById: {
+          ...state.runDetailsById,
+          [runId]: {
+            ...current,
+            status: 'cancelled' as const,
+            finishedAt: getCurrentFullTime(),
+            steps: updatedSteps
+          }
+        },
+        agents: updatedAgents
+      };
+    });
+
     if (!useMockMode) {
       try {
         const res = await sandboxService.cancelSandboxRun(runId);
         if (res.code === 0 && res.data) {
-          set(state => ({
-            runDetailsById: {
-              ...state.runDetailsById,
-              [runId]: res.data
-            }
-          }));
+          set(state => {
+            const backendData = res.data;
+            const updatedAgents = state.agents.map(a => {
+              if (a.status === 'thinking') {
+                return { ...a, status: 'online' as const };
+              }
+              return a;
+            });
+            return {
+              runDetailsById: {
+                ...state.runDetailsById,
+                [runId]: {
+                  ...state.runDetailsById[runId],
+                  ...backendData,
+                  status: 'cancelled' as const
+                }
+              },
+              agents: updatedAgents
+            };
+          });
         }
       } catch (e) {
         console.error('[Store] 取消沙箱失败', e);
       }
-    } else {
-      set(state => {
-        const current = state.runDetailsById[runId];
-        if (!current) return {};
-        return {
-          runDetailsById: {
-            ...state.runDetailsById,
-            [runId]: {
-              ...current,
-              status: 'cancelled' as const,
-              finishedAt: getCurrentFullTime()
-            }
-          }
-        };
-      });
     }
   },
 
@@ -6036,14 +6805,28 @@ useAgentHubStore.subscribe((state, prevState) => {
     }
   }
   if (activeId && state.artifacts && state.artifacts !== prevState.artifacts) {
-    const cache = (useAgentHubStore.getState() as any).conversationArtifacts || {};
-    if (cache[activeId] !== state.artifacts) {
-      useAgentHubStore.setState((prev: any) => ({
-        conversationArtifacts: {
-          ...prev.conversationArtifacts,
-          [activeId]: state.artifacts
-        }
-      }));
+    const activeConv = state.conversations.find((c: any) => c.id === activeId);
+    const workspaceId = activeConv?.workspaceId;
+    if (workspaceId) {
+      const cache = (useAgentHubStore.getState() as any).workspaceArtifacts || {};
+      if (cache[workspaceId] !== state.artifacts) {
+        useAgentHubStore.setState((prev: any) => ({
+          workspaceArtifacts: {
+            ...prev.workspaceArtifacts,
+            [workspaceId]: state.artifacts
+          }
+        }));
+      }
+    } else {
+      const cache = (useAgentHubStore.getState() as any).conversationArtifacts || {};
+      if (cache[activeId] !== state.artifacts) {
+        useAgentHubStore.setState((prev: any) => ({
+          conversationArtifacts: {
+            ...prev.conversationArtifacts,
+            [activeId]: state.artifacts
+          }
+        }));
+      }
     }
   }
   if (activeId && state.selectedArtifactId !== prevState.selectedArtifactId) {
@@ -6053,6 +6836,28 @@ useAgentHubStore.subscribe((state, prevState) => {
         conversationSelectedArtifactId: {
           ...prev.conversationSelectedArtifactId,
           [activeId]: state.selectedArtifactId
+        }
+      }));
+    }
+  }
+  if (activeId && state.pins && state.pins !== prevState.pins) {
+    const cache = (useAgentHubStore.getState() as any).conversationPins || {};
+    if (cache[activeId] !== state.pins) {
+      useAgentHubStore.setState((prev: any) => ({
+        conversationPins: {
+          ...prev.conversationPins,
+          [activeId]: state.pins
+        }
+      }));
+    }
+  }
+  if (activeId && state.memories && state.memories !== prevState.memories) {
+    const cache = (useAgentHubStore.getState() as any).conversationMemories || {};
+    if (cache[activeId] !== state.memories) {
+      useAgentHubStore.setState((prev: any) => ({
+        conversationMemories: {
+          ...prev.conversationMemories,
+          [activeId]: state.memories
         }
       }));
     }

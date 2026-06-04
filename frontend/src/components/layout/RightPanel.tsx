@@ -140,6 +140,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
             <SandboxPanel customConversationId={customConversationId} />
           ) : (
             <ArtifactList
+              conversation={conversation}
               artifacts={artifacts}
               onJumpToMessage={handleJumpToMessage}
               onFullScreenPreview={handleFullScreenPreview}

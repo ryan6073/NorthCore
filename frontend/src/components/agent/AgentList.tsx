@@ -32,6 +32,7 @@ const AgentList: React.FC<AgentListProps> = ({ agents }) => {
     a => !agents.some(active => active.id === a.id)
       && a.enabled === true
       && a.status !== 'disabled'
+      && a.id !== 'agent-orchestrator'
   );
 
   const handleAdd = async (agentId: string) => {

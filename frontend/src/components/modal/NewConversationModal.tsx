@@ -26,7 +26,7 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
   const preselectedAgentId = useAgentHubStore(state => state.preselectedAgentId);
   const setPreselectedAgentId = useAgentHubStore(state => state.setPreselectedAgentId);
 
-  const displayAgents = agents;
+  const displayAgents = agents.filter(a => a.enabled === true && a.status !== 'disabled' && a.id !== 'agent-orchestrator');
 
   useEffect(() => {
     if (open) {

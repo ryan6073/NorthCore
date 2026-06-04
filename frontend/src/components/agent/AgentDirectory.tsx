@@ -19,7 +19,7 @@ const AgentDirectory: React.FC<AgentDirectoryProps> = ({
   const [keyword, setKeyword] = useState('');
 
   const filteredAgents = agents
-    .filter(agent => agent.enabled)
+    .filter(agent => agent.id !== 'agent-orchestrator')
     .filter(agent =>
       agent.name.toLowerCase().includes(keyword.toLowerCase()) ||
       agent.description.toLowerCase().includes(keyword.toLowerCase())

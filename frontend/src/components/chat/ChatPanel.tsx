@@ -78,6 +78,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const [inputValue, setInputValue] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -130,9 +131,18 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
 
   const lastScrolledConversationId = useRef<string | undefined>(undefined);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const prevMessagesLengthRef = useRef<number>(0);
+  const justSwitchedRef = useRef<boolean>(true);
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     messagesEndRef.current?.scrollIntoView({ behavior });
+  };
+
+  const isNearBottom = () => {
+    const container = scrollContainerRef.current;
+    if (!container) return true;
+    const threshold = 150; // pixels from the bottom
+    return container.scrollHeight - container.scrollTop - container.clientHeight <= threshold;
   };
 
   const lastMessageId = messages.length > 0 ? messages[messages.length - 1].id : null;
@@ -179,15 +189,43 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   };
 
   useEffect(() => {
-    const belongsToCurrentConv = messages.length > 0 && messages[0].conversationId === conversationId;
+    if (!conversationId) return;
 
-    if (lastScrolledConversationId.current !== conversationId) {
+    const isSameConv = lastScrolledConversationId.current === conversationId;
+    
+    const prevLength = prevMessagesLengthRef.current;
+    prevMessagesLengthRef.current = messages.length;
+
+    if (!isSameConv) {
       scrollToBottom('instant');
-      if (belongsToCurrentConv) {
-        lastScrolledConversationId.current = conversationId;
+      lastScrolledConversationId.current = conversationId;
+      justSwitchedRef.current = true;
+      const timer = setTimeout(() => {
+        justSwitchedRef.current = false;
+      }, 800);
+      return () => clearTimeout(timer);
+    }
+
+    if (justSwitchedRef.current) {
+      scrollToBottom('instant');
+      return;
+    }
+
+    const lastMsg = messages[messages.length - 1];
+    if (!lastMsg) return;
+
+    if (messages.length > prevLength) {
+      if (lastMsg.role === 'user') {
+        scrollToBottom('smooth');
+      } else {
+        if (isNearBottom()) {
+          scrollToBottom('smooth');
+        }
       }
     } else {
-      scrollToBottom('smooth');
+      if (isNearBottom() && lastMsg.role === 'agent' && lastMsg.type !== 'status') {
+        scrollToBottom('instant');
+      }
     }
   }, [conversationId, messagesLength, lastMessageId, lastMessageContent]);
 
@@ -335,7 +373,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     const matches = [...inputText.matchAll(/@([^\s]+)/g)];
     if (matches.length === 0) return null;
     const lastName = matches[matches.length - 1][1];
-    const found = agents.find(a => a.name === lastName);
+    const found = agents.find(a => a.name === lastName && a.enabled === true && a.status !== 'disabled');
     return found ? found.id : null;
   }, [agents]);
 
@@ -708,7 +746,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
       
       <div className="flex-grow flex min-h-0 relative bg-[#fafbfb] dark:bg-slate-950/40 z-10 transition-colors">
         {/* Messages List Area */}
-        <div className="flex-grow overflow-y-auto px-6 py-5 min-h-0 space-y-4 transition-all duration-300">
+        <div ref={scrollContainerRef} className="flex-grow overflow-y-auto px-6 py-5 min-h-0 space-y-4 transition-all duration-300">
           {messages.length === 0 ? (
             conversation?.mode === 'agent' ? (
               <div className="h-full flex flex-col items-center justify-center text-center p-8 max-w-sm mx-auto select-none">
@@ -999,7 +1037,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
           </div>
         )}
 
-        {!(conversation?.mode === 'agent' && agents.length > 0 && !(agents[0].enabled === true && agents[0].status !== 'disabled')) ? (
+        {!(conversation?.mode === 'agent' && agents.length > 0 && (agents[0].enabled === false || agents[0].status === 'disabled')) ? (
           <div className="flex-1 p-4 pt-1 border-t border-lark-border dark:border-slate-800 bg-white dark:bg-slate-900 h-full flex flex-col min-h-0 z-20 transition-colors">
             <div className={`border rounded-xl bg-white dark:bg-slate-950 transition-all flex flex-col relative z-30 flex-1 min-h-0 overflow-hidden ${
               conversation?.isArchived 
@@ -1275,7 +1313,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M5.07 19H19a2 2 0 001.73-3L13.73 4a2 2 0 00-3.46 0L3.27 16a2 2 0 001.8 3z" />
               </svg>
               <span className="text-sm text-amber-700 dark:text-amber-400 font-medium">
-                {agents[0].status === 'disabled' ? `${agents[0].name} 已被隐藏停用，无法继续发送消息。` : `该智能体当前不可用，无法发送消息。`}
+                {agents[0].status === 'disabled' || agents[0].enabled === false ? `${agents[0].name} 已被隐藏停用，无法继续发送消息。` : `该智能体当前不可用，无法发送消息。`}
               </span>
             </div>
           </div>

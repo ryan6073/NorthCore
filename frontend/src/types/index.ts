@@ -77,10 +77,26 @@ export type WorkflowStepStatus = 'pending' | 'running' | 'completed' | 'failed';
 
 export interface AgentTool {
   id: string;
+  enabled: boolean;
+  name?: string;
+  description?: string;
+  displayGroup?: string;
+  riskGroup?: string;
+  riskLevel?: string;
+}
+
+export type AgentToolCatalogItem = {
+  id: string;
   name: string;
   description: string;
-  enabled: boolean;
-}
+  displayGroup: "context" | "workspace" | "sandbox" | "artifact";
+  riskGroup: "context_read" | "workspace_write" | "platform_write" | "command" | "deploy" | "external" | "memory";
+  riskLevel: "low" | "medium" | "high" | "critical";
+  runtimes: Array<"native" | "claude_code" | "codex" | "opencode">;
+  permissionKeys: string[];
+  requiresWorkspace: boolean;
+  mutatesWorkspace: boolean;
+};
 
 export interface AgentPermission {
   canReadFiles: boolean;
@@ -235,6 +251,8 @@ export interface ArtifactVersion {
   | 'orchestrator';
   parentVersionId?: string;
   metadata?: Record<string, any>;
+  sourceConversationId?: string;
+  sourceWorkspaceId?: string;
   createdAt: string;
 }
 
@@ -539,6 +557,20 @@ export interface AgentRunStep {
   finishedAt?: string | null;
   runtime?: string;
   runtimeMetadata?: Record<string, any>;
+  mutationMode?: "read" | "write" | "unknown";
+  targetPaths?: string[];
+  readPaths?: string[];
+  usesStableSnapshot?: boolean;
+  writeToolOnly?: boolean;
+  output?: {
+    changedFiles?: string[];
+    extraChangedFiles?: Array<{
+      path: string;
+      reason?: string;
+      targetPaths?: string[];
+    }>;
+    outsideDeclaredTargetPaths?: string[];
+  };
 }
 
 export interface SandboxFile {
@@ -575,7 +607,10 @@ export interface RunFileDetail extends RunFile {
 
 export interface Artifact {
   id: string;
+  artifactId?: string;
   conversationId: string;
+  originConversationId?: string;
+  workspaceId?: string | null;
   runId?: string;
   title: string;
   type: ArtifactType;
@@ -629,10 +664,10 @@ export interface SandboxConflict {
 
 export interface AgentRunDetail {
   id: string;
-  sandboxId: string;
+  sandboxId?: string | null;
   conversationId: string;
   ownerUserId: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'conflict' | 'cancelled';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'conflict' | 'cancelled' | 'queued';
   prompt: string;
   dag: RunDag;
   summary: string;
@@ -652,6 +687,10 @@ export interface AgentRunDetail {
   retryRootRunId?: string | null;
   retryAttempt?: number;
   maxRetryAttempts?: number;
+  runMode?: 'read' | 'write' | 'deploy';
+  queuedReason?: string | null;
+  queuePosition?: number | null;
+  lockOwnerId?: string | null;
 }
 
 export type AgentRunStepStatus =

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Artifact } from '@/types';
+import { Artifact, Conversation } from '@/types';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 import { 
   Folder, 
@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 
 interface ArtifactListProps {
+  conversation?: Conversation;
   artifacts: Artifact[];
   onJumpToMessage: (artifactId: string) => void;
   onFullScreenPreview: (artifactId: string) => void;
@@ -34,6 +35,7 @@ interface TreeFileNode {
 }
 
 const ArtifactList: React.FC<ArtifactListProps> = ({
+  conversation,
   artifacts,
   onJumpToMessage,
   onFullScreenPreview,
@@ -43,7 +45,30 @@ const ArtifactList: React.FC<ArtifactListProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({});
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [activeTab, setActiveTab] = useState<'workspace' | 'conversation'>('workspace');
   
+  const workspaceId = conversation?.workspaceId;
+
+  const workspaceArtifacts = useAgentHubStore(state => 
+    workspaceId ? (state.workspaceArtifacts[workspaceId] || []) : []
+  );
+  const conversationArtifacts = useAgentHubStore(state => 
+    conversation ? (state.conversationArtifacts[conversation.id] || []) : []
+  );
+  const conversations = useAgentHubStore(state => state.conversations);
+
+  const getConvTitle = (cId: string) => {
+    const c = conversations.find(x => x.id === cId);
+    return c ? c.title : '未知会话';
+  };
+
+  const baseArtifacts = useMemo(() => {
+    if (workspaceId) {
+      return activeTab === 'workspace' ? workspaceArtifacts : conversationArtifacts;
+    }
+    return artifacts;
+  }, [workspaceId, activeTab, workspaceArtifacts, conversationArtifacts, artifacts]);
+
   const globalSelectedArtifactId = useAgentHubStore(state => state.selectedArtifactId);
   const cachedSelectedArtifactId = useAgentHubStore(state => 
     customConversationId ? (state.conversationSelectedArtifactId[customConversationId] || null) : null
@@ -65,13 +90,13 @@ const ArtifactList: React.FC<ArtifactListProps> = ({
   };
 
   const filteredArtifacts = useMemo(() => {
-    if (!searchQuery) return artifacts;
-    return artifacts.filter(art =>
+    if (!searchQuery) return baseArtifacts;
+    return baseArtifacts.filter(art =>
       art.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (art.type && art.type.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (art.runId && art.runId.toLowerCase().includes(searchQuery.toLowerCase()))
     );
-  }, [artifacts, searchQuery]);
+  }, [baseArtifacts, searchQuery]);
 
   const groups = useMemo(() => {
     const result: Record<string, { id: string; name: string; items: Artifact[] }> = {};
@@ -214,6 +239,14 @@ const ArtifactList: React.FC<ArtifactListProps> = ({
                   v{node.artifact.latestVersion}
                 </span>
               )}
+              {node.artifact && conversation && node.artifact.conversationId !== conversation.id && (
+                <span 
+                  className="text-[9px] px-1.5 py-0.5 bg-violet-50 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400 rounded-md border border-violet-100 dark:border-violet-900/30 truncate max-w-[80px] flex-shrink-0 scale-95" 
+                  title={`来源会话: ${getConvTitle(node.artifact.conversationId)}`}
+                >
+                  {getConvTitle(node.artifact.conversationId)}
+                </span>
+              )}
             </div>
 
             {/* Hover Actions */}
@@ -255,14 +288,46 @@ const ArtifactList: React.FC<ArtifactListProps> = ({
   return (
     <div className="flex-1 flex flex-col overflow-hidden h-full">
       {/* Header bar */}
-      <div className="p-3 pb-1 border-b border-lark-border/40 dark:border-slate-800 bg-white dark:bg-slate-900 flex-shrink-0">
-        <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 px-1.5 py-1">
-          生成产物树 ({artifacts.length})
-        </h3>
+      <div className="p-3 pb-1.5 border-b border-lark-border/40 dark:border-slate-800 bg-white dark:bg-slate-900 flex-shrink-0 flex flex-col gap-2 animate-fade-in">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 px-1.5">
+            生成产物树 ({baseArtifacts.length})
+          </h3>
+        </div>
+        {workspaceId && (
+          <div className="flex p-0.5 bg-slate-100 dark:bg-slate-950/60 rounded-lg border border-slate-200/50 dark:border-slate-850">
+            <button
+              onClick={() => setActiveTab('workspace')}
+              className={`flex-1 py-1.5 text-[10px] font-bold rounded-md transition-all flex items-center justify-center gap-1.5 ${
+                activeTab === 'workspace'
+                  ? 'bg-white dark:bg-slate-850 text-lark-primary dark:text-violet-450 shadow-sm border border-slate-200/20 dark:border-slate-800'
+                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              <span>工作区产物</span>
+              <span className={`px-1.5 py-0.5 rounded-full text-[8px] scale-90 ${activeTab === 'workspace' ? 'bg-lark-primary/10 dark:bg-violet-500/20 text-lark-primary dark:text-violet-400' : 'bg-slate-200/50 dark:bg-slate-800 text-slate-400'}`}>
+                {workspaceArtifacts.length}
+              </span>
+            </button>
+            <button
+              onClick={() => setActiveTab('conversation')}
+              className={`flex-1 py-1.5 text-[10px] font-bold rounded-md transition-all flex items-center justify-center gap-1.5 ${
+                activeTab === 'conversation'
+                  ? 'bg-white dark:bg-slate-850 text-lark-primary dark:text-violet-450 shadow-sm border border-slate-200/20 dark:border-slate-800'
+                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              <span>本会话记录</span>
+              <span className={`px-1.5 py-0.5 rounded-full text-[8px] scale-90 ${activeTab === 'conversation' ? 'bg-lark-primary/10 dark:bg-violet-500/20 text-lark-primary dark:text-violet-400' : 'bg-slate-200/50 dark:bg-slate-800 text-slate-400'}`}>
+                {conversationArtifacts.length}
+              </span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Search Input bar */}
-      {artifacts.length > 0 && (
+      {baseArtifacts.length > 0 && (
         <div className="p-3 pb-1 flex-shrink-0">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
@@ -279,7 +344,7 @@ const ArtifactList: React.FC<ArtifactListProps> = ({
 
       {/* File Tree scroll view */}
       <div className="flex-grow overflow-y-auto min-h-0 bg-slate-50/50 dark:bg-slate-950/20">
-        {artifacts.length === 0 ? (
+        {baseArtifacts.length === 0 ? (
           <div className="h-full flex items-center justify-center text-center p-4">
             <p className="text-xs text-slate-400 dark:text-slate-500">
               Agent 生成的代码、文档或网页将在此处以文件树列出。

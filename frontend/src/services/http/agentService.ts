@@ -7,6 +7,7 @@ import type {
   AgentCategory,
   AgentProvider,
   Conversation,
+  AgentToolCatalogItem,
 } from '@/types';
 
 interface GetAgentListParams {
@@ -48,6 +49,10 @@ export async function deleteAgent(
   return await http.delete(`/agents/${agentId}`);
 }
 
+export async function getAgentToolCatalog(): Promise<BaseApiResponse<AgentToolCatalogItem[]>> {
+  return await http.get('/agent-tools');
+}
+
 export interface AgentContactResponse {
   contactId: string;
   conversationId: string;
@@ -68,6 +73,7 @@ const agentService = {
   createAgent,
   deleteAgent,
   getAgentContact,
+  getAgentToolCatalog,
 };
 
 export default agentService;

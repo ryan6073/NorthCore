@@ -4,7 +4,7 @@ import {
   CheckCircle2, AlertTriangle, Loader2, Terminal,
   FileText, GitMerge, ArrowLeft, Ban, ShieldAlert,
   ChevronRight, FileCode, Check, Edit2, Undo, Globe,
-  Sparkles, Network, RotateCw
+  Sparkles, Network, RotateCw, Clock
 } from 'lucide-react';
 import { AgentRunStep, SandboxFile, SandboxConflict } from '../../types';
 import { DeploymentView } from './DeploymentView';
@@ -123,6 +123,13 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
 
   const getStatusBadge = (status: string) => {
     switch (status) {
+      case 'queued':
+        return (
+          <span className="flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+            <Clock className="w-3.5 h-3.5 mr-1" />
+            排队中
+          </span>
+        );
       case 'running':
         return (
           <span className="flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
@@ -224,6 +231,16 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
           <div>
             <div className="flex items-center space-x-2">
               <span className="text-xs uppercase tracking-wider font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded">Docker Sandbox V1</span>
+              {activeRun.runMode && (
+                <span className="text-[10px] font-semibold text-slate-350 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700/50">
+                  {activeRun.runMode === 'write' ? '写入模式' : activeRun.runMode === 'deploy' ? '部署模式' : '只读模式'}
+                </span>
+              )}
+              {activeRun.status === 'queued' && activeRun.queuePosition !== undefined && activeRun.queuePosition !== null && (
+                <span className="text-[10px] font-semibold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 animate-pulse">
+                  队列第 {activeRun.queuePosition} 位
+                </span>
+              )}
               {getStatusBadge(activeRun.status)}
             </div>
             <h3 className="text-sm font-semibold mt-2 line-clamp-1 text-slate-100" title={activeRun.prompt}>
@@ -243,7 +260,7 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
               </div>
             )}
           </div>
-          {(activeRun.status === 'running' || activeRun.status === 'pending' || activeRun.status === 'conflict') && (
+          {(activeRun.status === 'running' || activeRun.status === 'pending' || activeRun.status === 'conflict' || activeRun.status === 'queued') && (
             <button
               onClick={() => activeRunId && cancelSandboxRun(activeRunId)}
               className="text-xs flex items-center space-x-1 px-2.5 py-1.5 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-all font-medium"
@@ -352,7 +369,29 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
 
         {activeTab === 'workflow' && (
           <div className="flex flex-col h-full">
-            <div className="p-4 border-b border-slate-800/60 bg-slate-950/20">
+            {activeRun.status === 'queued' ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-6 text-slate-400 space-y-4">
+                <div className="w-16 h-16 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center animate-pulse">
+                  <Clock className="w-8 h-8 text-amber-400" />
+                </div>
+                <h4 className="text-sm font-semibold text-slate-200">排队等待锁定工作区...</h4>
+                <p className="text-xs text-slate-500 text-center max-w-xs leading-relaxed">
+                  当前工作区存在正在执行的写入或部署任务。本任务已进入队列，等待锁释放后将自动开始执行。
+                </p>
+                {activeRun.queuePosition !== undefined && activeRun.queuePosition !== null && (
+                  <div className="px-3 py-1.5 bg-slate-800 rounded-full border border-slate-700 text-xs font-mono text-amber-300">
+                    当前队列位置: <span className="font-bold">{activeRun.queuePosition}</span> 位
+                  </div>
+                )}
+                {activeRun.queuedReason && (
+                  <div className="text-[10px] text-slate-500 bg-slate-950 p-2 rounded border border-slate-850 font-mono">
+                    原因: {activeRun.queuedReason === 'workspace_mutation_lock_held' ? '工作区修改锁被占用' : activeRun.queuedReason}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="p-4 border-b border-slate-800/60 bg-slate-950/20">
               <div className="text-[11px] uppercase text-slate-500 font-bold tracking-wider mb-2">
                 {activeRun.dag?.strategy === 'platform_single_step'
                   ? '平台任务执行 (单步)'
@@ -477,22 +516,28 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
               <div className="space-y-2">
                 {activeRun.steps?.map((step: AgentRunStep, idx: number) => {
                   const isSelected = step.id === selectedStepId;
+                  
+                  const isRunTerminated = activeRun.status === 'cancelled' || activeRun.status === 'failed';
+                  const effectiveStatus = (isRunTerminated && (step.status === 'running' || step.status === 'pending'))
+                    ? 'failed'
+                    : step.status;
+
                   let statusColor = 'text-slate-500 bg-slate-800/30';
                   let icon = <div className="w-2 h-2 rounded-full bg-slate-600" />;
 
-                  if (step.status === 'completed') {
+                  if (effectiveStatus === 'completed') {
                     statusColor = 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5';
                     icon = <CheckCircle2 className="w-4 h-4 text-emerald-400" />;
-                  } else if (step.status === 'running') {
+                  } else if (effectiveStatus === 'running') {
                     statusColor = 'text-blue-400 border-blue-500/30 bg-blue-500/5 ring-1 ring-blue-500/20';
                     icon = <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />;
-                  } else if (step.status === 'failed') {
+                  } else if (effectiveStatus === 'failed') {
                     statusColor = 'text-rose-400 border-rose-500/30 bg-rose-500/5';
                     icon = <AlertTriangle className="w-4 h-4 text-rose-400" />;
-                  } else if (step.status === 'conflict') {
+                  } else if (effectiveStatus === 'conflict') {
                     statusColor = 'text-amber-400 border-amber-500/30 bg-amber-500/5';
                     icon = <GitMerge className="w-4 h-4 text-amber-400" />;
-                  } else if (step.status === 'blocked') {
+                  } else if (effectiveStatus === 'blocked') {
                     statusColor = 'text-slate-500 border-slate-800 bg-slate-900/20 opacity-60';
                     icon = <Ban className="w-4 h-4 text-slate-500" />;
                   }
@@ -518,7 +563,7 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                             )}
                           </span>
                           <span className={`text-[10px] px-1.5 py-0.2 rounded font-medium ${statusColor}`}>
-                            {step.status}
+                            {effectiveStatus}
                           </span>
                         </div>
                         <p className="text-xs text-slate-400 mt-1 line-clamp-2">
@@ -537,14 +582,90 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                   <Terminal className="w-3.5 h-3.5 text-indigo-400" />
                   <span>step-log: {selectedStep ? `${selectedStep.agentName}` : 'none'}</span>
                 </div>
-                {selectedStep?.status === 'running' && (
-                  <span className="flex items-center text-[10px] text-blue-400 font-medium">
-                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping mr-1.5" />
-                    流式日志输出中
-                  </span>
-                )}
+                {selectedStep && (() => {
+                  const isRunTerminated = activeRun.status === 'cancelled' || activeRun.status === 'failed';
+                  const effectiveSelectedStatus = (isRunTerminated && (selectedStep.status === 'running' || selectedStep.status === 'pending'))
+                    ? 'failed'
+                    : selectedStep.status;
+
+                  return effectiveSelectedStatus === 'running' && (
+                    <span className="flex items-center text-[10px] text-blue-400 font-medium">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping mr-1.5" />
+                      流式日志输出中
+                    </span>
+                  );
+                })()}
               </div>
               <div className="flex-1 overflow-auto p-4 font-mono text-xs text-slate-300 space-y-1 select-text selection:bg-indigo-500/30">
+                {selectedStep && (() => {
+                  const errorText = selectedStep.error || '';
+                  const status = selectedStep.status;
+                  
+                  const isLockLost = status === 'mutation_lock_lost' || errorText.includes('workspace mutation lock 已失效');
+                  const isOutsidePaths = status === 'outside_declared_target_paths' || (selectedStep.output?.outsideDeclaredTargetPaths && selectedStep.output.outsideDeclaredTargetPaths.length > 0) || (selectedStep.output?.extraChangedFiles && selectedStep.output.extraChangedFiles.length > 0);
+                  const isToolBlocked = status === 'dynamic_workspace_tool_blocked' || errorText.includes('dynamic_workspace_tool_blocked');
+
+                  if (isLockLost) {
+                    return (
+                      <div className="mb-3 p-3 bg-rose-500/10 border border-rose-500/20 rounded-lg text-rose-300 text-xs">
+                        <div className="font-semibold flex items-center gap-1.5 mb-1 text-rose-400">
+                          <Ban className="w-4 h-4" /> 写入锁失效
+                        </div>
+                        任务失去工作区写入锁，已停止继续写入。请重新发起任务。
+                      </div>
+                    );
+                  }
+
+                  if (isOutsidePaths) {
+                    return (
+                      <div className="mb-3 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-300 text-xs">
+                        <div className="font-semibold flex items-center gap-1.5 mb-1 text-amber-400">
+                          <GitMerge className="w-4 h-4" /> 写入未声明路径被阻止
+                        </div>
+                        步骤尝试写入未声明的路径，后端已阻止提交以避免覆盖其他变更。
+                        {selectedStep.output?.extraChangedFiles && selectedStep.output.extraChangedFiles.length > 0 && (
+                          <div className="mt-2 p-2 bg-slate-950/60 rounded border border-slate-800 font-mono text-[10px] space-y-1">
+                            <div className="text-slate-400 font-semibold uppercase tracking-wider">调试路径信息:</div>
+                            {selectedStep.output.extraChangedFiles.map((file: any, fIdx: number) => (
+                              <div key={fIdx} className="text-slate-350">
+                                <div>• 路径: <span className="text-amber-400">{file.path}</span></div>
+                                {file.reason && <div className="pl-3 text-slate-500">原因: {file.reason}</div>}
+                                {file.targetPaths && file.targetPaths.length > 0 && (
+                                  <div className="pl-3 text-slate-500">声明路径: {file.targetPaths.join(', ')}</div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  if (isToolBlocked) {
+                    return (
+                      <div className="mb-3 p-3 bg-rose-500/10 border border-rose-500/20 rounded-lg text-rose-300 text-xs">
+                        <div className="font-semibold flex items-center gap-1.5 mb-1 text-rose-400">
+                          <Ban className="w-4 h-4" /> 动态命令执行被阻止
+                        </div>
+                        该步骤被限制为纯文件写入，不能执行命令或环境安装。
+                      </div>
+                    );
+                  }
+
+                  if (errorText) {
+                    return (
+                      <div className="mb-3 p-3 bg-rose-500/10 border border-rose-500/20 rounded-lg text-rose-300 text-xs">
+                        <div className="font-semibold flex items-center gap-1.5 mb-1 text-rose-400">
+                          <AlertTriangle className="w-4 h-4" /> 步骤执行失败
+                        </div>
+                        {errorText}
+                      </div>
+                    );
+                  }
+
+                  return null;
+                })()}
+
                 {selectedStep?.log ? (
                   selectedStep.log.split('\n').map((line: string, i: number) => (
                     <div key={i} className="whitespace-pre-wrap break-all leading-relaxed">
@@ -557,6 +678,8 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                 <div ref={logEndRef} />
               </div>
             </div>
+              </>
+            )}
           </div>
         )}
 

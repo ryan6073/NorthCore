@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useDeploymentStore } from '@/store/useDeploymentStore';
+import { useAgentHubStore } from '@/store/useAgentHubStore';
 import { 
   Globe, Server, Play, Square, Settings, RefreshCw, 
   ExternalLink, Terminal, ChevronRight, AlertTriangle, 
@@ -27,6 +28,12 @@ export const DeploymentView: React.FC<DeploymentViewProps> = ({ workspaceId, con
     startPolling,
     stopPolling
   } = useDeploymentStore();
+
+  const runDetailsById = useAgentHubStore(state => state.runDetailsById);
+  const conversations = useAgentHubStore(state => state.conversations);
+
+  const activeRun = runId ? runDetailsById[runId] : null;
+  const activeConv = conversationId ? conversations.find(c => c.id === conversationId) : null;
 
   const history = deploymentsByWorkspaceId[workspaceId] || [];
   const activeDeployment = activeDeploymentByWorkspaceId[workspaceId] || null;
@@ -105,11 +112,26 @@ export const DeploymentView: React.FC<DeploymentViewProps> = ({ workspaceId, con
       if (backendPort) config.backendPort = Number(backendPort);
     }
 
+    const inferredAgentId = (() => {
+      if (activeRun && activeRun.steps && activeRun.steps.length > 0) {
+        const lastStep = activeRun.steps[activeRun.steps.length - 1];
+        if (lastStep && lastStep.agentId) {
+          return lastStep.agentId;
+        }
+      }
+      if (activeConv && activeConv.agentIds && activeConv.agentIds.length > 0) {
+        return activeConv.agentIds[0];
+      }
+      return undefined;
+    })();
+
     const payload: CreateDeploymentPayload = {
       conversationId,
       runId,
       publicBaseUrl: publicBaseUrl || undefined,
-      config: Object.keys(config).length > 0 ? config : undefined
+      config: Object.keys(config).length > 0 ? config : undefined,
+      agentId: inferredAgentId,
+      targetAgentId: inferredAgentId
     };
 
     await startDeploy(workspaceId, payload);
@@ -120,8 +142,8 @@ export const DeploymentView: React.FC<DeploymentViewProps> = ({ workspaceId, con
     switch (status) {
       case 'queued':
         return (
-          <span className="flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
-            <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />
+          <span className="flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+            <Loader2 className="w-3.5 h-3.5 animate-pulse mr-1" />
             排队中
           </span>
         );
@@ -347,7 +369,11 @@ export const DeploymentView: React.FC<DeploymentViewProps> = ({ workspaceId, con
                   <div className="h-full bg-indigo-500 rounded-full animate-pulse" style={{ width: activeDeployment.status === 'running' ? '70%' : '15%' }} />
                 </div>
                 <p className="text-[10px] text-slate-400 italic">
-                  {activeDeployment.status === 'running' ? '正在执行 Docker 镜像构建及容器拉起，请稍候...' : '正在排队分配部署节点...'}
+                  {activeDeployment.status === 'running' 
+                    ? '正在执行 Docker 镜像构建及容器拉起，请稍候...' 
+                    : (activeDeployment.queuedReason === 'workspace_mutation_lock_held' 
+                      ? `等待工作区写入任务完成 (队列位置: 第 ${activeDeployment.queuePosition || 1} 位)...` 
+                      : '正在排队分配部署节点...')}
                 </p>
               </div>
             )}

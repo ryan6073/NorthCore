@@ -76,7 +76,7 @@ async def api_get_agent_contact_conversation(agent_id: str, authorization: Optio
         return fail(40001, "Agent 不存在")
     if agent_id == ORCHESTRATOR_AGENT_ID:
         return fail(40002, "Orchestrator 是群聊调度器，不提供长期联系人会话")
-    if not agent.get("enabled") or agent.get("status") == "disabled":
+    if not agent.get("enabled"):
         return fail(40002, "Agent 已禁用，无法打开联系人会话")
     try:
         conversation = ensure_contact_conversation(current_user["id"], agent_id)
@@ -102,7 +102,7 @@ async def api_get_user_agent_contact_id(
         return fail(40001, "Agent 不存在")
     if agent_id == ORCHESTRATOR_AGENT_ID:
         return fail(40002, "Orchestrator 是群聊调度器，不提供长期联系人会话")
-    if not agent_is_callable(agent):
+    if not agent.get("enabled"):
         return fail(40002, "Agent 已禁用，无法打开联系人会话")
 
     try:

@@ -19,6 +19,15 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
 
   const modelConfigs = useAgentHubStore(state => state.modelConfigs);
   const activeConversationId = useAgentHubStore(state => state.activeConversationId);
+  const toolCatalogRaw = useAgentHubStore(state => state.toolCatalog);
+  const toolCatalog = Array.isArray(toolCatalogRaw) ? toolCatalogRaw : [];
+  const loadToolCatalog = useAgentHubStore(state => state.loadToolCatalog);
+
+  useEffect(() => {
+    if (toolCatalog.length === 0) {
+      loadToolCatalog();
+    }
+  }, [toolCatalog.length, loadToolCatalog]);
 
   const handleSyncToGlobal = async () => {
     if (!onSyncToGlobal) return;
@@ -61,6 +70,68 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
 
   const [activeTab, setActiveTab] = useState<'basic' | 'prompt' | 'model' | 'tools' | 'permissions'>('basic');
 
+  // Sync form.tools with toolCatalog when catalog is loaded
+  useEffect(() => {
+    if (toolCatalog.length > 0) {
+      setForm(prev => {
+        const existingToolIds = new Set(prev.tools.map(t => t.id));
+        const missingTools = toolCatalog
+          .filter(catItem => !existingToolIds.has(catItem.id))
+          .map(catItem => ({
+            id: catItem.id,
+            enabled: false,
+            name: catItem.name,
+            description: catItem.description,
+            displayGroup: catItem.displayGroup,
+            riskGroup: catItem.riskGroup,
+            riskLevel: catItem.riskLevel
+          }));
+
+        if (missingTools.length > 0) {
+          return {
+            ...prev,
+            tools: [...prev.tools, ...missingTools]
+          };
+        }
+        return prev;
+      });
+    }
+  }, [toolCatalog]);
+
+  // Synchronize derived permissions when tools change
+  useEffect(() => {
+    const derivedPermissions: AgentPermission = {
+      canReadFiles: false,
+      canWriteFiles: false,
+      canRunCommands: false,
+      canGenerateArtifacts: false,
+      canDeploy: false
+    };
+
+    form.tools.forEach(tool => {
+      if (tool.enabled) {
+        const catItem = toolCatalog.find(c => c.id === tool.id);
+        const permissionKeys = catItem?.permissionKeys || [];
+        permissionKeys.forEach(key => {
+          if (key in derivedPermissions) {
+            derivedPermissions[key as keyof AgentPermission] = true;
+          }
+        });
+      }
+    });
+
+    const hasChanged = Object.keys(derivedPermissions).some(
+      key => derivedPermissions[key as keyof AgentPermission] !== form.permissions[key as keyof AgentPermission]
+    );
+
+    if (hasChanged) {
+      setForm(prev => ({
+        ...prev,
+        permissions: derivedPermissions
+      }));
+    }
+  }, [form.tools, toolCatalog, form.permissions]);
+
   const providers: AgentProvider[] = ['mock', 'claude-code', 'codex', 'opencode', 'local-qwen', 'custom'];
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -102,11 +173,22 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
     }));
   };
 
-  const handlePermissionChange = (key: keyof AgentPermission, value: boolean) => {
-    setForm(prev => ({
-      ...prev,
-      permissions: { ...prev.permissions, [key]: value }
-    }));
+  const handleRuntimeChange = (runtime: Agent['runtime']) => {
+    setForm(prev => {
+      const updatedTools = prev.tools.map(tool => {
+        const catItem = toolCatalog.find(c => c.id === tool.id);
+        const isCompatible = catItem ? catItem.runtimes.includes(runtime as any) : true;
+        if (!isCompatible && tool.enabled) {
+          return { ...tool, enabled: false };
+        }
+        return tool;
+      });
+      return {
+        ...prev,
+        runtime,
+        tools: updatedTools
+      };
+    });
   };
 
   const tabs = [
@@ -380,22 +462,22 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                   <div className="grid grid-cols-2 gap-2 p-1 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl">
                     <button
                       type="button"
-                      onClick={() => setForm(prev => ({ ...prev, runtime: 'native' }))}
+                      onClick={() => handleRuntimeChange('native')}
                       className={`py-2 px-3 rounded-lg text-xs font-bold transition-all ${
                         form.runtime === 'native'
                           ? 'bg-violet-600 text-white shadow'
-                          : 'text-slate-500 hover:text-slate-850 dark:hover:text-white'
+                          : 'text-slate-500 hover:text-slate-850 dark:hover:white'
                       }`}
                     >
                       自定义 Prompt (Native)
                     </button>
                     <button
                       type="button"
-                      onClick={() => setForm(prev => ({ ...prev, runtime: 'opencode' }))}
+                      onClick={() => handleRuntimeChange('opencode')}
                       className={`py-2 px-3 rounded-lg text-xs font-bold transition-all ${
                         form.runtime !== 'native'
                           ? 'bg-violet-600 text-white shadow'
-                          : 'text-slate-500 hover:text-slate-850 dark:hover:text-white'
+                          : 'text-slate-500 hover:text-slate-850 dark:hover:white'
                       }`}
                     >
                       平台 Agent (Platform)
@@ -546,7 +628,7 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                       <label className="block text-xs font-bold text-slate-700 dark:text-slate-350">选择运行框架 (Framework)</label>
                       <div className="grid grid-cols-3 gap-3">
                         <div
-                          onClick={() => setForm(prev => ({ ...prev, runtime: 'opencode' }))}
+                          onClick={() => handleRuntimeChange('opencode')}
                           className={`p-3 rounded-xl border flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-200 select-none ${
                             form.runtime === 'opencode'
                               ? 'border-violet-500 bg-violet-50/15 dark:bg-violet-955/10 shadow-sm'
@@ -559,7 +641,7 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                         </div>
 
                         <div
-                          onClick={() => setForm(prev => ({ ...prev, runtime: 'codex' }))}
+                          onClick={() => handleRuntimeChange('codex')}
                           className={`p-3 rounded-xl border flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-200 select-none ${
                             form.runtime === 'codex'
                               ? 'border-violet-500 bg-violet-50/15 dark:bg-violet-955/10 shadow-sm'
@@ -572,7 +654,7 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                         </div>
 
                         <div
-                          onClick={() => setForm(prev => ({ ...prev, runtime: 'claude_code' }))}
+                          onClick={() => handleRuntimeChange('claude_code')}
                           className={`p-3 rounded-xl border flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-200 select-none ${
                             form.runtime === 'claude_code'
                               ? 'border-violet-500 bg-violet-50/15 dark:bg-violet-955/10 shadow-sm'
@@ -701,55 +783,100 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
 
             {/* TAB 4: TOOLS CONFIG */}
             {activeTab === 'tools' && (
-              <div className="space-y-5 animate-fade-in">
-                <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-slate-200/60 dark:border-slate-850 shadow-sm space-y-4">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Wrench className="w-4 h-4 text-violet-500" />
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-400">可用功能工具集 (Tools)</span>
-                  </div>
+              <div className="space-y-6 animate-fade-in">
+                {['context', 'workspace', 'sandbox', 'artifact'].map(groupKey => {
+                  const groupTitle = {
+                    context: '上下文与辅助功能 (Context)',
+                    workspace: '工作区修改与写入 (Workspace)',
+                    sandbox: '沙箱终端与命令 (Sandbox)',
+                    artifact: '前端产物与部署 (Artifact)'
+                  }[groupKey] || groupKey;
 
-                  {!form.tools || form.tools.length === 0 ? (
-                    <p className="text-xs text-slate-400 italic py-6 text-center">暂无可配置的工具</p>
-                  ) : (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
-                      {form.tools.map(tool => (
-                        <div
-                          key={tool.id}
-                          onClick={() => toggleTool(tool.id)}
-                          className={`flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-all duration-200 select-none ${tool.enabled
-                              ? 'border-emerald-500 bg-emerald-50/15 dark:bg-emerald-500/5 shadow-sm'
-                              : 'border-slate-200 dark:border-slate-800 bg-slate-50/20 dark:bg-slate-950/20 hover:bg-slate-100/50 dark:hover:bg-slate-800/40'
-                            }`}
-                        >
-                          <div className={`w-5 h-5 rounded-lg flex items-center justify-center flex-shrink-0 border transition-all mt-0.5 ${tool.enabled
-                              ? 'bg-emerald-500 border-emerald-500 text-white shadow-sm shadow-emerald-500/20'
-                              : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950'
-                            }`}>
-                            {tool.enabled && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                          </div>
-                          <div className="min-w-0">
-                            <span className={`text-xs font-bold block transition-colors ${tool.enabled ? 'text-emerald-700 dark:text-emerald-450' : 'text-slate-700 dark:text-slate-350'
+                  const groupTools = form.tools.filter(tool => {
+                    const catItem = toolCatalog.find(c => c.id === tool.id);
+                    const group = catItem?.displayGroup || tool.displayGroup || 'context';
+                    return group === groupKey;
+                  });
+
+                  if (groupTools.length === 0) return null;
+
+                  return (
+                    <div key={groupKey} className="bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-slate-200/60 dark:border-slate-850 shadow-sm space-y-4">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Wrench className="w-4 h-4 text-violet-500" />
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-400">{groupTitle}</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
+                        {groupTools.map(tool => {
+                          const catItem = toolCatalog.find(c => c.id === tool.id);
+                          const isCompatible = catItem ? catItem.runtimes.includes(form.runtime as any) : true;
+                          const riskLevel = catItem?.riskLevel || tool.riskLevel || 'low';
+                          
+                          let riskBadge = null;
+                          if (riskLevel === 'high') {
+                            riskBadge = <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-500 font-semibold border border-amber-500/20 ml-2">高风险</span>;
+                          } else if (riskLevel === 'critical') {
+                            riskBadge = <span className="text-[9px] px-1.5 py-0.2 rounded bg-red-500/10 text-red-500 font-semibold border border-red-500/20 ml-2">高风险</span>;
+                          }
+
+                          return (
+                            <div
+                              key={tool.id}
+                              onClick={() => isCompatible && toggleTool(tool.id)}
+                              className={`flex items-start gap-3 p-3.5 rounded-xl border transition-all duration-200 select-none ${
+                                !isCompatible
+                                  ? 'border-slate-100 dark:border-slate-900 bg-slate-50/50 dark:bg-slate-955/10 opacity-50 cursor-not-allowed'
+                                  : tool.enabled
+                                    ? 'border-emerald-500 bg-emerald-50/15 dark:bg-emerald-500/5 shadow-sm cursor-pointer'
+                                    : 'border-slate-200 dark:border-slate-800 bg-slate-50/20 dark:bg-slate-955/20 hover:bg-slate-100/50 dark:hover:bg-slate-800/40 cursor-pointer'
+                              }`}
+                            >
+                              <div className={`w-5 h-5 rounded-lg flex items-center justify-center flex-shrink-0 border transition-all mt-0.5 ${
+                                !isCompatible
+                                  ? 'border-slate-200 dark:border-slate-800 bg-slate-105 dark:bg-slate-900'
+                                  : tool.enabled
+                                    ? 'bg-emerald-500 border-emerald-500 text-white shadow-sm shadow-emerald-500/20'
+                                    : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950'
                               }`}>
-                              {tool.name}
-                            </span>
-                            <span className="text-[10px] text-slate-400 dark:text-slate-550 mt-1 block leading-normal">
-                              {tool.description}
-                            </span>
-                            {isSessionLevel && globalAgent && (() => {
-                              const globalTool = globalAgent.tools?.find(t => t.id === tool.id);
-                              const isGlobalEnabled = globalTool ? globalTool.enabled : false;
-                              return (
-                                <span className="text-[9px] text-slate-400 dark:text-slate-600 mt-1 block font-medium">
-                                  全局默认: {isGlobalEnabled ? '开启' : '关闭'}
+                                {tool.enabled && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <span className={`text-xs font-bold flex items-center transition-colors ${
+                                  !isCompatible
+                                    ? 'text-slate-450 dark:text-slate-600'
+                                    : tool.enabled
+                                      ? 'text-emerald-700 dark:text-emerald-450'
+                                      : 'text-slate-700 dark:text-slate-350'
+                                }`}>
+                                  {tool.name || catItem?.name || tool.id}
+                                  {riskBadge}
                                 </span>
-                              );
-                            })()}
-                          </div>
-                        </div>
-                      ))}
+                                <span className="text-[10px] text-slate-400 dark:text-slate-555 mt-1 block leading-normal">
+                                  {tool.description || catItem?.description}
+                                </span>
+                                {!isCompatible && (
+                                  <span className="text-[9px] text-red-500/80 dark:text-red-400/80 mt-1 block font-medium">
+                                    当前模式 ({form.runtime}) 不支持该工具
+                                  </span>
+                                )}
+                                {isCompatible && isSessionLevel && globalAgent && (() => {
+                                  const globalTool = globalAgent.tools?.find(t => t.id === tool.id);
+                                  const isGlobalEnabled = globalTool ? globalTool.enabled : false;
+                                  return (
+                                    <span className="text-[9px] text-slate-400 dark:text-slate-600 mt-1 block font-medium">
+                                      全局默认: {isGlobalEnabled ? '开启' : '关闭'}
+                                    </span>
+                                  );
+                                })()}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  )}
-                </div>
+                  );
+                })}
               </div>
             )}
 
@@ -760,6 +887,17 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                   <div className="flex items-center gap-2 mb-1">
                     <Shield className="w-4 h-4 text-violet-500" />
                     <span className="text-xs font-bold uppercase tracking-wider text-slate-400">运行与操作系统权限授权</span>
+                  </div>
+
+                  {/* Read-only disclaimer banner */}
+                  <div className="bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/20 text-amber-600 dark:text-amber-400 p-4 rounded-xl flex items-start gap-3">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <div className="text-xs">
+                      <p className="font-bold">安全权限管理说明</p>
+                      <p className="mt-1 opacity-90 leading-relaxed">
+                        当前运行安全权限已完全由智能体下启用的「可用工具」推导得出。此处为只读展示，不可手动修改。若要调整权限，请前往「可用工具」标签页启用或禁用相应工具。
+                      </p>
+                    </div>
                   </div>
 
                   <div className="space-y-3">
@@ -774,11 +912,10 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                       return (
                         <div
                           key={p.key}
-                          onClick={() => handlePermissionChange(p.key as keyof AgentPermission, !isPermOn)}
-                          className={`flex items-start gap-4 p-3.5 rounded-xl border cursor-pointer transition-all duration-200 select-none ${isPermOn
+                          className={`flex items-start gap-4 p-3.5 rounded-xl border transition-all duration-200 select-none ${isPermOn
                               ? 'border-violet-500 bg-violet-500/5'
-                              : 'border-slate-200 dark:border-slate-800 bg-slate-50/20 dark:bg-slate-950/20 hover:bg-slate-100/50 dark:hover:bg-slate-800/40'
-                            }`}
+                              : 'border-slate-200 dark:border-slate-800 bg-slate-50/20 dark:bg-slate-950/20'
+                            } opacity-90`}
                         >
                           <div className={`w-5 h-5 rounded-lg flex items-center justify-center flex-shrink-0 border transition-all mt-0.5 ${isPermOn
                               ? 'bg-violet-600 border-violet-600 text-white shadow-sm shadow-violet-500/20'

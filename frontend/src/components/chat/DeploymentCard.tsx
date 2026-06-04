@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Server, ExternalLink, AlertTriangle, Terminal, CheckCircle2, Loader2, Copy, Check, RefreshCw, Square } from 'lucide-react';
 import { useDeploymentStore } from '@/store/useDeploymentStore';
 
@@ -21,6 +21,8 @@ interface DeploymentMetadata {
   serviceUrls?: ServiceUrls;
   ports?: Ports;
   errorSummary?: string;
+  queuedReason?: string | null;
+  queuePosition?: number | null;
 }
 
 interface DeploymentCardProps {
@@ -28,6 +30,12 @@ interface DeploymentCardProps {
 }
 
 const DeploymentCard: React.FC<DeploymentCardProps> = ({ metadata }) => {
+  const [currentMetadata, setCurrentMetadata] = useState<DeploymentMetadata>(metadata);
+
+  useEffect(() => {
+    setCurrentMetadata(metadata);
+  }, [metadata]);
+
   const {
     status,
     deploymentId,
@@ -38,10 +46,42 @@ const DeploymentCard: React.FC<DeploymentCardProps> = ({ metadata }) => {
     serviceUrls = {},
     ports = {},
     errorSummary = ''
-  } = metadata;
+  } = currentMetadata;
 
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [isStopping, setIsStopping] = useState(false);
+
+  useEffect(() => {
+    if (!deploymentId || !workspaceId) return;
+
+    const isPending = ['queued', 'running', 'retrying'].includes(status);
+    if (!isPending) return;
+
+    const intervalId = setInterval(async () => {
+      try {
+        const detail = await useDeploymentStore.getState().fetchDetail(deploymentId, workspaceId);
+        setCurrentMetadata((prev) => ({
+          ...prev,
+          status: detail.status as any,
+          serviceUrls: detail.serviceUrls,
+          ports: detail.ports,
+          errorSummary: detail.error || '',
+          projectType: detail.projectType || prev.projectType,
+          queuedReason: detail.queuedReason,
+          queuePosition: detail.queuePosition,
+        }));
+
+        if (!['queued', 'running', 'retrying'].includes(detail.status)) {
+          clearInterval(intervalId);
+        }
+      } catch (e) {
+        console.error('Failed to poll deployment status in chat card:', e);
+        clearInterval(intervalId);
+      }
+    }, 3000);
+
+    return () => clearInterval(intervalId);
+  }, [deploymentId, workspaceId, status]);
 
   const copyToClipboard = (url: string) => {
     navigator.clipboard.writeText(url);
@@ -142,7 +182,11 @@ const DeploymentCard: React.FC<DeploymentCardProps> = ({ metadata }) => {
               } ${status === 'running' ? 'w-2/3 animate-pulse' : 'w-1/4'}`} />
             </div>
             <p className="text-xs text-lark-text-secondary dark:text-slate-400 flex items-center gap-1.5">
-              {status === 'queued' && '排队等待分配部署容器...'}
+              {status === 'queued' && (
+                currentMetadata.queuedReason === 'workspace_mutation_lock_held'
+                  ? `等待工作区写入任务完成 (队列位置: 第 ${currentMetadata.queuePosition || 1} 位)...`
+                  : '排队等待分配部署容器...'
+              )}
               {status === 'running' && '拉取代码并准备容器环境...'}
               {status === 'retrying' && `第 ${attempt} 次尝试部署中...`}
             </p>
@@ -230,6 +274,32 @@ const DeploymentCard: React.FC<DeploymentCardProps> = ({ metadata }) => {
                 </div>
               </div>
             )}
+
+            <button
+              onClick={async () => {
+                try {
+                  setIsStopping(true);
+                  await useDeploymentStore.getState().stopDeploy(deploymentId, workspaceId);
+                  const detail = await useDeploymentStore.getState().fetchDetail(deploymentId, workspaceId);
+                  setCurrentMetadata((prev) => ({
+                    ...prev,
+                    status: detail.status as any,
+                    serviceUrls: detail.serviceUrls,
+                    ports: detail.ports,
+                    errorSummary: detail.error || '',
+                  }));
+                } catch (e) {
+                  console.error('Failed to stop deployment service', e);
+                } finally {
+                  setIsStopping(false);
+                }
+              }}
+              disabled={isStopping}
+              className="mt-2.5 w-full py-1.5 bg-slate-50 hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/25 text-slate-600 dark:text-slate-450 hover:text-rose-500 border border-slate-200 dark:border-slate-700 hover:border-rose-250 dark:hover:border-rose-900/40 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isStopping ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
+              停止服务
+            </button>
           </div>
         )}
 
