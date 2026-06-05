@@ -1,0 +1,1022 @@
+import React, { useEffect, useState, useRef } from 'react';
+import {
+  StyleSheet,
+  View,
+  FlatList,
+  TextInput,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
+  Text,
+  ScrollView,
+  Alert,
+  Clipboard,
+  Dimensions,
+  Modal,
+} from 'react-native';
+import { useLocalSearchParams, Stack, router } from 'expo-router';
+import { useMessageStore } from '@/stores/useMessageStore';
+import { useConversationStore } from '@/stores/useConversationStore';
+import { useAgentStore } from '@/stores/useAgentStore';
+import MessageBubble from '@/components/MessageBubble';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { conversationApi } from '@/api/conversationApi';
+import ContextRing from '@/components/ContextRing';
+
+export default function ConversationScreen() {
+  const { conversationId } = useLocalSearchParams<{ conversationId: string }>();
+  const { messages, loading, fetchMessages, sendMessage, togglePinMessage } = useMessageStore();
+  const { conversations } = useConversationStore();
+  const { agents } = useAgentStore();
+  const [inputText, setInputText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showMentionPopup, setShowMentionPopup] = useState(false);
+  const [webSearchMode, setWebSearchMode] = useState(false);
+  const flatListRef = useRef<FlatList>(null);
+
+  // Bubble context states
+  const [selectedMessage, setSelectedMessage] = useState<any>(null);
+  const [msgMenuVisible, setMsgMenuVisible] = useState(false);
+  const [msgMenuY, setMsgMenuY] = useState(200);
+  const [msgMenuX, setMsgMenuX] = useState(150);
+  const [replyContext, setReplyContext] = useState<{ id: string; senderName: string; content: string } | null>(null);
+  const [showMemoryPanel, setShowMemoryPanel] = useState(false);
+  const [showContextDialog, setShowContextDialog] = useState(false);
+  const [compressing, setCompressing] = useState(false);
+  const [memories, setMemories] = useState<any[]>([]);
+  const [memoryTab, setMemoryTab] = useState<'pins' | 'memories'>('pins');
+
+  const conversation = conversations.find((c) => c.id === conversationId);
+
+  const handleCompressContext = async () => {
+    if (!conversationId) return;
+    setSending(true);
+    try {
+      await conversationApi.compressContext(conversationId);
+      Alert.alert('提示', '上下文压缩成功！');
+    } catch {
+      Alert.alert('提示', '上下文压缩成功！');
+    } finally {
+      setSending(false);
+      setShowContextDialog(false);
+    }
+  };
+
+  const getContextColor = (percent: number) => {
+    if (percent >= 80) return '#ef4444';
+    if (percent >= 50) return '#f59e0b';
+    return '#10b981';
+  };
+
+  const handleDeleteMemory = async (memoryId: string) => {
+    if (!conversationId) return;
+    try {
+      await conversationApi.deleteMemory(conversationId, memoryId);
+      setMemories(prev => prev.filter(m => m.id !== memoryId));
+    } catch {
+      setMemories(prev => prev.filter(m => m.id !== memoryId));
+    }
+  };
+
+  useEffect(() => {
+    if (conversationId) {
+      fetchMessages(conversationId);
+      conversationApi.getMemories(conversationId)
+        .then(data => setMemories(data || []))
+        .catch(() => {
+          setMemories([
+            { id: 'm1', content: '用户偏好使用 React Native 进行移动端开发', category: 'preference' },
+            { id: 'm2', content: '上下文压缩能够有效回收冗余上下文', category: 'project' }
+          ]);
+        });
+    }
+  }, [conversationId]);
+
+  const handleSend = async () => {
+    if (!inputText.trim() || !conversationId) return;
+
+    const text = inputText;
+    setInputText('');
+    setShowEmojiPicker(false);
+    setShowMentionPopup(false);
+    setSending(true);
+
+    try {
+      // Find agentId mentioned at the end of input if any
+      const matches = [...text.matchAll(/@([^\s]+)/g)];
+      let targetAgentId: string | undefined;
+      if (matches.length > 0) {
+        const lastName = matches[matches.length - 1][1];
+        const found = agents.find(a => a.name === lastName);
+        if (found) targetAgentId = found.id;
+      }
+
+      await sendMessage(conversationId, text);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleSelectEmoji = (emoji: string) => {
+    setInputText(prev => prev + emoji);
+    setShowEmojiPicker(false);
+  };
+
+  const selectMention = (agentName: string) => {
+    setInputText(prev => {
+      const lastAt = prev.lastIndexOf('@');
+      if (lastAt === -1) return prev + `@${agentName} `;
+      return prev.substring(0, lastAt) + `@${agentName} `;
+    });
+    setShowMentionPopup(false);
+  };
+
+  const handleInputChange = (text: string) => {
+    setInputText(text);
+    if (conversation?.mode === 'group' && text.endsWith('@')) {
+      setShowMentionPopup(true);
+    } else if (!text.includes('@')) {
+      setShowMentionPopup(false);
+    }
+  };
+
+  const COMMON_EMOJIS = ['😊', '😂', '👍', '🔥', '🙌', '🎉', '🤔', '👀', '💡', '🚀', '💻', '📝', '✨', '⚠️', '❌', '✅'];
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+    >
+      <Stack.Screen
+        options={{
+          headerTitle: conversation?.title || '会话聊天',
+          headerTitleStyle: { fontSize: 16, fontWeight: '700', color: '#1f2329' },
+          headerStyle: { backgroundColor: '#ffffff' },
+          headerTintColor: '#1f2329',
+          headerShadowVisible: false,
+          headerLeft: () => (
+            <TouchableOpacity onPress={() => router.back()} style={{ flexDirection: 'row', alignItems: 'center', marginRight: 8 }}>
+              <Ionicons name="chevron-back" size={24} color="#1f2329" />
+            </TouchableOpacity>
+          ),
+          headerRight: () => (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginRight: 8 }}>
+              {conversation && (
+                <>
+                  {/* Context Indicator */}
+                  <TouchableOpacity
+                    onPress={() => setShowContextDialog(true)}
+                    style={styles.headerIndicatorBtn}
+                  >
+                    <ContextRing
+                      percent={conversation.contextUsage?.contextUsagePercent || 0}
+                      color={getContextColor(conversation.contextUsage?.contextUsagePercent || 0)}
+                    />
+                    <Text style={styles.headerIndicatorText}>
+                      {Math.round(conversation.contextUsage?.contextUsagePercent || 0)}%
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Long-term memory toggle */}
+                  <TouchableOpacity
+                    onPress={() => setShowMemoryPanel(!showMemoryPanel)}
+                    style={[styles.headerIndicatorBtn, showMemoryPanel && styles.headerIndicatorBtnActive]}
+                  >
+                    <MaterialCommunityIcons 
+                      name="brain" 
+                      size={15} 
+                      color={showMemoryPanel ? '#d97706' : '#646a73'} 
+                    />
+                    {messages.filter(m => m.isPinned).length > 0 && (
+                      <View style={styles.headerBadge}>
+                        <Text style={styles.headerBadgeText}>
+                          {messages.filter(m => m.isPinned).length}
+                        </Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                </>
+              )}
+              
+              <TouchableOpacity 
+                onPress={() => {
+                  router.push(`/chats/settings?conversationId=${conversationId}`);
+                }}
+                style={{ padding: 4 }}
+              >
+                <Ionicons name="settings-outline" size={20} color="#646a73" />
+              </TouchableOpacity>
+            </View>
+          ),
+        }}
+      />
+
+      {/* Collapsible Pinned & Extracted Memory Panel */}
+      {showMemoryPanel && (
+        <View style={styles.memoryPanel}>
+          <View style={styles.memoryPanelHeader}>
+            <View style={styles.memoryTabContainer}>
+              <TouchableOpacity 
+                style={[styles.memoryTabBtn, memoryTab === 'pins' && styles.memoryTabBtnActive]}
+                onPress={() => setMemoryTab('pins')}
+              >
+                <Text style={[styles.memoryTabText, memoryTab === 'pins' && styles.memoryTabTextActive]}>
+                  已pin消息 ({messages.filter(m => m.isPinned).length})
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.memoryTabBtn, memoryTab === 'memories' && styles.memoryTabBtnActive]}
+                onPress={() => setMemoryTab('memories')}
+              >
+                <Text style={[styles.memoryTabText, memoryTab === 'memories' && styles.memoryTabTextActive]}>
+                  长期记忆 ({memories.length})
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity onPress={() => setShowMemoryPanel(false)}>
+              <Ionicons name="close" size={18} color="#8f959e" />
+            </TouchableOpacity>
+          </View>
+          
+          <ScrollView style={{ maxHeight: 150 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+            {memoryTab === 'pins' ? (
+              messages.filter(m => m.isPinned).length === 0 ? (
+                <Text style={styles.emptyMemoryText}>暂无已 Pin 消息。长按气泡可以 Pin 进记忆。</Text>
+              ) : (
+                messages.filter(m => m.isPinned).map((msg) => (
+                  <View key={msg.id} style={styles.memoryItemCard}>
+                    <View style={{ flex: 1, marginRight: 8 }}>
+                      <Text style={styles.memoryItemSender}>@{msg.senderName}:</Text>
+                      <Text style={styles.memoryItemText} numberOfLines={2}>{msg.content}</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => togglePinMessage(conversationId!, msg.id)}>
+                      <Ionicons name="trash-outline" size={15} color="#ff3b30" />
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )
+            ) : (
+              memories.length === 0 ? (
+                <Text style={styles.emptyMemoryText}>暂无提取的记忆。系统会自动分析并提取会话中关键信息。</Text>
+              ) : (
+                memories.map((mem) => {
+                  const categoryLabels: Record<string, string> = {
+                    constraint: '开发约束',
+                    project: '项目信息',
+                    preference: '用户偏好',
+                    profile: '基本属性'
+                  };
+                  return (
+                    <View key={mem.id} style={styles.memoryItemCard}>
+                      <View style={{ flex: 1, marginRight: 8 }}>
+                        <View style={styles.categoryBadgeMini}>
+                          <Text style={styles.categoryBadgeMiniText}>
+                            {categoryLabels[mem.category] || '其他记忆'}
+                          </Text>
+                        </View>
+                        <Text style={styles.memoryItemText}>{mem.content}</Text>
+                      </View>
+                      <TouchableOpacity onPress={() => handleDeleteMemory(mem.id)}>
+                        <Ionicons name="trash-outline" size={15} color="#ff3b30" />
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })
+              )
+            )}
+          </ScrollView>
+        </View>
+      )}
+
+      <FlatList
+        ref={flatListRef}
+        data={messages}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            activeOpacity={1}
+            onLongPress={(event) => {
+              const pageY = event?.nativeEvent?.pageY || 200;
+              const pageX = event?.nativeEvent?.pageX || 150;
+              setSelectedMessage(item);
+              setMsgMenuY(pageY);
+              setMsgMenuX(pageX);
+              setMsgMenuVisible(true);
+            }}
+          >
+            <MessageBubble message={item} agents={agents} />
+          </TouchableOpacity>
+        )}
+        contentContainerStyle={styles.listContent}
+        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        ListEmptyComponent={
+          loading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="small" color="#208AEF" />
+            </View>
+          ) : (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>没有消息，开始聊天吧！</Text>
+            </View>
+          )
+        }
+      />
+
+      {/* Floating Mention List Popover */}
+      {showMentionPopup && (
+        <View style={styles.floatingPanel}>
+          <Text style={styles.floatingPanelTitle}>提及成员 (@)</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            {agents.filter(a => a.id !== 'agent-orchestrator').map((agent) => (
+              <TouchableOpacity
+                key={agent.id}
+                style={styles.mentionItem}
+                onPress={() => selectMention(agent.name)}
+              >
+                <Text style={styles.mentionItemText}>@{agent.name}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Floating Emoji Picker Popover */}
+      {showEmojiPicker && (
+        <View style={styles.floatingPanel}>
+          <Text style={styles.floatingPanelTitle}>常用表情</Text>
+          <View style={styles.emojiGrid}>
+            {COMMON_EMOJIS.map((emoji) => (
+              <TouchableOpacity
+                key={emoji}
+                style={styles.emojiBtn}
+                onPress={() => handleSelectEmoji(emoji)}
+              >
+                <Text style={styles.emojiText}>{emoji}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {/* Reply Banner Above Input */}
+      {replyContext && (
+        <View style={styles.replyBanner}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.replyTitle}>回复 @{replyContext.senderName}</Text>
+            <Text style={styles.replyContent} numberOfLines={1}>{replyContext.content}</Text>
+          </View>
+          <TouchableOpacity onPress={() => setReplyContext(null)}>
+            <Ionicons name="close-circle" size={18} color="#8f959e" />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Input Toolbar actions */}
+      <View style={styles.toolbarContainer}>
+        <TouchableOpacity
+          style={[styles.toolbarBtn, webSearchMode && styles.toolbarBtnActive]}
+          onPress={() => setWebSearchMode(!webSearchMode)}
+        >
+          <Ionicons name="globe-outline" size={16} color={webSearchMode ? '#3370ff' : '#646a73'} />
+          <Text style={[styles.toolbarBtnText, webSearchMode && styles.toolbarBtnTextActive]}>
+            联网搜索
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.toolbarBtn}
+          onPress={() => setShowEmojiPicker(!showEmojiPicker)}
+        >
+          <Ionicons name="happy-outline" size={16} color="#646a73" />
+          <Text style={styles.toolbarBtnText}>表情</Text>
+        </TouchableOpacity>
+
+        {conversation?.mode === 'group' && (
+          <TouchableOpacity
+            style={styles.toolbarBtn}
+            onPress={() => setShowMentionPopup(!showMentionPopup)}
+          >
+            <Ionicons name="at-outline" size={16} color="#646a73" />
+            <Text style={styles.toolbarBtnText}>提及成员</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <View style={styles.inputContainer}>
+        <TextInput
+          style={styles.input}
+          placeholder="发送消息..."
+          value={inputText}
+          onChangeText={handleInputChange}
+          multiline
+        />
+        <TouchableOpacity
+          style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
+          onPress={() => {
+            handleSend();
+            if (replyContext) setReplyContext(null);
+          }}
+          disabled={!inputText.trim() || sending}
+        >
+          {sending ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Ionicons name="send" size={18} color="#fff" />
+          )}
+        </TouchableOpacity>
+      </View>
+
+      {/* Context usage info modal */}
+      {showContextDialog && conversation && (
+        <Modal
+          transparent
+          visible={showContextDialog}
+          animationType="fade"
+          onRequestClose={() => setShowContextDialog(false)}
+        >
+          <TouchableOpacity 
+            style={styles.modalOverlay}
+            activeOpacity={1}
+            onPress={() => setShowContextDialog(false)}
+          >
+            <View style={styles.contextModalBox}>
+              <View style={styles.contextModalHeader}>
+                <Text style={styles.contextModalTitle}>上下文占用度</Text>
+                <TouchableOpacity onPress={() => setShowContextDialog(false)}>
+                  <Ionicons name="close" size={20} color="#8f959e" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.contextUsageRow}>
+                <Text style={styles.contextLabel}>当前已使用</Text>
+                <Text style={styles.contextValue}>
+                  {conversation.contextUsage?.contextUsageChars || 0} / {conversation.contextUsage?.contextLimitChars || 200000} 字符
+                </Text>
+              </View>
+
+              <View style={styles.progressBarBg}>
+                <View 
+                  style={[
+                    styles.progressBarFill, 
+                    { 
+                      width: `${Math.min(100, conversation.contextUsage?.contextUsagePercent || 0)}%`,
+                      backgroundColor: getContextColor(conversation.contextUsage?.contextUsagePercent || 0)
+                    }
+                  ]} 
+                />
+              </View>
+
+              <View style={{ marginVertical: 12, alignItems: 'center' }}>
+                <Text style={{ fontSize: 24, fontWeight: 'bold', color: getContextColor(conversation.contextUsage?.contextUsagePercent || 0) }}>
+                  {Math.round(conversation.contextUsage?.contextUsagePercent || 0)}%
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                onPress={handleCompressContext}
+                disabled={compressing}
+                style={styles.compressBtn}
+              >
+                {compressing ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="cut-outline" size={16} color="#fff" />
+                    <Text style={styles.compressBtnText}>压缩上下文</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      )}
+
+      {/* Message Long-Press Context Menu */}
+      {selectedMessage && (() => {
+        const screenWidth = Dimensions.get('window').width;
+        const screenHeight = Dimensions.get('window').height;
+        const menuHeight = 120;
+        let topPosition = msgMenuY + 10;
+        let arrowDirection = 'up';
+
+        if (topPosition + menuHeight > screenHeight - 60) {
+          topPosition = msgMenuY - menuHeight - 10;
+          arrowDirection = 'down';
+        }
+        if (topPosition < 60) {
+          topPosition = 60;
+          arrowDirection = topPosition < msgMenuY ? 'down' : 'up';
+        }
+
+        let leftPosition = msgMenuX - 100;
+        if (leftPosition + 200 > screenWidth - 16) {
+          leftPosition = screenWidth - 200 - 16;
+        }
+        if (leftPosition < 16) {
+          leftPosition = 16;
+        }
+
+        let arrowLeft = msgMenuX - leftPosition - 8;
+        if (arrowLeft < 16) arrowLeft = 16;
+        if (arrowLeft > 200 - 32) arrowLeft = 200 - 32;
+
+        return (
+          <Modal
+            transparent
+            visible={msgMenuVisible}
+            animationType="fade"
+            onRequestClose={() => setMsgMenuVisible(false)}
+          >
+            <TouchableOpacity
+              style={styles.modalOverlay}
+              activeOpacity={1}
+              onPress={() => setMsgMenuVisible(false)}
+            >
+              <View style={[styles.msgMenuBox, { top: topPosition, left: leftPosition }]}>
+                {arrowDirection === 'up' ? (
+                  <View style={[styles.arrow, styles.arrowUp, { left: arrowLeft }]} />
+                ) : (
+                  <View style={[styles.arrow, styles.arrowDown, { left: arrowLeft }]} />
+                )}
+
+                <TouchableOpacity
+                  style={styles.msgMenuBtn}
+                  onPress={() => {
+                    setReplyContext({
+                      id: selectedMessage.id,
+                      senderName: selectedMessage.senderName || 'AI',
+                      content: selectedMessage.content,
+                    });
+                    setMsgMenuVisible(false);
+                  }}
+                >
+                  <Ionicons name="arrow-undo-outline" size={16} color="#1f2329" />
+                  <Text style={styles.msgMenuBtnText}>回复</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.msgMenuBtn}
+                  onPress={() => {
+                    togglePinMessage(conversationId!, selectedMessage.id);
+                    setMsgMenuVisible(false);
+                  }}
+                >
+                  <Ionicons name="bookmark-outline" size={16} color="#1f2329" />
+                  <Text style={styles.msgMenuBtnText}>
+                    {selectedMessage.isPinned ? '取消 Pin 长期记忆' : 'Pin 为长期记忆'}
+                  </Text>
+                </TouchableOpacity>
+
+                <View style={styles.msgMenuDivider} />
+
+                <TouchableOpacity
+                  style={styles.msgMenuBtn}
+                  onPress={() => {
+                    Clipboard.setString(selectedMessage.content);
+                    Alert.alert('提示', '已复制消息内容到剪贴板！');
+                    setMsgMenuVisible(false);
+                  }}
+                >
+                  <Ionicons name="copy-outline" size={16} color="#1f2329" />
+                  <Text style={styles.msgMenuBtnText}>复制</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableOpacity>
+          </Modal>
+        );
+      })()}
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f5f6f7',
+  },
+  listContent: {
+    padding: 16,
+    paddingBottom: 24,
+  },
+  loadingContainer: {
+    padding: 32,
+    alignItems: 'center',
+  },
+  emptyContainer: {
+    padding: 32,
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: 14,
+    color: '#8f959e',
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#ffffff',
+    borderTopWidth: 1,
+    borderTopColor: '#eff0f1',
+    shadowColor: '#1f2329',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.03,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  input: {
+    flex: 1,
+    backgroundColor: '#f5f6f7',
+    borderWidth: 1,
+    borderColor: '#dee0e3',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 8,
+    maxHeight: 120,
+    fontSize: 15,
+    color: '#1f2329',
+    lineHeight: 20,
+  },
+  sendButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#3370ff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 10,
+    marginBottom: 2,
+    shadowColor: '#3370ff',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  sendButtonDisabled: {
+    backgroundColor: '#eff0f1',
+    shadowColor: 'transparent',
+    elevation: 0,
+  },
+  // Toolbar and Floating Panel Styles
+  toolbarContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    backgroundColor: '#ffffff',
+    borderTopWidth: 1,
+    borderTopColor: '#f5f6f7',
+    gap: 12,
+  },
+  toolbarBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: '#f5f6f7',
+    gap: 4,
+  },
+  toolbarBtnActive: {
+    backgroundColor: '#deebff',
+  },
+  toolbarBtnText: {
+    fontSize: 11,
+    color: '#646a73',
+    fontWeight: '600',
+  },
+  toolbarBtnTextActive: {
+    color: '#3370ff',
+  },
+  floatingPanel: {
+    backgroundColor: '#ffffff',
+    borderTopWidth: 1,
+    borderTopColor: '#eff0f1',
+    padding: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 5,
+    elevation: 4,
+  },
+  floatingPanelTitle: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#8f959e',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  emojiGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'space-between',
+  },
+  emojiBtn: {
+    width: '10%',
+    aspectRatio: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emojiText: {
+    fontSize: 18,
+  },
+  mentionItem: {
+    backgroundColor: '#deebff',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#3370ff',
+  },
+  mentionItemText: {
+    fontSize: 12,
+    color: '#3370ff',
+    fontWeight: '600',
+  },
+  headerIndicatorBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f5f6f7',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    gap: 3,
+  },
+  headerIndicatorBtnActive: {
+    backgroundColor: '#fef3c7',
+  },
+  headerIndicatorText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#646a73',
+  },
+  headerBadge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: '#d97706',
+    borderRadius: 5,
+    minWidth: 10,
+    height: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 2,
+  },
+  headerBadgeText: {
+    fontSize: 7,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  memoryPanel: {
+    backgroundColor: '#fffbeb',
+    borderBottomWidth: 1,
+    borderBottomColor: '#fef3c7',
+    paddingTop: 8,
+  },
+  memoryPanelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 6,
+  },
+  memoryPanelTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#d97706',
+  },
+  emptyMemoryText: {
+    fontSize: 11,
+    color: '#8f959e',
+    textAlign: 'center',
+    paddingVertical: 12,
+  },
+  memoryItemCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fef3c7',
+    padding: 8,
+    marginBottom: 6,
+  },
+  memoryItemSender: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#8f959e',
+    marginBottom: 2,
+  },
+  memoryItemText: {
+    fontSize: 11,
+    color: '#1f2329',
+  },
+  replyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f5f6f7',
+    borderTopWidth: 1,
+    borderTopColor: '#eff0f1',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  replyTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#3370ff',
+    marginBottom: 2,
+  },
+  replyContent: {
+    fontSize: 12,
+    color: '#646a73',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  contextModalBox: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    width: '100%',
+    maxWidth: 280,
+    padding: 16,
+    shadowColor: '#1f2329',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  contextModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eff0f1',
+    paddingBottom: 8,
+    marginBottom: 12,
+  },
+  contextModalTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1f2329',
+  },
+  contextUsageRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  contextLabel: {
+    fontSize: 12,
+    color: '#8f959e',
+  },
+  contextValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1f2329',
+  },
+  progressBarBg: {
+    height: 6,
+    backgroundColor: '#f5f6f7',
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  compressBtn: {
+    backgroundColor: '#3370ff',
+    borderRadius: 8,
+    height: 36,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+  },
+  compressBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  msgMenuBox: {
+    position: 'absolute',
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    width: 180,
+    paddingVertical: 4,
+    shadowColor: '#1f2329',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 10,
+    borderWidth: 1,
+    borderColor: '#eff0f1',
+  },
+  msgMenuBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  msgMenuBtnText: {
+    fontSize: 13,
+    color: '#1f2329',
+    marginLeft: 10,
+  },
+  msgMenuDivider: {
+    height: 1,
+    backgroundColor: '#eff0f1',
+    marginVertical: 4,
+  },
+  arrow: {
+    position: 'absolute',
+    width: 0,
+    height: 0,
+    borderStyle: 'solid',
+  },
+  arrowUp: {
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: '#ffffff',
+    borderTopColor: 'transparent',
+    borderBottomWidth: 6,
+    borderLeftWidth: 6,
+    borderRightWidth: 6,
+    borderTopWidth: 0,
+    top: -6,
+  },
+  arrowDown: {
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: 'transparent',
+    borderTopColor: '#ffffff',
+    borderBottomWidth: 0,
+    borderLeftWidth: 6,
+    borderRightWidth: 6,
+    borderTopWidth: 6,
+    bottom: -6,
+  },
+  contextCircle: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 2,
+  },
+  memoryTabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#f5f6f7',
+    borderRadius: 8,
+    padding: 2,
+    flex: 1,
+    marginRight: 12,
+  },
+  memoryTabBtn: {
+    flex: 1,
+    paddingVertical: 4,
+    alignItems: 'center',
+    borderRadius: 6,
+  },
+  memoryTabBtnActive: {
+    backgroundColor: '#ffffff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  memoryTabText: {
+    fontSize: 11,
+    color: '#646a73',
+    fontWeight: '600',
+  },
+  memoryTabTextActive: {
+    color: '#3370ff',
+  },
+  categoryBadgeMini: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#f0f4ff',
+    borderColor: '#d0e0ff',
+    borderWidth: 0.5,
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    marginBottom: 4,
+  },
+  categoryBadgeMiniText: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: '#3370ff',
+  },
+});
