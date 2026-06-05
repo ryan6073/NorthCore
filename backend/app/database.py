@@ -5,17 +5,33 @@ import hashlib
 import hmac
 import secrets
 import base64
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 from app.config import ROOT_DIR, settings
 from app.model_providers.registry import get_model_provider
+from app.services.agent_tool_catalog_service import (
+    DEFAULT_PERMISSIONS,
+    normalize_agent_tools,
+    permissions_from_tools,
+)
 
 
 BEIJING_TZ = timezone(timedelta(hours=8))
+PLATFORM_AGENT_RUNTIMES = {"opencode", "codex", "claude_code", "claude-code"}
+BLOCKED_RUNTIME_CONFIG_KEYS = {"claude_code_bin", "codex_bin", "opencode_bin"}
+INTERNAL_TASK_MARKERS = (
+    "[Workspace AGENTS.md]",
+    "[Workspace AGENTS.md fallback]",
+    "[Workspace Action Context]",
+    "[上传附件上下文]",
+    "[本轮临时加载的附件正文]",
+)
+ATTACHMENT_ACCESS_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60
 
 
 def now_datetime() -> datetime:
@@ -60,6 +76,95 @@ def _json_load(value: Optional[str], default: Any) -> Any:
         return json.loads(value)
     except json.JSONDecodeError:
         return default
+
+
+def _extract_codex_event_text(content: str) -> Optional[str]:
+    raw = str(content or "")
+    if '"type"' not in raw or "agent_message" not in raw:
+        return None
+    if "thread.started" not in raw and "item.completed" not in raw and "turn.completed" not in raw:
+        return None
+
+    texts: List[str] = []
+    decoder = json.JSONDecoder()
+    index = 0
+    while index < len(raw):
+        while index < len(raw) and raw[index].isspace():
+            index += 1
+        if index >= len(raw):
+            break
+        try:
+            event, next_index = decoder.raw_decode(raw, index)
+            index = next_index
+        except json.JSONDecodeError:
+            next_object = raw.find("{", index + 1)
+            if next_object == -1:
+                break
+            index = next_object
+            continue
+        if not isinstance(event, dict):
+            continue
+        item = event.get("item") if isinstance(event.get("item"), dict) else {}
+        event_type = str(event.get("type") or "")
+        item_type = str(item.get("type") or "")
+        if event_type in {"agent_message", "message"} or (
+            event_type == "item.completed" and item_type in {"agent_message", "message"}
+        ):
+            text = item.get("text") or event.get("text")
+            if isinstance(text, str) and text.strip():
+                texts.append(text.strip())
+            content_value = item.get("content") or event.get("content")
+            if isinstance(content_value, str) and content_value.strip():
+                texts.append(content_value.strip())
+            elif isinstance(content_value, list):
+                for part in content_value:
+                    if isinstance(part, dict) and str(part.get("text") or "").strip():
+                        texts.append(str(part["text"]).strip())
+    return "\n".join(texts).strip() or None
+
+
+def _display_message_content(content: Any) -> str:
+    text = str(content or "")
+    return _extract_codex_event_text(text) or text
+
+
+def _clean_internal_task_for_display(task: Any) -> str:
+    text = str(task or "").strip()
+    for marker in INTERNAL_TASK_MARKERS:
+        marker_index = text.find(marker)
+        if marker_index > 0:
+            return text[:marker_index].strip()
+    return text
+
+
+def agent_runtime_value(agent: Dict[str, Any]) -> str:
+    return str(agent.get("runtime") or "native").strip().lower() or "native"
+
+
+def agent_requires_workspace(agent: Dict[str, Any]) -> bool:
+    return agent_runtime_value(agent) in PLATFORM_AGENT_RUNTIMES
+
+
+def agent_supports_contact_conversation(agent: Dict[str, Any]) -> bool:
+    return agent.get("id") != "agent-orchestrator" and not agent_requires_workspace(agent)
+
+
+def annotate_agent_runtime_capabilities(agent: Dict[str, Any]) -> Dict[str, Any]:
+    runtime = agent_runtime_value(agent)
+    tools, _ = normalize_agent_tools(
+        agent.get("tools"),
+        runtime=runtime,
+        agent_id=agent.get("id"),
+        category=agent.get("category"),
+        strict=False,
+    )
+    return {
+        **agent,
+        "tools": tools,
+        "permissions": permissions_from_tools(tools),
+        "requiresWorkspace": agent_requires_workspace(agent),
+        "supportsContactConversation": agent_supports_contact_conversation(agent),
+    }
 
 
 def _hash_password(password: str, salt: Optional[str] = None) -> str:
@@ -122,6 +227,48 @@ def _decrypt_secret(ciphertext: Optional[str]) -> str:
         return ""
 
 
+def create_attachment_access_token(
+    conversation_id: str,
+    attachment_id: str,
+    expires_at: Optional[int] = None,
+) -> str:
+    expires = int(expires_at or (time.time() + ATTACHMENT_ACCESS_TOKEN_TTL_SECONDS))
+    payload = f"{conversation_id}:{attachment_id}:{expires}"
+    signature = hmac.new(
+        settings.AGENT_SECRET_KEY.encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{expires}.{signature}"
+
+
+def verify_attachment_access_token(
+    conversation_id: str,
+    attachment_id: str,
+    token: Optional[str],
+) -> bool:
+    token_text = str(token or "").strip()
+    try:
+        expires_text, signature = token_text.split(".", 1)
+        expires = int(expires_text)
+    except (ValueError, AttributeError):
+        return False
+    if expires < int(time.time()):
+        return False
+    expected = create_attachment_access_token(conversation_id, attachment_id, expires)
+    return hmac.compare_digest(token_text, expected)
+
+
+def signed_attachment_url(conversation_id: str, attachment_id: str) -> str:
+    path = (
+        f"/api/v1/conversations/{quote(str(conversation_id), safe='')}"
+        f"/attachments/{quote(str(attachment_id), safe='')}"
+    )
+    token = create_attachment_access_token(conversation_id, attachment_id)
+    base_url = str(settings.PUBLIC_BASE_URL or "").strip().rstrip("/")
+    return f"{base_url}{path}?accessToken={quote(token, safe='')}" if base_url else f"{path}?accessToken={quote(token, safe='')}"
+
+
 def _resolve_sqlite_path() -> Path:
     database_url = settings.DATABASE_URL
     if database_url.startswith("sqlite:///"):
@@ -150,13 +297,14 @@ def get_connection() -> Iterable[sqlite3.Connection]:
         conn.close()
 
 
-DEFAULT_PERMISSIONS = {
-    "canReadFiles": False,
-    "canWriteFiles": False,
-    "canRunCommands": False,
-    "canGenerateArtifacts": True,
-    "canDeploy": False,
-}
+def normalize_agent_permissions(
+    runtime: str,
+    permissions: Optional[Dict[str, Any]] = None,
+) -> Dict[str, bool]:
+    normalized = {**DEFAULT_PERMISSIONS}
+    if isinstance(permissions, dict):
+        normalized.update({key: bool(value) for key, value in permissions.items()})
+    return normalized
 
 DEFAULT_ADMIN_EMAIL = "admin@northcore.ai"
 DEFAULT_ADMIN_PASSWORD = "admin123"
@@ -323,6 +471,7 @@ DEFAULT_AGENTS = [
             **DEFAULT_PERMISSIONS,
             "canReadFiles": True,
             "canWriteFiles": True,
+            "canRunCommands": True,
         },
     },
     {
@@ -349,6 +498,8 @@ DEFAULT_AGENTS = [
         "permissions": {
             **DEFAULT_PERMISSIONS,
             "canReadFiles": True,
+            "canWriteFiles": True,
+            "canRunCommands": True,
         },
     },
 ]
@@ -573,6 +724,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS artifacts (
                 id TEXT PRIMARY KEY,
                 conversation_id TEXT NOT NULL,
+                workspace_id TEXT,
                 message_id TEXT,
                 run_id TEXT,
                 title TEXT NOT NULL,
@@ -586,6 +738,7 @@ def init_db() -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL,
                 FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE SET NULL
             );
 
@@ -644,10 +797,14 @@ def init_db() -> None:
                 confidence REAL NOT NULL DEFAULT 0.0,
                 source_message_id TEXT,
                 active INTEGER NOT NULL DEFAULT 1,
+                superseded_by_memory_id TEXT,
+                superseded_at TEXT,
+                resolution_reason TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
                 FOREIGN KEY (source_message_id) REFERENCES messages(id) ON DELETE SET NULL,
+                FOREIGN KEY (superseded_by_memory_id) REFERENCES long_term_memories(id) ON DELETE SET NULL,
                 UNIQUE (conversation_id, category, content)
             );
 
@@ -682,11 +839,15 @@ def init_db() -> None:
 
             CREATE TABLE IF NOT EXISTS agent_runs (
                 id TEXT PRIMARY KEY,
-                sandbox_id TEXT NOT NULL,
+                sandbox_id TEXT,
                 conversation_id TEXT NOT NULL,
                 owner_user_id TEXT NOT NULL,
                 workspace_id TEXT,
                 status TEXT NOT NULL DEFAULT 'pending',
+                run_mode TEXT NOT NULL DEFAULT 'write',
+                queued_reason TEXT NOT NULL DEFAULT '',
+                lock_owner_id TEXT,
+                lock_fencing_token INTEGER,
                 prompt TEXT NOT NULL DEFAULT '',
                 dag_json TEXT NOT NULL DEFAULT '{}',
                 runtime TEXT NOT NULL DEFAULT 'native',
@@ -703,6 +864,19 @@ def init_db() -> None:
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
                 FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS workspace_mutation_locks (
+                workspace_id TEXT PRIMARY KEY,
+                owner_type TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                heartbeat_at TEXT NOT NULL,
+                lease_expires_at TEXT NOT NULL,
+                fencing_token INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS agent_run_steps (
@@ -849,11 +1023,14 @@ def init_db() -> None:
                 ON sandbox_files(run_id, path);
             CREATE INDEX IF NOT EXISTS idx_sandbox_conflicts_run_status
                 ON sandbox_conflicts(run_id, status);
+            CREATE INDEX IF NOT EXISTS idx_workspace_mutation_locks_owner
+                ON workspace_mutation_locks(owner_type, owner_id);
             CREATE INDEX IF NOT EXISTS idx_web_search_cache_updated_at
                 ON web_search_cache(updated_at DESC);
             """
         )
         ensure_column(conn, "artifacts", "tags_json", "TEXT NOT NULL DEFAULT '[]'")
+        ensure_column(conn, "artifacts", "workspace_id", "TEXT")
         ensure_column(conn, "artifacts", "current_version_id", "TEXT")
         ensure_column(conn, "artifacts", "latest_version", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "messages", "metadata_json", "TEXT NOT NULL DEFAULT '{}'")
@@ -885,11 +1062,22 @@ def init_db() -> None:
         ensure_column(conn, "conversations", "is_archived", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "conversations", "system_prompt", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "conversations", "workspace_id", "TEXT")
+        ensure_column(conn, "workspaces", "deleted_at", "TEXT")
+        ensure_column(conn, "workspaces", "deleted_workspace_path", "TEXT")
+        ensure_column(conn, "workspaces", "last_used_at", "TEXT")
         ensure_column(conn, "conversation_agent_overrides", "runtime", "TEXT NOT NULL DEFAULT 'native'")
         ensure_column(conn, "conversation_agent_overrides", "model_config_id", "TEXT")
         ensure_column(conn, "conversation_agent_overrides", "runtime_config_json", "TEXT NOT NULL DEFAULT '{}'")
+        ensure_column(conn, "long_term_memories", "superseded_by_memory_id", "TEXT")
+        ensure_column(conn, "long_term_memories", "superseded_at", "TEXT")
+        ensure_column(conn, "long_term_memories", "resolution_reason", "TEXT")
         ensure_column(conn, "sandboxes", "workspace_id", "TEXT")
+        migrate_agent_runs_for_mutation_queue(conn)
         ensure_column(conn, "agent_runs", "workspace_id", "TEXT")
+        ensure_column(conn, "agent_runs", "run_mode", "TEXT NOT NULL DEFAULT 'write'")
+        ensure_column(conn, "agent_runs", "queued_reason", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "agent_runs", "lock_owner_id", "TEXT")
+        ensure_column(conn, "agent_runs", "lock_fencing_token", "INTEGER")
         ensure_column(conn, "agent_runs", "runtime", "TEXT NOT NULL DEFAULT 'native'")
         ensure_column(conn, "agent_runs", "model_config_id", "TEXT")
         ensure_column(conn, "agent_runs", "runtime_session_id", "TEXT")
@@ -918,6 +1106,9 @@ def init_db() -> None:
         ensure_column(conn, "workspace_deployments", "config_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column(conn, "workspace_deployments", "logs", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "workspace_deployments", "error", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "workspace_deployments", "queued_reason", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "workspace_deployments", "lock_owner_id", "TEXT")
+        ensure_column(conn, "workspace_deployments", "lock_fencing_token", "INTEGER")
         ensure_column(conn, "workspace_deployments", "started_at", "TEXT")
         ensure_column(conn, "workspace_deployments", "finished_at", "TEXT")
         conn.executescript(
@@ -934,6 +1125,8 @@ def init_db() -> None:
                 ON agents(owner_user_id, enabled);
             CREATE INDEX IF NOT EXISTS idx_workspaces_owner_updated_at
                 ON workspaces(owner_user_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_workspaces_owner_status_updated_at
+                ON workspaces(owner_user_id, status, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_workspace_deployments_workspace
                 ON workspace_deployments(workspace_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_workspace_deployments_owner
@@ -941,6 +1134,14 @@ def init_db() -> None:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_sandbox_files_workspace_path
                 ON sandbox_files(workspace_id, path)
                 WHERE workspace_id IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_agent_runs_workspace_queue
+                ON agent_runs(workspace_id, status, run_mode, created_at);
+            CREATE INDEX IF NOT EXISTS idx_workspace_deployments_queue
+                ON workspace_deployments(workspace_id, status, created_at);
+            CREATE INDEX IF NOT EXISTS idx_workspace_mutation_locks_owner
+                ON workspace_mutation_locks(owner_type, owner_id);
+            CREATE INDEX IF NOT EXISTS idx_artifacts_workspace_updated_at
+                ON artifacts(workspace_id, updated_at DESC);
             """
         )
         ensure_column(conn, "workspace_indexes", "status", "TEXT NOT NULL DEFAULT 'fresh'")
@@ -962,6 +1163,7 @@ def init_db() -> None:
         ensure_column(conn, "web_search_cache", "results_json", "TEXT NOT NULL DEFAULT '[]'")
         ensure_column(conn, "web_search_cache", "created_at", "TEXT")
         ensure_column(conn, "web_search_cache", "updated_at", "TEXT")
+        migrate_artifact_workspace_scope(conn)
         migrate_artifact_versions(conn)
         seed_agents(conn)
         migrate_legacy_disabled_agents(conn)
@@ -974,6 +1176,65 @@ def ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, d
     rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
     if column_name not in {row["name"] for row in rows}:
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl}")
+
+
+def migrate_agent_runs_for_mutation_queue(conn: sqlite3.Connection) -> None:
+    rows = conn.execute("PRAGMA table_info(agent_runs)").fetchall()
+    if not rows:
+        return
+    sandbox_column = next((row for row in rows if row["name"] == "sandbox_id"), None)
+    if not sandbox_column or not int(sandbox_column["notnull"] or 0):
+        return
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.executescript(
+        """
+        CREATE TABLE agent_runs_new (
+            id TEXT PRIMARY KEY,
+            sandbox_id TEXT,
+            conversation_id TEXT NOT NULL,
+            owner_user_id TEXT NOT NULL,
+            workspace_id TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            run_mode TEXT NOT NULL DEFAULT 'write',
+            queued_reason TEXT NOT NULL DEFAULT '',
+            lock_owner_id TEXT,
+            lock_fencing_token INTEGER,
+            prompt TEXT NOT NULL DEFAULT '',
+            dag_json TEXT NOT NULL DEFAULT '{}',
+            runtime TEXT NOT NULL DEFAULT 'native',
+            model_config_id TEXT,
+            runtime_session_id TEXT,
+            runtime_metadata_json TEXT NOT NULL DEFAULT '{}',
+            summary TEXT NOT NULL DEFAULT '',
+            error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            FOREIGN KEY (sandbox_id) REFERENCES sandboxes(id) ON DELETE CASCADE,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+            FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
+        );
+
+        INSERT INTO agent_runs_new (
+            id, sandbox_id, conversation_id, owner_user_id, workspace_id, status,
+            prompt, dag_json, runtime, model_config_id, runtime_session_id,
+            runtime_metadata_json, summary, error, created_at, updated_at,
+            started_at, finished_at
+        )
+        SELECT
+            id, sandbox_id, conversation_id, owner_user_id, workspace_id, status,
+            prompt, dag_json, runtime, model_config_id, runtime_session_id,
+            runtime_metadata_json, summary, error, created_at, updated_at,
+            started_at, finished_at
+        FROM agent_runs;
+
+        DROP TABLE agent_runs;
+        ALTER TABLE agent_runs_new RENAME TO agent_runs;
+        """
+    )
+    conn.execute("PRAGMA foreign_keys = ON")
 
 
 def migrate_agent_conversation_mode(conn: sqlite3.Connection) -> None:
@@ -1043,14 +1304,48 @@ def migrate_agent_conversation_mode(conn: sqlite3.Connection) -> None:
     )
 
 
+def migrate_artifact_workspace_scope(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        UPDATE artifacts
+        SET workspace_id = (
+            SELECT workspace_id
+            FROM conversations
+            WHERE conversations.id = artifacts.conversation_id
+        )
+        WHERE (workspace_id IS NULL OR workspace_id = '')
+          AND conversation_id IN (
+            SELECT id
+            FROM conversations
+            WHERE workspace_id IS NOT NULL AND workspace_id != ''
+        )
+        """
+    )
+
+
 def migrate_artifact_versions(conn: sqlite3.Connection) -> None:
     artifacts = conn.execute("SELECT * FROM artifacts").fetchall()
     for artifact in artifacts:
+        source_workspace_id = artifact["workspace_id"] if "workspace_id" in artifact.keys() else None
+        base_metadata = {"sourceConversationId": artifact["conversation_id"]}
+        if source_workspace_id:
+            base_metadata["sourceWorkspaceId"] = source_workspace_id
+        if artifact["run_id"]:
+            base_metadata["sourceRunId"] = artifact["run_id"]
         existing = conn.execute(
             "SELECT id FROM artifact_versions WHERE artifact_id = ? AND version = 1",
             (artifact["id"],),
         ).fetchone()
         if existing:
+            existing_metadata_row = conn.execute(
+                "SELECT metadata_json FROM artifact_versions WHERE id = ?",
+                (existing["id"],),
+            ).fetchone()
+            existing_metadata = _json_load(existing_metadata_row["metadata_json"], {}) if existing_metadata_row else {}
+            conn.execute(
+                "UPDATE artifact_versions SET metadata_json = ? WHERE id = ?",
+                (_json_dump({**base_metadata, **existing_metadata}), existing["id"]),
+            )
             if not artifact["current_version_id"]:
                 conn.execute(
                     "UPDATE artifacts SET current_version_id = ?, latest_version = 1 WHERE id = ?",
@@ -1066,7 +1361,7 @@ def migrate_artifact_versions(conn: sqlite3.Connection) -> None:
                 id, artifact_id, version, content, language, size, change_summary,
                 created_by, created_by_type, parent_version_id, metadata_json, created_at
             )
-            VALUES (?, ?, 1, ?, NULL, ?, ?, ?, 'agent', NULL, '{}', ?)
+            VALUES (?, ?, 1, ?, NULL, ?, ?, ?, 'agent', NULL, ?, ?)
             """,
             (
                 version_id,
@@ -1075,6 +1370,7 @@ def migrate_artifact_versions(conn: sqlite3.Connection) -> None:
                 artifact["size"] or len((artifact["content"] or "").encode("utf-8")),
                 "历史产物迁移为 v1",
                 created_by,
+                _json_dump(base_metadata),
                 created_at,
             ),
         )
@@ -1181,11 +1477,22 @@ def migrate_legacy_disabled_agents(conn: sqlite3.Connection) -> None:
 def strip_agent_workspace_runtime_config(runtime_config: Any) -> Dict[str, Any]:
     if not isinstance(runtime_config, dict):
         return {}
-    return {
-        key: value
-        for key, value in runtime_config.items()
-        if key not in {"default_workspace_id", "defaultWorkspaceId"}
-    }
+    stripped: Dict[str, Any] = {}
+    blocked_keys = {"default_workspace_id", "defaultWorkspaceId"}
+    for key, value in runtime_config.items():
+        normalized_key = str(key).replace("-", "_").lower()
+        if key in blocked_keys or normalized_key in BLOCKED_RUNTIME_CONFIG_KEYS:
+            continue
+        if isinstance(value, dict):
+            stripped[key] = strip_agent_workspace_runtime_config(value)
+        elif isinstance(value, list):
+            stripped[key] = [
+                strip_agent_workspace_runtime_config(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+        else:
+            stripped[key] = value
+    return stripped
 
 
 def migrate_agent_workspace_runtime_config(conn: sqlite3.Connection) -> None:
@@ -1222,6 +1529,7 @@ def get_enabled_agents_for_user_conn(conn: sqlite3.Connection, owner_user_id: st
         WHERE enabled = 1
           AND status != 'disabled'
           AND id != ?
+          AND COALESCE(LOWER(runtime), 'native') NOT IN ('opencode', 'codex', 'claude_code', 'claude-code')
           AND (owner_user_id IS NULL OR owner_user_id = ?)
         ORDER BY name ASC
         """,
@@ -1250,9 +1558,22 @@ def ensure_contact_conversation_conn(
         (owner_user_id, agent_id),
     ).fetchone()
     if existing:
-        agent = get_agent(agent_id, owner_user_id=owner_user_id)
-        if not agent or not agent.get("enabled") or agent.get("status") == "disabled":
+        agent_row = conn.execute(
+            """
+            SELECT *
+            FROM agents
+            WHERE id = ?
+              AND enabled = 1
+              AND status != 'disabled'
+              AND (owner_user_id IS NULL OR owner_user_id = ?)
+            """,
+            (agent_id, owner_user_id),
+        ).fetchone()
+        if not agent_row:
             raise ValueError("Agent 不存在或已禁用")
+        agent = apply_agent_user_override(agent_from_row(agent_row), owner_user_id, conn=conn)
+        if agent_requires_workspace(agent):
+            raise ValueError("Platform Agent 需要在绑定 Workspace 的 single/group 会话中使用")
         if restore_visible and not existing["visible"]:
             conn.execute(
                 "UPDATE conversations SET visible = 1, updated_at = ? WHERE id = ?",
@@ -1277,6 +1598,9 @@ def ensure_contact_conversation_conn(
     ).fetchone()
     if not agent:
         raise ValueError("Agent 不存在或已禁用")
+    agent_dict = apply_agent_user_override(agent_from_row(agent), owner_user_id, conn=conn)
+    if agent_requires_workspace(agent_dict):
+        raise ValueError("Platform Agent 需要在绑定 Workspace 的 single/group 会话中使用")
 
     conversation_id = create_id("conv")
     timestamp = now_text()
@@ -1348,6 +1672,15 @@ def ensure_group_orchestrator_memberships(conn: sqlite3.Connection) -> None:
 def seed_agents(conn: sqlite3.Connection) -> None:
     timestamp = now_text()
     for agent in DEFAULT_AGENTS:
+        runtime = str(agent.get("runtime") or "native").strip() or "native"
+        tools, _ = normalize_agent_tools(
+            agent.get("tools"),
+            runtime=runtime,
+            agent_id=agent.get("id"),
+            category=agent.get("category"),
+            strict=False,
+        )
+        permissions = permissions_from_tools(tools)
         conn.execute(
             """
             INSERT OR IGNORE INTO agents (
@@ -1356,7 +1689,7 @@ def seed_agents(conn: sqlite3.Connection) -> None:
                 enabled, last_used_at, system_prompt, model_config_json, tools_json,
                 permissions_json, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'native', NULL, '{}', ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '{}', ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 agent["id"],
@@ -1367,16 +1700,26 @@ def seed_agents(conn: sqlite3.Connection) -> None:
                 agent["status"],
                 agent["category"],
                 agent["provider"],
+                runtime,
                 1 if agent["enabled"] else 0,
                 agent["lastUsedAt"],
                 agent["systemPrompt"],
                 _json_dump(agent["modelConfig"]),
-                _json_dump(agent["tools"]),
-                _json_dump(agent["permissions"]),
+                _json_dump(tools),
+                _json_dump(permissions),
                 timestamp,
                 timestamp,
             ),
         )
+        if runtime.strip().lower() in PLATFORM_AGENT_RUNTIMES or agent["id"] in {"agent-claude-code", "agent-codex"}:
+            conn.execute(
+                """
+                UPDATE agents
+                SET tools_json = ?, permissions_json = ?, updated_at = ?
+                WHERE id = ? AND owner_user_id IS NULL
+                """,
+                (_json_dump(tools), _json_dump(permissions), timestamp, agent["id"]),
+            )
 
 
 def paginate(items: List[Dict[str, Any]], page: int, page_size: int) -> Dict[str, Any]:
@@ -1422,6 +1765,36 @@ def model_config_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }
+
+
+def merge_dicts_deep(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    result = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = merge_dicts_deep(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def apply_model_provider_defaults_to_values(
+    provider: str,
+    protocol: Optional[str],
+    base_url: Optional[str],
+    extra_config: Optional[Dict[str, Any]],
+) -> tuple[str, str, Dict[str, Any]]:
+    provider_meta = get_model_provider(provider)
+    resolved_protocol = str(protocol or provider_meta.get("protocol") or "openai_chat_completions").strip()
+    resolved_base_url = str(base_url or provider_meta.get("defaultBaseUrl") or "").strip()
+    resolved_extra_config = extra_config if isinstance(extra_config, dict) else {}
+    runtime_defaults = provider_meta.get("runtimeDefaults") if isinstance(provider_meta.get("runtimeDefaults"), dict) else {}
+    for runtime_default in runtime_defaults.values():
+        if not isinstance(runtime_default, dict):
+            continue
+        default_extra = runtime_default.get("extraConfig")
+        if isinstance(default_extra, dict):
+            resolved_extra_config = merge_dicts_deep(default_extra, resolved_extra_config)
+    return resolved_protocol, resolved_base_url, resolved_extra_config
 
 
 def list_model_credentials(owner_user_id: str) -> List[Dict[str, Any]]:
@@ -1525,14 +1898,16 @@ def create_model_config(owner_user_id: str, payload: Dict[str, Any]) -> Dict[str
     timestamp = now_text()
     name = str(payload.get("name") or "").strip() or "Model Config"
     provider = str(payload.get("provider") or "openai_compatible").strip()
-    provider_meta = get_model_provider(provider)
-    protocol = str(payload.get("protocol") or provider_meta.get("protocol") or "openai_chat_completions").strip()
     model_name = str(payload.get("modelName") or payload.get("model_name") or "").strip()
     base_url = str(payload.get("baseUrl") or payload.get("base_url") or "").strip()
-    if not base_url:
-        base_url = str(get_model_provider(provider).get("defaultBaseUrl") or "").strip()
     credential_ref = str(payload.get("credentialRef") or payload.get("credential_ref") or "").strip() or None
     extra_config = payload.get("extraConfig") if isinstance(payload.get("extraConfig"), dict) else payload.get("extra_config") if isinstance(payload.get("extra_config"), dict) else {}
+    protocol, base_url, extra_config = apply_model_provider_defaults_to_values(
+        provider,
+        str(payload.get("protocol") or "").strip() or None,
+        base_url or None,
+        extra_config,
+    )
     with get_connection() as conn:
         conn.execute(
             """
@@ -1561,8 +1936,12 @@ def update_model_config(config_id: str, owner_user_id: str, payload: Dict[str, A
         if ("provider" in payload or "provider_id" in payload) and "protocol" not in payload:
             protocol = str(provider_meta.get("protocol") or protocol).strip()
         base_url = str(updated.get("baseUrl") or updated.get("base_url") or "").strip()
-        if not base_url:
-            base_url = str(provider_meta.get("defaultBaseUrl") or "").strip()
+        protocol, base_url, extra_config = apply_model_provider_defaults_to_values(
+            provider,
+            protocol,
+            base_url or None,
+            extra_config,
+        )
         conn.execute(
             """
             UPDATE model_configs
@@ -1756,7 +2135,7 @@ def get_or_create_guest_user() -> Dict[str, Any]:
 
 
 def agent_from_row(row: sqlite3.Row) -> Dict[str, Any]:
-    return {
+    return annotate_agent_runtime_capabilities({
         "id": row["id"],
         "ownerUserId": row["owner_user_id"],
         "name": row["name"],
@@ -1775,17 +2154,21 @@ def agent_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "modelConfig": _json_load(row["model_config_json"], {}),
         "tools": _json_load(row["tools_json"], []),
         "permissions": _json_load(row["permissions_json"], DEFAULT_PERMISSIONS),
-    }
+    })
 
 
-def apply_agent_user_override(agent: Dict[str, Any], owner_user_id: Optional[str]) -> Dict[str, Any]:
+def apply_agent_user_override(
+    agent: Dict[str, Any],
+    owner_user_id: Optional[str],
+    conn: Optional[sqlite3.Connection] = None,
+) -> Dict[str, Any]:
     if (
         not owner_user_id
         or agent.get("ownerUserId") is not None
         or agent.get("id") == ORCHESTRATOR_AGENT_ID
     ):
         return agent
-    with get_connection() as conn:
+    if conn is not None:
         row = conn.execute(
             """
             SELECT *
@@ -1794,6 +2177,16 @@ def apply_agent_user_override(agent: Dict[str, Any], owner_user_id: Optional[str
             """,
             (owner_user_id, agent["id"]),
         ).fetchone()
+    else:
+        with get_connection() as owned_conn:
+            row = owned_conn.execute(
+                """
+                SELECT *
+                FROM agent_user_overrides
+                WHERE owner_user_id = ? AND base_agent_id = ?
+                """,
+                (owner_user_id, agent["id"]),
+            ).fetchone()
     if not row:
         return agent
     overridden = {
@@ -1817,7 +2210,7 @@ def apply_agent_user_override(agent: Dict[str, Any], owner_user_id: Optional[str
         "overrideSource": "user",
         "baseAgentId": agent["id"],
     }
-    return overridden
+    return annotate_agent_runtime_capabilities(overridden)
 
 
 def apply_conversation_agent_override(agent: Dict[str, Any], conversation_id: str) -> Dict[str, Any]:
@@ -1859,7 +2252,7 @@ def apply_conversation_agent_override(agent: Dict[str, Any], conversation_id: st
     }
     if row["system_prompt"] is not None:
         overridden["systemPromptSource"] = "conversation_override"
-    return overridden
+    return annotate_agent_runtime_capabilities(overridden)
 
 
 def get_conversation_agent_config(
@@ -1895,6 +2288,14 @@ def upsert_agent_user_override(
             return None
         current = apply_agent_user_override(agent_from_row(base_agent), owner_user_id)
         updated = {**current, **payload, "id": base_agent_id, "ownerUserId": None}
+        updated_tools, _ = normalize_agent_tools(
+            updated.get("tools"),
+            runtime=updated.get("runtime", "native"),
+            agent_id=base_agent_id,
+            category=updated.get("category"),
+            strict=False,
+        )
+        updated_permissions = permissions_from_tools(updated_tools)
         existing = conn.execute(
             """
             SELECT id
@@ -1930,8 +2331,8 @@ def upsert_agent_user_override(
                     updated.get("lastUsedAt"),
                     updated.get("systemPrompt", ""),
                     _json_dump(updated.get("modelConfig", {})),
-                    _json_dump(updated.get("tools", [])),
-                    _json_dump(updated.get("permissions", DEFAULT_PERMISSIONS)),
+                    _json_dump(updated_tools),
+                    _json_dump(updated_permissions),
                     timestamp,
                     owner_user_id,
                     base_agent_id,
@@ -1967,8 +2368,8 @@ def upsert_agent_user_override(
                     updated.get("lastUsedAt"),
                     updated.get("systemPrompt", ""),
                     _json_dump(updated.get("modelConfig", {})),
-                    _json_dump(updated.get("tools", [])),
-                    _json_dump(updated.get("permissions", DEFAULT_PERMISSIONS)),
+                    _json_dump(updated_tools),
+                    _json_dump(updated_permissions),
                     timestamp,
                     timestamp,
                 ),
@@ -2058,8 +2459,21 @@ def upsert_conversation_agent_config(
             values["model_config_json"] = _json_dump(payload.get("modelConfig") or {})
         if "tools" in payload:
             values["tools_json"] = _json_dump(payload.get("tools") or [])
-        if "permissions" in payload:
-            values["permissions_json"] = _json_dump(payload.get("permissions") or DEFAULT_PERMISSIONS)
+
+        raw_tools = (
+            _json_load(values["tools_json"], current.get("tools", []))
+            if values.get("tools_json") is not None
+            else current.get("tools", [])
+        )
+        normalized_tools, _ = normalize_agent_tools(
+            raw_tools,
+            runtime=values.get("runtime") or current.get("runtime", "native"),
+            agent_id=agent_id,
+            category=values.get("category") or current.get("category"),
+            strict=False,
+        )
+        values["tools_json"] = _json_dump(normalized_tools)
+        values["permissions_json"] = _json_dump(permissions_from_tools(normalized_tools))
 
         if existing:
             conn.execute(
@@ -2144,14 +2558,21 @@ def attach_agent_contact_conversation(
     expose_orchestrator_as_disabled: bool = False,
 ) -> Dict[str, Any]:
     if agent.get("id") == ORCHESTRATOR_AGENT_ID:
-        return {**agent, "enabled": False} if expose_orchestrator_as_disabled else agent
+        annotated = annotate_agent_runtime_capabilities(agent)
+        return {**annotated, "enabled": False} if expose_orchestrator_as_disabled else annotated
     agent = apply_agent_user_override(agent, owner_user_id)
+    if agent_requires_workspace(agent):
+        return annotate_agent_runtime_capabilities({
+            **agent,
+            "conversationId": None,
+            "contactConversationId": None,
+        })
     if not owner_user_id or not agent.get("enabled") or agent.get("status") == "disabled":
-        return agent
+        return annotate_agent_runtime_capabilities(agent)
     conversation = get_contact_conversation(owner_user_id, agent["id"])
     if conversation:
-        return {**agent, "conversationId": conversation["id"]}
-    return agent
+        return annotate_agent_runtime_capabilities({**agent, "conversationId": conversation["id"]})
+    return annotate_agent_runtime_capabilities(agent)
 
 
 def conversation_from_row(row: sqlite3.Row, agent_ids: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -2180,9 +2601,12 @@ def workspace_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "ownerUserId": row["owner_user_id"],
         "name": row["name"],
         "workspacePath": row["workspace_path"],
+        "deletedWorkspacePath": row["deleted_workspace_path"] if "deleted_workspace_path" in row.keys() else None,
         "status": row["status"],
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
+        "deletedAt": row["deleted_at"] if "deleted_at" in row.keys() else None,
+        "lastUsedAt": row["last_used_at"] if "last_used_at" in row.keys() else row["updated_at"],
     }
 
 
@@ -2202,6 +2626,10 @@ def workspace_deployment_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "config": _json_load(row["config_json"], {}),
         "logs": row["logs"],
         "error": row["error"],
+        "runMode": "deploy",
+        "queuedReason": row["queued_reason"] if "queued_reason" in row.keys() else "",
+        "lockOwnerId": row["lock_owner_id"] if "lock_owner_id" in row.keys() else None,
+        "lockFencingToken": row["lock_fencing_token"] if "lock_fencing_token" in row.keys() else None,
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
         "startedAt": row["started_at"],
@@ -2248,7 +2676,7 @@ def message_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "senderName": row["sender_name"],
         "role": row["role"],
         "type": row["type"],
-        "content": row["content"],
+        "content": _display_message_content(row["content"]),
         "createdAt": row["created_at"],
     }
     if row["language"]:
@@ -2266,8 +2694,8 @@ def message_from_row(row: sqlite3.Row) -> Dict[str, Any]:
     return message
 
 
-def attachment_from_row(row: sqlite3.Row) -> Dict[str, Any]:
-    return {
+def attachment_from_row(row: sqlite3.Row, include_storage_path: bool = False) -> Dict[str, Any]:
+    attachment = {
         "id": row["id"],
         "conversationId": row["conversation_id"],
         "messageId": row["message_id"],
@@ -2276,11 +2704,13 @@ def attachment_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "name": row["name"],
         "mimeType": row["mime_type"],
         "size": row["size"],
-        "storagePath": row["storage_path"],
-        "url": row["url"],
+        "url": signed_attachment_url(row["conversation_id"], row["id"]),
         "meta": _json_load(row["meta_json"], {}),
         "createdAt": row["created_at"],
     }
+    if include_storage_path:
+        attachment["storagePath"] = row["storage_path"]
+    return attachment
 
 
 def artifact_meta_from_row(row: sqlite3.Row) -> Dict[str, Any]:
@@ -2288,6 +2718,8 @@ def artifact_meta_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "id": row["id"],
         "artifactId": row["id"],
         "conversationId": row["conversation_id"],
+        "originConversationId": row["conversation_id"],
+        "workspaceId": row["workspace_id"] if "workspace_id" in row.keys() else None,
         "runId": row["run_id"],
         "title": row["title"],
         "type": row["type"],
@@ -2299,6 +2731,30 @@ def artifact_meta_from_row(row: sqlite3.Row) -> Dict[str, Any]:
     }
     if row["description"]:
         artifact["description"] = row["description"]
+    return artifact
+
+
+def apply_artifact_file_metadata(artifact: Dict[str, Any], metadata: Dict[str, Any]) -> Dict[str, Any]:
+    file_path = metadata.get("sourceFilePath") or metadata.get("filePath")
+    source_run_id = metadata.get("sourceRunId")
+    if file_path:
+        artifact["sourceFilePath"] = file_path
+        artifact["filePath"] = file_path
+        if source_run_id:
+            artifact["downloadUrl"] = f"/api/v1/runs/{source_run_id}/files/{quote(str(file_path), safe='/')}/download"
+    for metadata_key, artifact_key in (
+        ("mimeType", "mimeType"),
+        ("size", "size"),
+        ("sha256", "sha256"),
+        ("isText", "isText"),
+        ("contentPreview", "contentPreview"),
+    ):
+        if metadata_key in metadata:
+            artifact[artifact_key] = metadata[metadata_key]
+    if "isText" in artifact:
+        artifact["previewable"] = bool(artifact.get("isText"))
+    elif file_path:
+        artifact["previewable"] = False
     return artifact
 
 
@@ -2320,12 +2776,12 @@ def artifact_meta_from_version_row(artifact_row: sqlite3.Row, version_row: sqlit
     })
     if version_row["language"]:
         artifact["language"] = version_row["language"]
-    if metadata.get("sourceFilePath"):
-        artifact["sourceFilePath"] = metadata["sourceFilePath"]
+    apply_artifact_file_metadata(artifact, metadata)
     return artifact
 
 
 def artifact_version_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    metadata = _json_load(row["metadata_json"], {})
     version = {
         "id": row["id"],
         "artifactId": row["artifact_id"],
@@ -2334,9 +2790,13 @@ def artifact_version_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "size": row["size"],
         "createdBy": row["created_by"],
         "createdByType": row["created_by_type"],
-        "metadata": _json_load(row["metadata_json"], {}),
+        "metadata": metadata,
         "createdAt": row["created_at"],
     }
+    if metadata.get("sourceConversationId"):
+        version["sourceConversationId"] = metadata.get("sourceConversationId")
+    if metadata.get("sourceWorkspaceId"):
+        version["sourceWorkspaceId"] = metadata.get("sourceWorkspaceId")
     if row["language"]:
         version["language"] = row["language"]
     if row["change_summary"]:
@@ -2352,6 +2812,8 @@ def artifact_detail_from_row(row: sqlite3.Row, current_version: Optional[Dict[st
         artifact["currentVersion"] = current_version
         artifact["content"] = current_version["content"]
         artifact["size"] = current_version.get("size")
+        metadata = current_version.get("metadata") if isinstance(current_version.get("metadata"), dict) else {}
+        apply_artifact_file_metadata(artifact, metadata)
     return artifact
 
 
@@ -2377,6 +2839,9 @@ def memory_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "confidence": row["confidence"],
         "sourceMessageId": row["source_message_id"],
         "active": bool(row["active"]),
+        "supersededByMemoryId": row["superseded_by_memory_id"] if "superseded_by_memory_id" in row.keys() else None,
+        "supersededAt": row["superseded_at"] if "superseded_at" in row.keys() else None,
+        "resolutionReason": row["resolution_reason"] if "resolution_reason" in row.keys() else None,
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }
@@ -2420,6 +2885,10 @@ def agent_run_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "ownerUserId": row["owner_user_id"],
         "workspaceId": row["workspace_id"],
         "status": row["status"],
+        "runMode": row["run_mode"] if "run_mode" in row.keys() else "write",
+        "queuedReason": row["queued_reason"] if "queued_reason" in row.keys() else "",
+        "lockOwnerId": row["lock_owner_id"] if "lock_owner_id" in row.keys() else None,
+        "lockFencingToken": row["lock_fencing_token"] if "lock_fencing_token" in row.keys() else None,
         "prompt": row["prompt"],
         "dag": _json_load(row["dag_json"], {}),
         "runtime": row["runtime"] or "native",
@@ -2436,20 +2905,42 @@ def agent_run_from_row(row: sqlite3.Row) -> Dict[str, Any]:
 
 
 def agent_run_step_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    runtime_metadata = _json_load(row["runtime_metadata_json"], {})
+    raw_task = str(row["task"] or "")
+    task = raw_task
+    display_task = str(runtime_metadata.get("displayTask") or "").strip()
+    execution_task = str(runtime_metadata.get("executionTask") or "").strip()
+    if execution_task:
+        task = _clean_internal_task_for_display(execution_task)
+    else:
+        clean_task = _clean_internal_task_for_display(raw_task)
+        if clean_task != raw_task.strip():
+            runtime_metadata = {**runtime_metadata, "executionTask": raw_task}
+        task = clean_task
+    mutation_mode = str(runtime_metadata.get("mutationMode") or "unknown").strip().lower()
+    if mutation_mode not in {"read", "write", "unknown"}:
+        mutation_mode = "unknown"
+    target_paths = runtime_metadata.get("targetPaths") if isinstance(runtime_metadata.get("targetPaths"), list) else []
+    read_paths = runtime_metadata.get("readPaths") if isinstance(runtime_metadata.get("readPaths"), list) else []
     return {
         "id": row["id"],
         "runId": row["run_id"],
         "agentId": row["agent_id"],
         "agentName": row["agent_name"],
-        "task": row["task"],
+        "task": task,
         "dependsOn": _json_load(row["depends_on_json"], []),
         "expectedOutputs": _json_load(row["expected_outputs_json"], []),
+        "mutationMode": mutation_mode,
+        "targetPaths": [str(path) for path in target_paths],
+        "readPaths": [str(path) for path in read_paths],
+        "usesStableSnapshot": bool(runtime_metadata.get("usesStableSnapshot")),
+        "writeToolOnly": bool(runtime_metadata.get("writeToolOnly")),
         "status": row["status"],
         "claimedBy": row["claimed_by"],
         "runtime": row["runtime"] or "native",
         "modelConfigId": row["model_config_id"],
         "runtimeSessionId": row["runtime_session_id"],
-        "runtimeMetadata": _json_load(row["runtime_metadata_json"], {}),
+        "runtimeMetadata": runtime_metadata,
         "output": _json_load(row["output_json"], {}),
         "logs": row["logs"],
         "error": row["error"],
@@ -2521,21 +3012,35 @@ def create_workspace(
     workspace_id = workspace_id or create_id("workspace")
     timestamp = now_text()
     resolved_path = workspace_path or _workspace_path_for_id(workspace_id, owner_user_id)
-    Path(resolved_path).mkdir(parents=True, exist_ok=True)
+    workspace_name = (name or f"Workspace {workspace_id[-6:]}").strip()
     with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM workspaces
+            WHERE owner_user_id = ? AND name = ? AND status = 'active'
+            LIMIT 1
+            """,
+            (owner_user_id, workspace_name),
+        ).fetchone()
+        if row:
+            raise ValueError("Workspace 名称已存在")
+        Path(resolved_path).mkdir(parents=True, exist_ok=True)
         conn.execute(
             """
             INSERT INTO workspaces (
                 id, owner_user_id, name, workspace_path, status,
-                created_at, updated_at
+                created_at, updated_at, last_used_at
             )
-            VALUES (?, ?, ?, ?, 'active', ?, ?)
+            VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
             """,
             (
                 workspace_id,
                 owner_user_id,
-                (name or f"Workspace {workspace_id[-6:]}").strip(),
+                workspace_name,
                 resolved_path,
+                timestamp,
                 timestamp,
                 timestamp,
             ),
@@ -2558,22 +3063,251 @@ def get_workspace(workspace_id: str, owner_user_id: Optional[str] = None) -> Opt
     return workspace_from_row(row) if row else None
 
 
+def active_workspace_name_exists(
+    owner_user_id: str,
+    name: str,
+    exclude_workspace_id: Optional[str] = None,
+) -> bool:
+    clean_name = str(name or "").strip()
+    if not clean_name:
+        return False
+    params: List[Any] = [owner_user_id, clean_name]
+    exclude_clause = ""
+    if exclude_workspace_id:
+        exclude_clause = "AND id != ?"
+        params.append(exclude_workspace_id)
+    with get_connection() as conn:
+        row = conn.execute(
+            f"""
+            SELECT 1
+            FROM workspaces
+            WHERE owner_user_id = ?
+              AND name = ?
+              AND status = 'active'
+              {exclude_clause}
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+    return bool(row)
+
+
 def list_workspaces(
     owner_user_id: str,
     page: int = 1,
     page_size: int = 20,
+    status: str = "active",
 ) -> Dict[str, Any]:
+    status = str(status or "active").strip().lower()
+    status_clause = ""
+    params: List[Any] = [owner_user_id]
+    if status in {"active", "deleted"}:
+        status_clause = "AND w.status = ?"
+        params.append(status)
     with get_connection() as conn:
         rows = conn.execute(
+            f"""
+            SELECT
+                w.*,
+                COUNT(c.id) AS conversation_count,
+                MAX(c.updated_at) AS conversation_last_used_at
+            FROM workspaces w
+            LEFT JOIN conversations c
+                ON c.workspace_id = w.id
+               AND c.owner_user_id = w.owner_user_id
+            WHERE w.owner_user_id = ?
+              {status_clause}
+            GROUP BY w.id
+            ORDER BY COALESCE(w.last_used_at, w.updated_at) DESC, w.created_at DESC
+            """,
+            params,
+        ).fetchall()
+    items = []
+    for row in rows:
+        workspace = workspace_from_row(row)
+        workspace["conversationCount"] = int(row["conversation_count"] or 0)
+        workspace["lastUsedAt"] = row["conversation_last_used_at"] or workspace.get("lastUsedAt") or workspace["updatedAt"]
+        items.append(workspace)
+    page_data = paginate(items, page, page_size)
+    page_data["items"] = page_data["list"]
+    return page_data
+
+
+def touch_workspace(workspace_id: str, owner_user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    owner_clause = ""
+    params: List[Any] = [now_text(), workspace_id]
+    if owner_user_id:
+        owner_clause = "AND owner_user_id = ?"
+        params.append(owner_user_id)
+    with get_connection() as conn:
+        conn.execute(
+            f"""
+            UPDATE workspaces
+            SET last_used_at = ?, updated_at = ?
+            WHERE id = ? {owner_clause}
+            """,
+            [params[0], params[0], *params[1:]],
+        )
+    return get_workspace(workspace_id, owner_user_id=owner_user_id)
+
+
+def rename_workspace(workspace_id: str, owner_user_id: str, name: str) -> Optional[Dict[str, Any]]:
+    clean_name = str(name or "").strip()
+    if not clean_name:
+        raise ValueError("Workspace 名称不能为空")
+    timestamp = now_text()
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM workspaces
+            WHERE owner_user_id = ?
+              AND name = ?
+              AND status = 'active'
+              AND id != ?
+            LIMIT 1
+            """,
+            (owner_user_id, clean_name, workspace_id),
+        ).fetchone()
+        if row:
+            raise ValueError("Workspace 名称已存在")
+        cur = conn.execute(
+            """
+            UPDATE workspaces
+            SET name = ?, updated_at = ?
+            WHERE id = ? AND owner_user_id = ? AND status = 'active'
+            """,
+            (clean_name, timestamp, workspace_id, owner_user_id),
+        )
+        if cur.rowcount == 0:
+            return None
+    return get_workspace(workspace_id, owner_user_id=owner_user_id)
+
+
+def get_workspace_active_mutation_lock(workspace_id: str) -> Optional[Dict[str, Any]]:
+    timestamp = now_text()
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM workspace_mutation_locks
+            WHERE workspace_id = ?
+              AND lease_expires_at >= ?
+            """,
+            (workspace_id, timestamp),
+        ).fetchone()
+    return _mutation_lock_from_row(row) if row else None
+
+
+def workspace_active_mutation_summary(workspace_id: str) -> Dict[str, Any]:
+    run_statuses = sorted(TERMINAL_RUN_STATUSES)
+    deploy_statuses = sorted(TERMINAL_DEPLOYMENT_STATUSES)
+    with get_connection() as conn:
+        run_rows = conn.execute(
+            f"""
+            SELECT id, status
+            FROM agent_runs
+            WHERE workspace_id = ?
+              AND status NOT IN ({','.join('?' for _ in run_statuses)})
+            ORDER BY created_at ASC
+            """,
+            (workspace_id, *run_statuses),
+        ).fetchall()
+        deployment_rows = conn.execute(
+            f"""
+            SELECT id, status
+            FROM workspace_deployments
+            WHERE workspace_id = ?
+              AND status NOT IN ({','.join('?' for _ in deploy_statuses)})
+            ORDER BY created_at ASC
+            """,
+            (workspace_id, *deploy_statuses),
+        ).fetchall()
+    lock = get_workspace_active_mutation_lock(workspace_id)
+    return {
+        "lock": lock,
+        "runs": [{"id": row["id"], "status": row["status"]} for row in run_rows],
+        "deployments": [{"id": row["id"], "status": row["status"]} for row in deployment_rows],
+        "blocked": bool(lock or run_rows or deployment_rows),
+    }
+
+
+def mark_workspace_deleted(
+    workspace_id: str,
+    owner_user_id: str,
+    deleted_workspace_path: str,
+) -> Optional[Dict[str, Any]]:
+    timestamp = now_text()
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
             """
             SELECT *
             FROM workspaces
-            WHERE owner_user_id = ?
-            ORDER BY updated_at DESC, created_at DESC
+            WHERE id = ? AND owner_user_id = ? AND status = 'active'
             """,
-            (owner_user_id,),
-        ).fetchall()
-    return paginate([workspace_from_row(row) for row in rows], page, page_size)
+            (workspace_id, owner_user_id),
+        ).fetchone()
+        if not row:
+            return None
+        conn.execute(
+            """
+            UPDATE conversations
+            SET workspace_id = NULL, updated_at = ?
+            WHERE workspace_id = ? AND owner_user_id = ?
+            """,
+            (timestamp, workspace_id, owner_user_id),
+        )
+        conn.execute(
+            """
+            UPDATE workspaces
+            SET status = 'deleted',
+                deleted_at = ?,
+                deleted_workspace_path = ?,
+                updated_at = ?
+            WHERE id = ? AND owner_user_id = ?
+            """,
+            (timestamp, deleted_workspace_path, timestamp, workspace_id, owner_user_id),
+        )
+    return get_workspace(workspace_id, owner_user_id=owner_user_id)
+
+
+def restore_workspace_record(
+    workspace_id: str,
+    owner_user_id: str,
+) -> Optional[Dict[str, Any]]:
+    workspace = get_workspace(workspace_id, owner_user_id=owner_user_id)
+    if not workspace or workspace.get("status") != "deleted":
+        return None
+    if active_workspace_name_exists(owner_user_id, workspace["name"], exclude_workspace_id=workspace_id):
+        raise ValueError("Workspace 名称已存在")
+    timestamp = now_text()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE workspaces
+            SET status = 'active',
+                deleted_at = NULL,
+                deleted_workspace_path = NULL,
+                updated_at = ?,
+                last_used_at = ?
+            WHERE id = ? AND owner_user_id = ? AND status = 'deleted'
+            """,
+            (timestamp, timestamp, workspace_id, owner_user_id),
+        )
+    return get_workspace(workspace_id, owner_user_id=owner_user_id)
+
+
+def purge_workspace_record(workspace_id: str, owner_user_id: str) -> Optional[Dict[str, Any]]:
+    workspace = get_workspace(workspace_id, owner_user_id=owner_user_id)
+    if not workspace:
+        return None
+    if workspace.get("status") != "deleted":
+        raise ValueError("只能彻底删除已删除的 Workspace")
+    with get_connection() as conn:
+        conn.execute("DELETE FROM workspaces WHERE id = ? AND owner_user_id = ? AND status = 'deleted'", (workspace_id, owner_user_id))
+    return workspace
 
 
 def create_workspace_deployment(
@@ -2660,6 +3394,9 @@ def update_workspace_deployment(
     logs: Optional[str] = None,
     append_logs: Optional[str] = None,
     error: Optional[str] = None,
+    queued_reason: Optional[str] = None,
+    lock_owner_id: Optional[str] = None,
+    lock_fencing_token: Optional[int] = None,
     mark_started: bool = False,
     mark_finished: bool = False,
 ) -> Optional[Dict[str, Any]]:
@@ -2684,6 +3421,9 @@ def update_workspace_deployment(
                 config_json = COALESCE(?, config_json),
                 logs = ?,
                 error = COALESCE(?, error),
+                queued_reason = COALESCE(?, queued_reason),
+                lock_owner_id = COALESCE(?, lock_owner_id),
+                lock_fencing_token = COALESCE(?, lock_fencing_token),
                 updated_at = ?,
                 started_at = CASE WHEN ? THEN COALESCE(started_at, ?) ELSE started_at END,
                 finished_at = CASE WHEN ? THEN COALESCE(finished_at, ?) ELSE finished_at END
@@ -2698,6 +3438,9 @@ def update_workspace_deployment(
                 _json_dump(config) if config is not None else None,
                 next_logs,
                 error,
+                queued_reason,
+                lock_owner_id,
+                lock_fencing_token,
                 timestamp,
                 1 if mark_started else 0,
                 timestamp,
@@ -2708,6 +3451,367 @@ def update_workspace_deployment(
         )
         row = conn.execute("SELECT * FROM workspace_deployments WHERE id = ?", (deployment_id,)).fetchone()
     return workspace_deployment_from_row(row) if row else None
+
+
+TERMINAL_RUN_STATUSES = {"completed", "failed", "conflict", "cancelled"}
+TERMINAL_DEPLOYMENT_STATUSES = {"deployed", "failed", "requires_config", "stopped"}
+
+
+def _mutation_lock_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    return {
+        "workspaceId": row["workspace_id"],
+        "ownerType": row["owner_type"],
+        "ownerId": row["owner_id"],
+        "mode": row["mode"],
+        "heartbeatAt": row["heartbeat_at"],
+        "leaseExpiresAt": row["lease_expires_at"],
+        "fencingToken": row["fencing_token"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+    }
+
+
+def _mutation_lease_expires_at(lease_seconds: int) -> str:
+    return (now_datetime() + timedelta(seconds=max(15, int(lease_seconds or 120)))).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _queued_mutation_items(conn: sqlite3.Connection, workspace_id: str) -> List[Dict[str, Any]]:
+    run_rows = conn.execute(
+        """
+        SELECT id, created_at, run_mode
+        FROM agent_runs
+        WHERE workspace_id = ?
+          AND status = 'queued'
+          AND run_mode IN ('write', 'deploy')
+        ORDER BY created_at ASC, id ASC
+        """,
+        (workspace_id,),
+    ).fetchall()
+    deploy_rows = conn.execute(
+        """
+        SELECT id, created_at
+        FROM workspace_deployments
+        WHERE workspace_id = ?
+          AND status = 'queued'
+        ORDER BY created_at ASC, id ASC
+        """,
+        (workspace_id,),
+    ).fetchall()
+    items: List[Dict[str, Any]] = [
+        {
+            "ownerType": "run",
+            "ownerId": row["id"],
+            "mode": row["run_mode"] or "write",
+            "createdAt": row["created_at"],
+        }
+        for row in run_rows
+    ]
+    items.extend(
+        {
+            "ownerType": "deployment",
+            "ownerId": row["id"],
+            "mode": "deploy",
+            "createdAt": row["created_at"],
+        }
+        for row in deploy_rows
+    )
+    return sorted(items, key=lambda item: (str(item["createdAt"]), str(item["ownerId"])))
+
+
+def mutation_queue_position(workspace_id: str, owner_type: str, owner_id: str) -> Optional[int]:
+    with get_connection() as conn:
+        for index, item in enumerate(_queued_mutation_items(conn, workspace_id), start=1):
+            if item["ownerType"] == owner_type and item["ownerId"] == owner_id:
+                return index
+    return None
+
+
+def _mark_stale_lock_owner(conn: sqlite3.Connection, owner_type: str, owner_id: str, reason: str) -> None:
+    timestamp = now_text()
+    if owner_type == "run":
+        conn.execute(
+            f"""
+            UPDATE agent_runs
+            SET status = 'failed',
+                error = ?,
+                summary = ?,
+                finished_at = COALESCE(finished_at, ?),
+                updated_at = ?
+            WHERE id = ?
+              AND status NOT IN ({','.join('?' for _ in TERMINAL_RUN_STATUSES)})
+            """,
+            (reason, reason, timestamp, timestamp, owner_id, *TERMINAL_RUN_STATUSES),
+        )
+    elif owner_type == "deployment":
+        conn.execute(
+            f"""
+            UPDATE workspace_deployments
+            SET status = 'failed',
+                error = ?,
+                logs = TRIM(COALESCE(logs, '') || CASE WHEN COALESCE(logs, '') = '' THEN '' ELSE '\n' END || ?),
+                finished_at = COALESCE(finished_at, ?),
+                updated_at = ?
+            WHERE id = ?
+              AND status NOT IN ({','.join('?' for _ in TERMINAL_DEPLOYMENT_STATUSES)})
+            """,
+            (reason, reason, timestamp, timestamp, owner_id, *TERMINAL_DEPLOYMENT_STATUSES),
+        )
+
+
+def try_acquire_workspace_mutation_lock(
+    workspace_id: str,
+    owner_type: str,
+    owner_id: str,
+    mode: str,
+    lease_seconds: int = 120,
+    acquired_status: Optional[str] = None,
+) -> Dict[str, Any]:
+    if owner_type not in {"run", "deployment", "management"}:
+        raise ValueError("invalid mutation lock owner_type")
+    if mode not in {"write", "deploy", "manage"}:
+        raise ValueError("invalid mutation lock mode")
+    timestamp = now_text()
+    lease_expires_at = _mutation_lease_expires_at(lease_seconds)
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT * FROM workspace_mutation_locks WHERE workspace_id = ?",
+            (workspace_id,),
+        ).fetchone()
+        if row and row["owner_type"] == owner_type and row["owner_id"] == owner_id:
+            token = int(row["fencing_token"] or 0)
+            conn.execute(
+                """
+                UPDATE workspace_mutation_locks
+                SET mode = ?, heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
+                WHERE workspace_id = ? AND owner_type = ? AND owner_id = ?
+                """,
+                (mode, timestamp, lease_expires_at, timestamp, workspace_id, owner_type, owner_id),
+            )
+        elif row and str(row["lease_expires_at"] or "") >= timestamp:
+            position = None
+            for index, item in enumerate(_queued_mutation_items(conn, workspace_id), start=1):
+                if item["ownerType"] == owner_type and item["ownerId"] == owner_id:
+                    position = index
+                    break
+            return {
+                "acquired": False,
+                "queuePosition": position,
+                "lock": _mutation_lock_from_row(row),
+            }
+        else:
+            token = int(row["fencing_token"] or 0) + 1 if row else 1
+            if row:
+                _mark_stale_lock_owner(
+                    conn,
+                    str(row["owner_type"]),
+                    str(row["owner_id"]),
+                    "workspace mutation lock lease expired",
+                )
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO workspace_mutation_locks (
+                    workspace_id, owner_type, owner_id, mode, heartbeat_at,
+                    lease_expires_at, fencing_token, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM workspace_mutation_locks WHERE workspace_id = ?), ?), ?)
+                """,
+                (
+                    workspace_id,
+                    owner_type,
+                    owner_id,
+                    mode,
+                    timestamp,
+                    lease_expires_at,
+                    token,
+                    workspace_id,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        if owner_type == "run":
+            conn.execute(
+                """
+                UPDATE agent_runs
+                SET status = COALESCE(?, status),
+                    queued_reason = '',
+                    lock_owner_id = ?,
+                    lock_fencing_token = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (acquired_status, owner_id, token, timestamp, owner_id),
+            )
+        elif owner_type == "deployment":
+            conn.execute(
+                """
+                UPDATE workspace_deployments
+                SET status = COALESCE(?, status),
+                    queued_reason = '',
+                    lock_owner_id = ?,
+                    lock_fencing_token = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (acquired_status, owner_id, token, timestamp, owner_id),
+            )
+        lock_row = conn.execute(
+            "SELECT * FROM workspace_mutation_locks WHERE workspace_id = ?",
+            (workspace_id,),
+        ).fetchone()
+        return {
+            "acquired": True,
+            "queuePosition": None,
+            "lock": _mutation_lock_from_row(lock_row),
+        }
+
+
+def heartbeat_workspace_mutation_lock(
+    workspace_id: str,
+    owner_type: str,
+    owner_id: str,
+    fencing_token: int,
+    lease_seconds: int = 120,
+) -> bool:
+    timestamp = now_text()
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            """
+            SELECT * FROM workspace_mutation_locks
+            WHERE workspace_id = ? AND owner_type = ? AND owner_id = ? AND fencing_token = ?
+            """,
+            (workspace_id, owner_type, owner_id, int(fencing_token or 0)),
+        ).fetchone()
+        if not row or str(row["lease_expires_at"] or "") < timestamp:
+            return False
+        conn.execute(
+            """
+            UPDATE workspace_mutation_locks
+            SET heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
+            WHERE workspace_id = ? AND owner_type = ? AND owner_id = ? AND fencing_token = ?
+            """,
+            (
+                timestamp,
+                _mutation_lease_expires_at(lease_seconds),
+                timestamp,
+                workspace_id,
+                owner_type,
+                owner_id,
+                int(fencing_token or 0),
+            ),
+        )
+    return True
+
+
+def is_workspace_mutation_lock_current(
+    workspace_id: str,
+    owner_type: str,
+    owner_id: str,
+    fencing_token: Optional[int],
+) -> bool:
+    if not workspace_id or not owner_type or not owner_id or not fencing_token:
+        return False
+    timestamp = now_text()
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM workspace_mutation_locks
+            WHERE workspace_id = ?
+              AND owner_type = ?
+              AND owner_id = ?
+              AND fencing_token = ?
+              AND lease_expires_at >= ?
+            """,
+            (workspace_id, owner_type, owner_id, int(fencing_token or 0), timestamp),
+        ).fetchone()
+    return bool(row)
+
+
+def release_workspace_mutation_lock(
+    workspace_id: str,
+    owner_type: str,
+    owner_id: str,
+    fencing_token: Optional[int] = None,
+) -> Dict[str, Any]:
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        params: List[Any] = [workspace_id, owner_type, owner_id]
+        token_clause = ""
+        if fencing_token is not None:
+            token_clause = "AND fencing_token = ?"
+            params.append(int(fencing_token or 0))
+        row = conn.execute(
+            f"""
+            SELECT * FROM workspace_mutation_locks
+            WHERE workspace_id = ? AND owner_type = ? AND owner_id = ? {token_clause}
+            """,
+            params,
+        ).fetchone()
+        released = bool(row)
+        next_owner = None
+        if row:
+            queued_items = _queued_mutation_items(conn, workspace_id)
+            next_owner = queued_items[0] if queued_items else None
+            if next_owner:
+                timestamp = now_text()
+                next_token = int(row["fencing_token"] or 0) + 1
+                conn.execute(
+                    """
+                    UPDATE workspace_mutation_locks
+                    SET owner_type = ?,
+                        owner_id = ?,
+                        mode = ?,
+                        heartbeat_at = ?,
+                        lease_expires_at = ?,
+                        fencing_token = ?,
+                        updated_at = ?
+                    WHERE workspace_id = ?
+                    """,
+                    (
+                        next_owner["ownerType"],
+                        next_owner["ownerId"],
+                        next_owner["mode"],
+                        timestamp,
+                        _mutation_lease_expires_at(120),
+                        next_token,
+                        timestamp,
+                        workspace_id,
+                    ),
+                )
+                if next_owner["ownerType"] == "run":
+                    conn.execute(
+                        """
+                        UPDATE agent_runs
+                        SET lock_owner_id = ?,
+                            lock_fencing_token = ?,
+                            queued_reason = '',
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (next_owner["ownerId"], next_token, timestamp, next_owner["ownerId"]),
+                    )
+                elif next_owner["ownerType"] == "deployment":
+                    conn.execute(
+                        """
+                        UPDATE workspace_deployments
+                        SET lock_owner_id = ?,
+                            lock_fencing_token = ?,
+                            queued_reason = '',
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (next_owner["ownerId"], next_token, timestamp, next_owner["ownerId"]),
+                    )
+                next_owner = {**next_owner, "fencingToken": next_token}
+            else:
+                conn.execute("DELETE FROM workspace_mutation_locks WHERE workspace_id = ?", (workspace_id,))
+        return {
+            "released": released,
+            "lock": _mutation_lock_from_row(row) if row else None,
+            "nextOwner": next_owner,
+        }
 
 
 def list_recent_workspace_deployments(workspace_id: str, limit: int = 5) -> List[Dict[str, Any]]:
@@ -2944,6 +4048,20 @@ def bind_conversation_workspace(
         )
         if cur.rowcount == 0:
             return None
+        if workspace_id:
+            workspace_owner_clause = ""
+            workspace_params: List[Any] = [params[1], params[1], workspace_id]
+            if owner_user_id:
+                workspace_owner_clause = "AND owner_user_id = ?"
+                workspace_params.append(owner_user_id)
+            conn.execute(
+                f"""
+                UPDATE workspaces
+                SET last_used_at = ?, updated_at = ?
+                WHERE id = ? {workspace_owner_clause}
+                """,
+                workspace_params,
+            )
     return get_conversation(conversation_id, owner_user_id=owner_user_id)
 
 
@@ -3096,6 +4214,14 @@ def create_agent(payload: Dict[str, Any], owner_user_id: Optional[str] = None) -
         "temperature": 0.7,
         "maxTokens": 8192,
     }
+    tools, _ = normalize_agent_tools(
+        payload.get("tools") if "tools" in payload else None,
+        runtime=runtime,
+        agent_id=agent_id,
+        category=category,
+        strict=False,
+    )
+    permissions = permissions_from_tools(tools)
     with get_connection() as conn:
         conn.execute(
             """
@@ -3124,16 +4250,22 @@ def create_agent(payload: Dict[str, Any], owner_user_id: Optional[str] = None) -
                 payload.get("lastUsedAt"),
                 payload.get("systemPrompt", ""),
                 _json_dump(model_config),
-                _json_dump(payload.get("tools", [])),
-                _json_dump(payload.get("permissions", DEFAULT_PERMISSIONS)),
+                _json_dump(tools),
+                _json_dump(permissions),
                 timestamp,
                 timestamp,
             ),
         )
-    if owner_user_id and enabled and status != "disabled":
+    if owner_user_id and enabled and status != "disabled" and runtime.strip().lower() not in PLATFORM_AGENT_RUNTIMES:
         ensure_contact_conversation(owner_user_id, agent_id)
     agent = get_agent(agent_id, owner_user_id=owner_user_id)
-    if owner_user_id and agent and agent.get("enabled") and agent.get("status") != "disabled":
+    if (
+        owner_user_id
+        and agent
+        and agent.get("enabled")
+        and agent.get("status") != "disabled"
+        and agent_supports_contact_conversation(agent)
+    ):
         ensure_contact_conversation(owner_user_id, agent_id)
         agent = get_agent(agent_id, owner_user_id=owner_user_id)
     return agent
@@ -3146,6 +4278,14 @@ def update_agent(agent_id: str, payload: Dict[str, Any], owner_user_id: Optional
 
     updated = {**current, **payload, "id": agent_id}
     updated_runtime_config = strip_agent_workspace_runtime_config(updated.get("runtimeConfig", {}))
+    updated_tools, _ = normalize_agent_tools(
+        updated.get("tools"),
+        runtime=updated.get("runtime", "native"),
+        agent_id=agent_id,
+        category=updated.get("category"),
+        strict=False,
+    )
+    updated_permissions = permissions_from_tools(updated_tools)
     timestamp = now_text()
     with get_connection() as conn:
         conn.execute(
@@ -3173,8 +4313,8 @@ def update_agent(agent_id: str, payload: Dict[str, Any], owner_user_id: Optional
                 updated.get("lastUsedAt"),
                 updated.get("systemPrompt", ""),
                 _json_dump(updated.get("modelConfig", {})),
-                _json_dump(updated.get("tools", [])),
-                _json_dump(updated.get("permissions", DEFAULT_PERMISSIONS)),
+                _json_dump(updated_tools),
+                _json_dump(updated_permissions),
                 timestamp,
                 agent_id,
             ),
@@ -3235,6 +4375,7 @@ def list_conversations(
               AND c.visible = 1
               AND a.enabled = 1
               AND a.status != 'disabled'
+              AND COALESCE(LOWER(a.runtime), 'native') NOT IN ('opencode', 'codex', 'claude_code', 'claude-code')
             )
           )
     """
@@ -3274,6 +4415,7 @@ def list_conversations(
                 )
                 and agent.get("enabled")
                 and agent.get("status") != "disabled"
+                and not agent_requires_workspace(agent)
             )
         ]
     return paginate(conversations, page, page_size)
@@ -3514,13 +4656,70 @@ def show_conversation(conversation_id: str, owner_user_id: Optional[str] = None)
     return get_conversation(conversation_id, owner_user_id=owner_user_id)
 
 
-def list_messages(conversation_id: str, page: int = 1, page_size: int = 50) -> Dict[str, Any]:
+def list_messages(
+    conversation_id: str,
+    page: int = 1,
+    page_size: int = 50,
+    limit: Optional[int] = None,
+    before_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    page = max(page, 1)
+    page_size = max(page_size, 1)
+    resolved_limit = max(1, min(int(limit or page_size or 20), 200))
     with get_connection() as conn:
-        rows = conn.execute(
-            "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, rowid ASC",
+        total = conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE conversation_id = ?",
             (conversation_id,),
+        ).fetchone()[0]
+        params: List[Any] = [conversation_id]
+        cursor_clause = ""
+        clean_before_id = str(before_id or "").strip()
+        if clean_before_id:
+            cursor_row = conn.execute(
+                """
+                SELECT created_at, rowid
+                FROM messages
+                WHERE id = ? AND conversation_id = ?
+                """,
+                (clean_before_id, conversation_id),
+            ).fetchone()
+            if not cursor_row:
+                return {
+                    "list": [],
+                    "total": total,
+                    "page": page,
+                    "pageSize": resolved_limit,
+                    "limit": resolved_limit,
+                    "hasMore": False,
+                    "nextCursor": None,
+                }
+            cursor_clause = "AND (created_at < ? OR (created_at = ? AND rowid < ?))"
+            params.extend([cursor_row["created_at"], cursor_row["created_at"], cursor_row["rowid"]])
+        offset = 0 if clean_before_id else (page - 1) * resolved_limit
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM messages
+            WHERE conversation_id = ?
+              {cursor_clause}
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT ?
+            OFFSET ?
+            """,
+            (*params, resolved_limit + 1, offset),
         ).fetchall()
-    return paginate([message_from_row(row) for row in rows], page, page_size)
+    page_rows = rows[:resolved_limit]
+    messages = [message_from_row(row) for row in page_rows]
+    has_more = len(rows) > resolved_limit
+    return {
+        "list": messages,
+        "total": total,
+        "page": page,
+        "pageSize": resolved_limit,
+        "limit": resolved_limit,
+        "hasMore": has_more,
+        "nextCursor": messages[-1]["id"] if messages else None,
+    }
 
 
 def get_message_in_conversation(conversation_id: str, message_id: str) -> Optional[Dict[str, Any]]:
@@ -3541,6 +4740,95 @@ def list_message_attachments(message_id: str) -> List[Dict[str, Any]]:
     return [attachment_from_row(row) for row in rows]
 
 
+def get_conversation_attachment(
+    conversation_id: str,
+    attachment_id: str,
+    include_storage_path: bool = False,
+) -> Optional[Dict[str, Any]]:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM attachments WHERE conversation_id = ? AND id = ?",
+            (conversation_id, attachment_id),
+        ).fetchone()
+    return attachment_from_row(row, include_storage_path=include_storage_path) if row else None
+
+
+def upsert_conversation_attachment(
+    conversation_id: str,
+    attachment: Dict[str, Any],
+    message_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    timestamp = now_text()
+    attachment_id = str(attachment.get("id") or create_id("attach")).strip() or create_id("attach")
+    kind = str(attachment.get("kind") or attachment.get("type") or "file").strip() or "file"
+    name = str(attachment.get("name") or attachment_id).strip() or attachment_id
+    mime_type = str(attachment.get("mimeType") or attachment.get("mime_type") or kind).strip() or "application/octet-stream"
+    try:
+        size = int(attachment.get("size") or 0)
+    except (TypeError, ValueError):
+        size = 0
+    url = str(attachment.get("url") or "").strip()
+    storage_path = str(attachment.get("storagePath") or attachment.get("storage_path") or "").strip()
+    meta = attachment.get("meta") if isinstance(attachment.get("meta"), dict) else {}
+    with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT created_at FROM attachments WHERE id = ? AND conversation_id = ?",
+            (attachment_id, conversation_id),
+        ).fetchone()
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO attachments (
+                id, conversation_id, message_id, kind, name, mime_type,
+                size, storage_path, url, meta_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                attachment_id,
+                conversation_id,
+                message_id,
+                kind,
+                name,
+                mime_type,
+                max(size, 0),
+                storage_path,
+                url,
+                _json_dump(meta),
+                existing["created_at"] if existing else timestamp,
+            ),
+        )
+        row = conn.execute(
+            "SELECT * FROM attachments WHERE id = ? AND conversation_id = ?",
+            (attachment_id, conversation_id),
+        ).fetchone()
+    return attachment_from_row(row)
+
+
+def update_attachment_meta(
+    conversation_id: str,
+    attachment_id: str,
+    meta: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT * FROM attachments WHERE conversation_id = ? AND id = ?",
+            (conversation_id, attachment_id),
+        ).fetchone()
+        if not existing:
+            return None
+        current_meta = _json_load(existing["meta_json"], {})
+        merged_meta = {**current_meta, **(meta or {})}
+        conn.execute(
+            "UPDATE attachments SET meta_json = ? WHERE conversation_id = ? AND id = ?",
+            (_json_dump(merged_meta), conversation_id, attachment_id),
+        )
+        row = conn.execute(
+            "SELECT * FROM attachments WHERE conversation_id = ? AND id = ?",
+            (conversation_id, attachment_id),
+        ).fetchone()
+    return attachment_from_row(row)
+
+
 def create_message_attachments(
     conversation_id: str,
     message_id: str,
@@ -3553,6 +4841,10 @@ def create_message_attachments(
     with get_connection() as conn:
         for item in attachments:
             attachment_id = str(item.get("id") or create_id("attach")).strip() or create_id("attach")
+            existing = conn.execute(
+                "SELECT * FROM attachments WHERE id = ? AND conversation_id = ?",
+                (attachment_id, conversation_id),
+            ).fetchone()
             kind = str(item.get("kind") or item.get("type") or "file").strip() or "file"
             name = str(item.get("name") or attachment_id).strip() or attachment_id
             mime_type = str(item.get("mimeType") or item.get("mime_type") or kind).strip() or "application/octet-stream"
@@ -3561,8 +4853,16 @@ def create_message_attachments(
             except (TypeError, ValueError):
                 size = 0
             url = str(item.get("url") or "").strip()
-            storage_path = str(item.get("storagePath") or item.get("storage_path") or url).strip()
+            storage_path = str(item.get("storagePath") or item.get("storage_path") or "").strip()
             meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+            if existing:
+                kind = kind or existing["kind"]
+                name = name or existing["name"]
+                mime_type = mime_type or existing["mime_type"]
+                size = size or int(existing["size"] or 0)
+                url = url or existing["url"]
+                storage_path = storage_path or existing["storage_path"]
+                meta = {**_json_load(existing["meta_json"], {}), **meta}
             conn.execute(
                 """
                 INSERT OR REPLACE INTO attachments (
@@ -3582,7 +4882,7 @@ def create_message_attachments(
                     storage_path,
                     url,
                     _json_dump(meta),
-                    timestamp,
+                    existing["created_at"] if existing else timestamp,
                 ),
             )
         rows = conn.execute(
@@ -3643,12 +4943,14 @@ def update_conversation_activity(conversation_id: str, last_message: str) -> Non
 
 def list_artifacts(conversation_id: str) -> List[Dict[str, Any]]:
     artifacts: List[Dict[str, Any]] = []
+    artifact_ids: set[str] = set()
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT * FROM artifacts WHERE conversation_id = ? ORDER BY created_at DESC",
             (conversation_id,),
         ).fetchall()
         for row in rows:
+            artifact_ids.add(row["id"])
             version_rows = conn.execute(
                 """
                 SELECT *
@@ -3667,11 +4969,70 @@ def list_artifacts(conversation_id: str) -> List[Dict[str, Any]]:
                 artifacts.extend(version_artifacts)
             else:
                 artifacts.append(artifact_meta_from_row(row))
+        version_rows = conn.execute(
+            """
+            SELECT artifact_id, metadata_json
+            FROM artifact_versions
+            WHERE metadata_json LIKE ?
+            """,
+            (f"%{conversation_id}%",),
+        ).fetchall()
+        for version_row in version_rows:
+            if version_row["artifact_id"] in artifact_ids:
+                continue
+            metadata = _json_load(version_row["metadata_json"], {})
+            if metadata.get("sourceConversationId") == conversation_id:
+                artifact_ids.add(version_row["artifact_id"])
+        extra_artifact_ids = [
+            artifact_id for artifact_id in artifact_ids
+            if artifact_id not in {row["id"] for row in rows}
+        ]
+        if extra_artifact_ids:
+            placeholders = ",".join("?" for _ in extra_artifact_ids)
+            extra_rows = conn.execute(
+                f"SELECT * FROM artifacts WHERE id IN ({placeholders})",
+                tuple(extra_artifact_ids),
+            ).fetchall()
+            for row in extra_rows:
+                version_rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM artifact_versions
+                    WHERE artifact_id = ?
+                    ORDER BY created_at DESC, version DESC
+                    """,
+                    (row["id"],),
+                ).fetchall()
+                for version_row in version_rows:
+                    metadata = _json_load(version_row["metadata_json"], {})
+                    if metadata.get("sourceConversationId") == conversation_id:
+                        artifacts.append(artifact_meta_from_version_row(row, version_row))
     return sorted(
         artifacts,
         key=lambda item: str(item.get("versionCreatedAt") or item.get("updatedAt") or item.get("createdAt") or ""),
         reverse=True,
     )
+
+
+def list_artifacts_for_workspace(workspace_id: str) -> List[Dict[str, Any]]:
+    artifacts: List[Dict[str, Any]] = []
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM artifacts
+            WHERE workspace_id = ?
+            ORDER BY updated_at DESC, created_at DESC
+            """,
+            (workspace_id,),
+        ).fetchall()
+        for row in rows:
+            current_version = get_current_artifact_version(conn, row)
+            if current_version:
+                artifacts.append(artifact_detail_from_row(row, current_version))
+            else:
+                artifacts.append(artifact_meta_from_row(row))
+    return artifacts
 
 
 def list_artifacts_for_run(run_id: str) -> List[Dict[str, Any]]:
@@ -3708,7 +5069,14 @@ def list_artifacts_for_run(run_id: str) -> List[Dict[str, Any]]:
             """,
             tuple(artifact_ids),
         ).fetchall()
-    return [artifact_meta_from_row(row) for row in artifact_rows]
+        artifacts = []
+        for row in artifact_rows:
+            current_version = get_current_artifact_version(conn, row)
+            if current_version:
+                artifacts.append(artifact_detail_from_row(row, current_version))
+            else:
+                artifacts.append(artifact_meta_from_row(row))
+    return artifacts
 
 
 def list_artifacts_for_message(message_id: str) -> List[Dict[str, Any]]:
@@ -3787,24 +5155,38 @@ def create_artifact(
     created_by_type: str = "agent",
     change_summary: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    workspace_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     artifact_id = create_id("artifact")
     version_id = create_id("version")
     timestamp = now_text()
     size = len(content.encode("utf-8"))
     with get_connection() as conn:
+        if not workspace_id:
+            conversation = conn.execute(
+                "SELECT workspace_id FROM conversations WHERE id = ?",
+                (conversation_id,),
+            ).fetchone()
+            workspace_id = conversation["workspace_id"] if conversation else None
+        version_metadata = {
+            "sourceConversationId": conversation_id,
+            **({"sourceWorkspaceId": workspace_id} if workspace_id else {}),
+            **({"sourceRunId": run_id} if run_id else {}),
+            **(metadata or {}),
+        }
         conn.execute(
             """
             INSERT INTO artifacts (
-                id, conversation_id, message_id, run_id, title, type,
+                id, conversation_id, workspace_id, message_id, run_id, title, type,
                 description, tags_json, current_version_id, latest_version,
                 size, content, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
             """,
             (
                 artifact_id,
                 conversation_id,
+                workspace_id,
                 message_id,
                 run_id,
                 title,
@@ -3835,7 +5217,7 @@ def create_artifact(
                 change_summary or "Agent 生成初始版本",
                 created_by or message_id or "agent",
                 created_by_type,
-                _json_dump(metadata or {}),
+                _json_dump(version_metadata),
                 timestamp,
             ),
         )
@@ -3851,6 +5233,8 @@ def update_artifact(
     created_by: str = "user",
     created_by_type: str = "user",
     metadata: Optional[Dict[str, Any]] = None,
+    source_conversation_id: Optional[str] = None,
+    source_workspace_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     timestamp = now_text()
     size = len(content.encode("utf-8"))
@@ -3859,6 +5243,13 @@ def update_artifact(
         if not artifact:
             return None
         current_version = get_current_artifact_version(conn, artifact)
+        source_conversation_id = source_conversation_id or artifact["conversation_id"]
+        source_workspace_id = source_workspace_id or (artifact["workspace_id"] if "workspace_id" in artifact.keys() else None)
+        version_metadata = {
+            "sourceConversationId": source_conversation_id,
+            **({"sourceWorkspaceId": source_workspace_id} if source_workspace_id else {}),
+            **(metadata or {}),
+        }
         next_version = int(artifact["latest_version"] or 0) + 1
         version_id = create_id("version")
         conn.execute(
@@ -3880,7 +5271,7 @@ def update_artifact(
                 created_by,
                 created_by_type,
                 current_version["id"] if current_version else None,
-                _json_dump(metadata or {}),
+                _json_dump(version_metadata),
                 timestamp,
             ),
         )
@@ -3969,11 +5360,16 @@ def get_sandbox(sandbox_id: str, owner_user_id: Optional[str] = None) -> Optiona
 def create_agent_run(
     owner_user_id: str,
     conversation_id: str,
-    sandbox_id: str,
+    sandbox_id: Optional[str],
     prompt: str,
     dag: Dict[str, Any],
     run_id: Optional[str] = None,
     workspace_id: Optional[str] = None,
+    status: str = "pending",
+    run_mode: str = "write",
+    queued_reason: str = "",
+    lock_owner_id: Optional[str] = None,
+    lock_fencing_token: Optional[int] = None,
     runtime: str = "native",
     model_config_id: Optional[str] = None,
     runtime_session_id: Optional[str] = None,
@@ -3986,10 +5382,11 @@ def create_agent_run(
             """
             INSERT INTO agent_runs (
                 id, sandbox_id, conversation_id, owner_user_id, workspace_id, status,
+                run_mode, queued_reason, lock_owner_id, lock_fencing_token,
                 prompt, dag_json, runtime, model_config_id, runtime_session_id,
                 runtime_metadata_json, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
@@ -3997,6 +5394,11 @@ def create_agent_run(
                 conversation_id,
                 owner_user_id,
                 workspace_id,
+                status,
+                run_mode,
+                queued_reason,
+                lock_owner_id,
+                lock_fencing_token,
                 prompt,
                 _json_dump(dag),
                 runtime,
@@ -4007,7 +5409,8 @@ def create_agent_run(
                 timestamp,
             ),
         )
-    update_sandbox(sandbox_id, run_id=run_id)
+    if sandbox_id:
+        update_sandbox(sandbox_id, run_id=run_id)
     return get_agent_run(run_id)
 
 
@@ -4032,6 +5435,11 @@ def update_agent_run(
     error: Optional[str] = None,
     mark_started: bool = False,
     mark_finished: bool = False,
+    sandbox_id: Optional[str] = None,
+    run_mode: Optional[str] = None,
+    queued_reason: Optional[str] = None,
+    lock_owner_id: Optional[str] = None,
+    lock_fencing_token: Optional[int] = None,
     runtime_session_id: Optional[str] = None,
     runtime_metadata: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
@@ -4045,12 +5453,18 @@ def update_agent_run(
         conn.execute(
             """
             UPDATE agent_runs
-            SET status = ?, summary = ?, error = ?, started_at = ?, finished_at = ?,
+            SET status = ?, run_mode = ?, queued_reason = ?, lock_owner_id = ?, lock_fencing_token = ?,
+                sandbox_id = ?, summary = ?, error = ?, started_at = ?, finished_at = ?,
                 runtime_session_id = ?, runtime_metadata_json = ?, updated_at = ?
             WHERE id = ?
             """,
             (
                 status if status is not None else current["status"],
+                run_mode if run_mode is not None else current.get("runMode", "write"),
+                queued_reason if queued_reason is not None else current.get("queuedReason", ""),
+                lock_owner_id if lock_owner_id is not None else current.get("lockOwnerId"),
+                lock_fencing_token if lock_fencing_token is not None else current.get("lockFencingToken"),
+                sandbox_id if sandbox_id is not None else current.get("sandboxId"),
                 summary if summary is not None else current.get("summary", ""),
                 error if error is not None else current.get("error"),
                 started_at,
@@ -4079,6 +5493,14 @@ def create_agent_run_steps(run_id: str, steps: List[Dict[str, Any]]) -> List[Dic
     timestamp = now_text()
     with get_connection() as conn:
         for step in steps:
+            runtime_metadata = step.get("runtimeMetadata") if isinstance(step.get("runtimeMetadata"), dict) else {}
+            for key in ("mutationMode", "targetPaths", "readPaths", "usesStableSnapshot", "writeToolOnly"):
+                if key in step and key not in runtime_metadata:
+                    runtime_metadata = {**runtime_metadata, key: step.get(key)}
+            task = str(step.get("task") or "")
+            display_task = str(runtime_metadata.get("displayTask") or "").strip()
+            if display_task and task and display_task != task:
+                runtime_metadata = {**runtime_metadata, "executionTask": task}
             conn.execute(
                 """
                 INSERT OR REPLACE INTO agent_run_steps (
@@ -4094,12 +5516,12 @@ def create_agent_run_steps(run_id: str, steps: List[Dict[str, Any]]) -> List[Dic
                     run_id,
                     step["agentId"],
                     step.get("agentName", ""),
-                    step.get("task", ""),
+                    task,
                     _json_dump(step.get("dependsOn", [])),
                     _json_dump(step.get("expectedOutputs", [])),
                     step.get("runtime", "native"),
                     step.get("modelConfigId") or step.get("model_config_id"),
-                    _json_dump(step.get("runtimeMetadata", {})),
+                    _json_dump(runtime_metadata),
                     timestamp,
                     timestamp,
                 ),
@@ -4173,7 +5595,7 @@ def get_agent_run_detail(run_id: str, owner_user_id: Optional[str] = None) -> Op
     run = get_agent_run(run_id, owner_user_id=owner_user_id)
     if not run:
         return None
-    sandbox = get_sandbox(run["sandboxId"], owner_user_id=owner_user_id)
+    sandbox = get_sandbox(run["sandboxId"], owner_user_id=owner_user_id) if run.get("sandboxId") else None
     workspace = get_workspace(run["workspaceId"], owner_user_id=owner_user_id) if run.get("workspaceId") else None
     return {
         **run,
@@ -4345,7 +5767,13 @@ def get_sandbox_file(run_id: str, file_path: str) -> Optional[Dict[str, Any]]:
     with get_connection() as conn:
         if run and run.get("workspaceId"):
             row = conn.execute(
-                "SELECT * FROM sandbox_files WHERE workspace_id = ? AND path = ?",
+                """
+                SELECT *
+                FROM sandbox_files
+                WHERE workspace_id = ? AND path = ?
+                ORDER BY current_version DESC, updated_at DESC, rowid DESC
+                LIMIT 1
+                """,
                 (run["workspaceId"], file_path),
             ).fetchone()
         else:
@@ -4427,22 +5855,43 @@ def create_sandbox_file_version(
         if not workspace_id:
             run = conn.execute("SELECT * FROM agent_runs WHERE id = ?", (run_id,)).fetchone()
             workspace_id = run["workspace_id"] if run else None
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO sandbox_files (
-                id, sandbox_id, run_id, workspace_id, path, content_hash, current_version,
-                mime_type, size, sha256, is_text, content_preview, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, '', 0, ?, 0, '', 1, '', ?, ?)
-            """,
-            (create_id("file"), sandbox_id, run_id, workspace_id, file_path, mime_type, timestamp, timestamp),
-        )
         if workspace_id:
             file_row = conn.execute(
-                "SELECT * FROM sandbox_files WHERE workspace_id = ? AND path = ?",
+                """
+                SELECT *
+                FROM sandbox_files
+                WHERE workspace_id = ? AND path = ?
+                ORDER BY current_version DESC, updated_at DESC, rowid DESC
+                LIMIT 1
+                """,
                 (workspace_id, file_path),
             ).fetchone()
+            if not file_row:
+                conn.execute(
+                    """
+                    INSERT INTO sandbox_files (
+                        id, sandbox_id, run_id, workspace_id, path, content_hash, current_version,
+                        mime_type, size, sha256, is_text, content_preview, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, '', 0, ?, 0, '', 1, '', ?, ?)
+                    """,
+                    (create_id("file"), sandbox_id, run_id, workspace_id, file_path, mime_type, timestamp, timestamp),
+                )
+                file_row = conn.execute(
+                    "SELECT * FROM sandbox_files WHERE sandbox_id = ? AND path = ?",
+                    (sandbox_id, file_path),
+                ).fetchone()
         else:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO sandbox_files (
+                    id, sandbox_id, run_id, workspace_id, path, content_hash, current_version,
+                    mime_type, size, sha256, is_text, content_preview, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, '', 0, ?, 0, '', 1, '', ?, ?)
+                """,
+                (create_id("file"), sandbox_id, run_id, workspace_id, file_path, mime_type, timestamp, timestamp),
+            )
             file_row = conn.execute(
                 "SELECT * FROM sandbox_files WHERE sandbox_id = ? AND path = ?",
                 (sandbox_id, file_path),
@@ -4451,7 +5900,12 @@ def create_sandbox_file_version(
         if current_version != int(base_version):
             return create_conflict(conn, file_row, current_version)
 
-        next_version = current_version + 1
+        latest_version_row = conn.execute(
+            "SELECT COALESCE(MAX(version), 0) AS max_version FROM sandbox_file_versions WHERE file_id = ?",
+            (file_row["id"],),
+        ).fetchone()
+        latest_version = int((latest_version_row or {})["max_version"] or 0)
+        next_version = max(current_version, latest_version) + 1
         version_id = create_id("fileVersion")
         try:
             conn.execute(
@@ -4511,22 +5965,43 @@ def upsert_sandbox_file_metadata(
         if not workspace_id:
             run = conn.execute("SELECT * FROM agent_runs WHERE id = ?", (run_id,)).fetchone()
             workspace_id = run["workspace_id"] if run else None
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO sandbox_files (
-                id, sandbox_id, run_id, workspace_id, path, content_hash, current_version,
-                mime_type, size, sha256, is_text, content_preview, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, '', 0, ?, 0, '', ?, '', ?, ?)
-            """,
-            (create_id("file"), sandbox_id, run_id, workspace_id, file_path, mime_type, 1 if is_text else 0, timestamp, timestamp),
-        )
         if workspace_id:
             file_row = conn.execute(
-                "SELECT * FROM sandbox_files WHERE workspace_id = ? AND path = ?",
+                """
+                SELECT *
+                FROM sandbox_files
+                WHERE workspace_id = ? AND path = ?
+                ORDER BY current_version DESC, updated_at DESC, rowid DESC
+                LIMIT 1
+                """,
                 (workspace_id, file_path),
             ).fetchone()
+            if not file_row:
+                conn.execute(
+                    """
+                    INSERT INTO sandbox_files (
+                        id, sandbox_id, run_id, workspace_id, path, content_hash, current_version,
+                        mime_type, size, sha256, is_text, content_preview, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, '', 0, ?, 0, '', ?, '', ?, ?)
+                    """,
+                    (create_id("file"), sandbox_id, run_id, workspace_id, file_path, mime_type, 1 if is_text else 0, timestamp, timestamp),
+                )
+                file_row = conn.execute(
+                    "SELECT * FROM sandbox_files WHERE sandbox_id = ? AND path = ?",
+                    (sandbox_id, file_path),
+                ).fetchone()
         else:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO sandbox_files (
+                    id, sandbox_id, run_id, workspace_id, path, content_hash, current_version,
+                    mime_type, size, sha256, is_text, content_preview, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, '', 0, ?, 0, '', ?, '', ?, ?)
+                """,
+                (create_id("file"), sandbox_id, run_id, workspace_id, file_path, mime_type, 1 if is_text else 0, timestamp, timestamp),
+            )
             file_row = conn.execute(
                 "SELECT * FROM sandbox_files WHERE sandbox_id = ? AND path = ?",
                 (sandbox_id, file_path),
@@ -4799,9 +6274,30 @@ def create_memory(
         return None
     timestamp = now_text()
     with get_connection() as conn:
+        existing = conn.execute(
+            """
+            SELECT *
+            FROM long_term_memories
+            WHERE conversation_id = ? AND category = ? AND content = ?
+            """,
+            (conversation_id, category, normalized_content),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """
+                UPDATE long_term_memories
+                SET confidence = ?, source_message_id = ?, active = 1,
+                    superseded_by_memory_id = NULL, superseded_at = NULL,
+                    resolution_reason = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                (float(confidence), source_message_id, timestamp, existing["id"]),
+            )
+            row = conn.execute("SELECT * FROM long_term_memories WHERE id = ?", (existing["id"],)).fetchone()
+            return memory_from_row(row) if row else None
         conn.execute(
             """
-            INSERT OR IGNORE INTO long_term_memories (
+            INSERT INTO long_term_memories (
                 id, conversation_id, category, content, confidence,
                 source_message_id, active, created_at, updated_at
             )
@@ -4827,6 +6323,59 @@ def create_memory(
             (conversation_id, category, normalized_content),
         ).fetchone()
     return memory_from_row(row) if row else None
+
+
+def refresh_memory(
+    conversation_id: str,
+    memory_id: str,
+    confidence: float,
+    source_message_id: Optional[str],
+    resolution_reason: str = "",
+) -> Optional[Dict[str, Any]]:
+    timestamp = now_text()
+    with get_connection() as conn:
+        cur = conn.execute(
+            """
+            UPDATE long_term_memories
+            SET confidence = ?, source_message_id = ?, active = 1,
+                resolution_reason = ?, updated_at = ?
+            WHERE id = ? AND conversation_id = ?
+            """,
+            (float(confidence), source_message_id, resolution_reason, timestamp, memory_id, conversation_id),
+        )
+        if cur.rowcount == 0:
+            return None
+        row = conn.execute(
+            "SELECT * FROM long_term_memories WHERE id = ? AND conversation_id = ?",
+            (memory_id, conversation_id),
+        ).fetchone()
+    return memory_from_row(row) if row else None
+
+
+def supersede_memories(
+    conversation_id: str,
+    memory_ids: List[str],
+    superseded_by_memory_id: str,
+    resolution_reason: str,
+) -> int:
+    ids = [memory_id for memory_id in memory_ids if str(memory_id or "").strip()]
+    if not ids:
+        return 0
+    timestamp = now_text()
+    placeholders = ",".join("?" for _ in ids)
+    with get_connection() as conn:
+        cur = conn.execute(
+            f"""
+            UPDATE long_term_memories
+            SET active = 0, superseded_by_memory_id = ?, superseded_at = ?,
+                resolution_reason = ?, updated_at = ?
+            WHERE conversation_id = ?
+              AND active = 1
+              AND id IN ({placeholders})
+            """,
+            [superseded_by_memory_id, timestamp, resolution_reason, timestamp, conversation_id, *ids],
+        )
+        return cur.rowcount
 
 
 def update_memory(

@@ -7,13 +7,15 @@ from app.services.message_service import (
     WebSocketConnectionManager,
     build_ws_payload,
     emit_conversation_event,
+    latest_active_run_for_conversation,
+    latest_run_for_conversation,
     send_agent_status,
     send_message_completed,
     send_ws_error,
     send_ws_event,
     ws_manager,
 )
-from app.services.run_service import build_run_event_payload, latest_active_run_for_conversation
+from app.services.run_service import build_run_event_payload
 
 async def handle_ws_conversation_subscribe(
     websocket: WebSocket,
@@ -37,13 +39,15 @@ async def handle_ws_conversation_subscribe(
         event_id,
         {"conversationId": conversation_id},
     )
-    active_run = latest_active_run_for_conversation(conversation_id, current_user["id"])
-    if active_run:
+    latest_run = latest_active_run_for_conversation(conversation_id, current_user["id"])
+    if not latest_run:
+        latest_run = latest_run_for_conversation(conversation_id, current_user["id"])
+    if latest_run:
         await send_ws_event(
             websocket,
             "run.created",
             None,
-            build_run_event_payload(active_run["id"], {"run": active_run}),
+            build_run_event_payload(latest_run["id"], {"run": latest_run}),
         )
 
 
@@ -65,5 +69,3 @@ async def handle_ws_conversation_unsubscribe(
         event_id,
         {"conversationId": conversation_id},
     )
-
-

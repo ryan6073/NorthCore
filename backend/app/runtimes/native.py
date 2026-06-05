@@ -37,6 +37,7 @@ class NativeRuntimeAdapter(RuntimeAdapter):
             agent,
             user_input,
             exclude_message_id=(context or {}).get("excludeMessageId"),
+            vision_attachments=(context or {}).get("visionAttachments"),
         )
 
     async def complete_json(

@@ -24,6 +24,7 @@ curl http://localhost:9007/api/v1/health
 ```text
 HOST=0.0.0.0
 PORT=9007
+ENABLE_API_DOCS=true
 ARK_API_KEY="your_key"
 ARK_BASE_URL="your_base_url"
 MODEL_EP="your_model_endpoint"
@@ -42,9 +43,19 @@ SANDBOX_KEEP_WORKSPACE_ON_STATUSES="failed,conflict,cancelled"
 SANDBOX_CLEANUP_COMPLETED_WORKSPACE=true
 SANDBOX_WORKSPACE_SCAN_MAX_FILES=500
 SANDBOX_WORKSPACE_FILE_MAX_BYTES=200000
+OPENCODE_BIN="opencode"
+OPENCODE_TIMEOUT_SECONDS=600
+CODEX_BIN="codex"
+CODEX_TIMEOUT_SECONDS=600
+CODEX_HOME_ROOT=""
+RUNTIME_HOME_ROOT=""
+CLAUDE_CODE_BIN="claude"
+CLAUDE_CODE_TIMEOUT_SECONDS=600
 ```
 
 Sandbox V1 开发阶段默认允许联网，方便安装依赖和自动安装 `uv`。这不是生产安全默认；生产模式可设置 `SANDBOX_NETWORK=none` 或 `SANDBOX_ALLOW_NETWORK=false`，并配合预构建镜像或依赖缓存完成环境初始化。沙箱不会注入 `.env`、token、SSH key，不挂载项目根目录，也不挂载 `docker.sock`。当前默认串行执行 step，后续恢复并行前需要改成每 step 独立 shell 或容器。
+
+Platform Runtime 会把 Codex、Claude Code、OpenCode 的本地配置、缓存和会话状态按用户与模型配置隔离。`RUNTIME_HOME_ROOT` 为空时默认使用 `{SANDBOX_WORKSPACE_ROOT}/_runtime_homes`；`CODEX_HOME_ROOT` 仅作为兼容旧部署的 Codex 专用覆盖项。
 
 前端真实模式建议：
 

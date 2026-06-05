@@ -7,7 +7,7 @@ from app.database import (
     get_agent,
     get_conversation_agent_config,
 )
-from app.runtimes.router import runtime_router
+from app.runtimes.native import NativeRuntimeAdapter
 
 
 def _agent_is_callable(agent: Optional[Dict[str, Any]]) -> bool:
@@ -64,6 +64,12 @@ async def classify_for_conversation(
             reason="payload 显式指定普通聊天",
             confidence=1.0,
         )
+    if explicit_mode == "deployment":
+        return legacy_orchestrator._deployment_execution_decision(
+            clean_content,
+            reason="payload 显式指定部署",
+            confidence=1.0,
+        )
     if explicit_mode == "sandbox":
         return legacy_orchestrator._sandbox_execution_decision(
             clean_content,
@@ -92,7 +98,7 @@ async def classify_for_conversation(
         "selectedAgentRuntime": selected_agent.get("runtime") if selected_agent else None,
         "userInput": clean_content,
     }
-    raw = await runtime_router.complete_json(
+    raw = await NativeRuntimeAdapter().complete_json(
         planner_agent,
         conversation,
         legacy_orchestrator.EXECUTION_MODE_SYSTEM,

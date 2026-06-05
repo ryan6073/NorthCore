@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     # ==================== 基础服务配置 ====================
     PORT: int = 9
     HOST: str = "0.0.0.0"
+    ENABLE_API_DOCS: bool = True
+    CORS_ALLOW_ORIGINS: str = ""
+    CORS_ALLOW_ORIGIN_REGEX: str = "https?://.*"
+    PUBLIC_BASE_URL: str = ""
     
     # ==================== 大模型凭证 (无默认值，必填) ====================
     ARK_API_KEY: str
@@ -27,8 +31,9 @@ class Settings(BaseSettings):
     SANDBOX_AUTO_INSTALL_UV: bool = True
     SANDBOX_TIMEOUT_SECONDS: int = 1800
     SANDBOX_COMMAND_TIMEOUT_SECONDS: int = 1800
+    SANDBOX_VALIDATION_TIMEOUT_SECONDS: int = 120
     SANDBOX_SETUP_TIMEOUT_SECONDS: int = 900
-    SANDBOX_MAX_PARALLEL_STEPS: int = 1
+    SANDBOX_MAX_PARALLEL_STEPS: int = 2
     SANDBOX_WORKSPACE_ROOT: str = "/tmp/agenthub-sandboxes"
     SANDBOX_MAX_OUTPUT_CHARS: int = 100000
     SANDBOX_MAX_OUTPUT_BYTES: int = 100000
@@ -39,11 +44,27 @@ class Settings(BaseSettings):
     SANDBOX_CLEANUP_COMPLETED_WORKSPACE: bool = True
     SANDBOX_WORKSPACE_SCAN_MAX_FILES: int = 500
     SANDBOX_WORKSPACE_FILE_MAX_BYTES: int = 200000
+    WORKSPACE_FILE_PREVIEW_MAX_BYTES: int = 1000000
+    WORKSPACE_FILE_EDIT_MAX_BYTES: int = 1000000
+    WORKSPACE_UPLOAD_MAX_BYTES: int = 20000000
+    WORKSPACE_TREE_MAX_DEPTH: int = 6
+    WORKSPACE_TREE_MAX_ENTRIES: int = 2000
     SANDBOX_CPUS: str = "1.0"
     SANDBOX_MEMORY: str = "512m"
     SANDBOX_PIDS_LIMIT: int = 128
     SANDBOX_RUN_AS_USER: str = "1000:1000"
     SANDBOX_READ_ONLY_ROOTFS: bool = False
+
+    # ==================== 上传附件配置 ====================
+    ATTACHMENT_STORAGE_ROOT: str = "/tmp/agenthub-attachments"
+    ATTACHMENT_MAX_BYTES: int = 50000000
+    ATTACHMENT_CONTEXT_MAX_CHARS: int = 20000
+    ATTACHMENT_SUMMARY_MAX_SOURCE_CHARS: int = 6000
+    ATTACHMENT_VISION_ENABLED: bool = True
+    ATTACHMENT_VISION_MAX_BYTES: int = 10000000
+    ATTACHMENT_ZIP_MAX_FILES: int = 100
+    ATTACHMENT_ZIP_MAX_UNCOMPRESSED_BYTES: int = 100000000
+    ATTACHMENT_ZIP_ENTRY_MAX_BYTES: int = 10000000
 
     # ==================== Agent Runtime 配置 ====================
     OPENCODE_BIN: str = "opencode"
@@ -51,6 +72,7 @@ class Settings(BaseSettings):
     CODEX_BIN: str = "codex"
     CODEX_TIMEOUT_SECONDS: int = 600
     CODEX_HOME_ROOT: str = ""
+    RUNTIME_HOME_ROOT: str = ""
     CLAUDE_CODE_BIN: str = "claude"
     CLAUDE_CODE_TIMEOUT_SECONDS: int = 600
 

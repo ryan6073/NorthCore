@@ -96,6 +96,8 @@ async def api_get_conversation(conversation_id: str, authorization: Optional[str
             str(conversation.get("contactAgentId") or ""),
             owner_user_id=current_user["id"],
         )
+        if is_platform_agent(contact_agent):
+            return fail(40002, platform_agent_contact_error(contact_agent))
         if not agent_is_callable(contact_agent):
             return fail(40002, "当前 Agent 已隐藏或删除，无法打开联系人会话")
     return ok({
@@ -144,6 +146,7 @@ async def api_update_conversation_agent_config(
     authorization: Optional[str] = Header(None),
 ):
     current_user = current_user_or_default(authorization)
+    payload = sanitize_agent_payload(payload)
     conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
     if not conversation:
         return fail(40001, "会话不存在")
@@ -153,12 +156,12 @@ async def api_update_conversation_agent_config(
         return fail(40002, "Orchestrator 是群聊调度器，不支持配置")
 
     if conversation.get("mode") != "group":
-        security_error = validate_agent_payload_security(payload)
-        if security_error:
-            return fail(40000, security_error)
         existing_agent = get_agent(agent_id, owner_user_id=current_user["id"])
         if not existing_agent:
             return fail(40001, "Agent 不存在")
+        security_error = validate_agent_payload_security(payload, owner_user_id=current_user["id"], existing_agent=existing_agent)
+        if security_error:
+            return fail(40000, security_error)
         if existing_agent.get("ownerUserId") is None and current_user.get("role") != "admin":
             agent = upsert_agent_user_override(current_user["id"], agent_id, payload)
         else:
@@ -167,7 +170,16 @@ async def api_update_conversation_agent_config(
             return fail(40001, "Agent 不存在")
         return ok(mark_agent_config_scope(agent, conversation_id, "user"), message="Agent 配置更新成功")
 
-    sanitized_payload, payload_error = sanitize_conversation_agent_config_payload(payload)
+    existing_agent = get_conversation_agent_config(
+        conversation_id,
+        agent_id,
+        owner_user_id=current_user["id"],
+    )
+    sanitized_payload, payload_error = sanitize_conversation_agent_config_payload(
+        payload,
+        owner_user_id=current_user["id"],
+        existing_agent=existing_agent,
+    )
     if payload_error:
         return fail(40000, payload_error)
     agent = upsert_conversation_agent_config(
@@ -352,13 +364,23 @@ async def api_delete_conversation(conversation_id: str, authorization: Optional[
 async def api_list_messages(
     conversation_id: str,
     page: int = Query(1, ge=1),
-    pageSize: int = Query(50, ge=1, le=200),
+    pageSize: int = Query(20, ge=1, le=200),
+    limit: Optional[int] = Query(None, ge=1, le=200),
+    beforeId: Optional[str] = Query(None),
     authorization: Optional[str] = Header(None),
 ):
     current_user = current_user_or_default(authorization)
     if not get_conversation(conversation_id, owner_user_id=current_user["id"]):
         return fail(40001, "会话不存在")
-    return ok(list_messages(conversation_id, page=page, page_size=pageSize))
+    return ok(
+        list_messages(
+            conversation_id,
+            page=page,
+            page_size=pageSize,
+            limit=limit,
+            before_id=beforeId,
+        )
+    )
 
 
 @router.post("/conversations/{conversation_id}/mention")

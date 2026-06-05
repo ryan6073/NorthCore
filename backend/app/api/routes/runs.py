@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Header, Query, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from app.api.deps import current_user_or_default, extract_bearer_token
 from app.api.responses import ok, fail
@@ -131,6 +131,26 @@ async def api_list_run_files_tree(run_id: str, authorization: Optional[str] = He
     return ok(build_files_tree(list_sandbox_files(run_id)))
 
 
+@router.get("/runs/{run_id}/files/{file_path:path}/download")
+async def api_download_run_file(run_id: str, file_path: str, authorization: Optional[str] = Header(None)):
+    current_user = current_user_or_default(authorization)
+    detail = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
+    if not detail:
+        return fail(40001, "Run 不存在")
+    try:
+        resolved_path = FileVersionService().download_file_path(detail, file_path)
+    except ValueError:
+        return fail(40000, "非法文件路径")
+    if not resolved_path:
+        return fail(40001, "文件不存在或已被清理")
+    file_meta = get_sandbox_file(run_id, file_path)
+    return FileResponse(
+        path=str(resolved_path),
+        filename=resolved_path.name,
+        media_type=(file_meta or {}).get("mimeType") or "application/octet-stream",
+    )
+
+
 @router.get("/runs/{run_id}/files/{file_path:path}")
 async def api_get_run_file(run_id: str, file_path: str, authorization: Optional[str] = Header(None)):
     current_user = current_user_or_default(authorization)
@@ -197,7 +217,18 @@ async def api_resolve_run_conflict(
         return fail(40000, str(exc))
     if not conflict:
         return fail(40001, "冲突不存在或已解决")
-    return ok(conflict, message="冲突已解决")
+
+    async def emit(event_type: str, data: Dict[str, Any]) -> None:
+        await emit_run_event(current_user, detail["conversationId"], event_type, data)
+
+    finalized = await finalize_run_if_conflicts_resolved(current_user, run_id, emit=emit)
+    return ok(
+        {
+            **conflict,
+            "run": finalized,
+        },
+        message="冲突已解决",
+    )
 
 
 @router.post("/runs/{run_id}/cancel")

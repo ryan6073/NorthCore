@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from app.database import (
@@ -44,6 +45,28 @@ class FileVersionService:
             "content": version["content"] if version else "",
             "version": version,
         }
+
+    def download_file_path(self, run_detail: Dict[str, Any], path: str) -> Optional[Path]:
+        clean_path = str(path or "").strip()
+        candidate_path = Path(clean_path)
+        if not clean_path or candidate_path.is_absolute() or ".." in candidate_path.parts:
+            raise ValueError("非法文件路径")
+        file_meta = get_sandbox_file(run_detail["id"], clean_path)
+        if not file_meta:
+            return None
+        sandbox = run_detail.get("sandbox") or {}
+        workspace_path = str(sandbox.get("workspacePath") or "").strip()
+        if not workspace_path:
+            return None
+        workspace_root = Path(workspace_path).resolve()
+        target_path = (workspace_root / clean_path).resolve()
+        try:
+            target_path.relative_to(workspace_root)
+        except ValueError as exc:
+            raise ValueError("非法文件路径") from exc
+        if not target_path.is_file():
+            return None
+        return target_path
 
     def resolve_conflict(
         self,

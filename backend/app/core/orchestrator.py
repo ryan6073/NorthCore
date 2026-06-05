@@ -96,21 +96,23 @@ ORCHESTRATOR_INTENT_SYSTEM = """你是 AgentHub 的群聊协调器 Orchestrator�
 EXECUTION_MODE_CONFIDENCE_THRESHOLD = 0.65
 
 EXECUTION_MODE_SYSTEM = """你是 AgentHub 的执行模式分类器。
-你需要判断用户消息应该走普通聊天，还是启动 Sandbox Run 执行。
+你需要判断用户消息应该走普通聊天、启动 Sandbox Run 执行，还是触发 Workspace 部署。
 
 只能输出 JSON，不要输出 Markdown，不要输出解释文本。
 
 核心原则：
-- chat：只回答、解释、分析、讨论、评价，不改文件，不创建产物，不运行命令。
-- sandbox：需要创建、修改、删除、运行、构建、测试、部署、验证工作区内容，或需要产生/更新可预览产物。
+- chat：只回答、解释、分析、讨论、评价，不改文件，不创建产物，不运行命令，不触发真实部署。
+- sandbox：需要创建、修改、删除、运行、构建、测试、验证工作区内容，或需要产生/更新可预览产物。
+- deployment：用户明确要求把当前已绑定 Workspace 启动/发布/部署成可访问服务或预览地址；这是部署动作本身，不是询问部署方案。
 - 在 single/group 会话中，如果 conversationWorkspaceId 存在，用户提到“项目/页面/代码/游戏/角色/动作/攻击/功能/样式/交互”等工作区对象，并表达“优化/完善/改进/增强/修复/调整/区分/补全/实现/让它更好”等意图，即使句式是“可以吗/能不能/帮我看看能否”，也应判为 sandbox。
 - 不要因为用户用了疑问句就判为 chat；判断重点是是否在请求你实际改工作区内容。
-- 如果用户只是问“怎么改/为什么/有什么建议/解释一下/review 一下”，且没有要求应用修改，则判为 chat。
+- 如果用户只是问“怎么改/为什么/有什么建议/解释一下/review 一下/怎么部署/部署失败原因/预览地址为什么打不开”，且没有要求实际执行，则判为 chat。
 - 如果用户明确指定 executionMode 或 useSandbox，以 payload 为准。
 
 executionMode 只能是：
 - chat
 - sandbox
+- deployment
 
 intent 只能是：
 - qa
@@ -122,6 +124,7 @@ intent 只能是：
 - project_creation
 - debug_run
 - build_or_test
+- deployment
 - other
 
 普通 chat 场景，不要启动 sandbox：
@@ -151,6 +154,14 @@ sandbox 场景，需要启动 sandbox：
 - “让现有交互更顺滑”
 - 明确要求创建、修改、运行、验证、构建、生成文件或项目产物。
 
+deployment 场景，需要触发部署：
+- “部署一下”
+- “帮我把当前项目部署起来”
+- “启动预览服务”
+- “发布这个 workspace”
+- “给这个项目生成可访问预览地址”
+- 明确要求执行部署/发布/启动预览，而不是询问如何部署、排查部署问题或讨论部署方案。
+
 建议：
 - sandbox 的 intent 优先使用 code_modification / artifact_generation / project_creation / debug_run / build_or_test。
 - 如果 selectedAgentId 存在且适合执行任务，suggestedAgentId 使用 selectedAgentId；否则代码任务默认 agent-claude-code。
@@ -177,6 +188,7 @@ VALID_EXECUTION_INTENTS = {
     "project_creation",
     "debug_run",
     "build_or_test",
+    "deployment",
     "other",
 }
 
@@ -273,6 +285,22 @@ def _sandbox_execution_decision(
     }
 
 
+def _deployment_execution_decision(
+    user_input: str,
+    reason: str = "用户明确要求部署当前 Workspace",
+    confidence: float = 1.0,
+) -> Dict[str, Any]:
+    return {
+        "useSandbox": False,
+        "useDeployment": True,
+        "executionMode": "deployment",
+        "intent": "deployment",
+        "confidence": confidence,
+        "reason": reason,
+        "suggestedRunPrompt": user_input,
+    }
+
+
 def _explicit_execution_mode(payload: Optional[Dict[str, Any]]) -> Optional[str]:
     if not isinstance(payload, dict):
         return None
@@ -282,6 +310,8 @@ def _explicit_execution_mode(payload: Optional[Dict[str, Any]]) -> Optional[str]
     if use_sandbox is False:
         return "chat"
     raw_mode = str(payload.get("executionMode") or payload.get("runMode") or "").strip().lower()
+    if raw_mode in {"deployment", "deploy"}:
+        return "deployment"
     if raw_mode in {"sandbox", "run"}:
         return "sandbox"
     if raw_mode in {"chat", "message"}:
@@ -310,7 +340,17 @@ def _fallback_execution_decision(user_input: str) -> Dict[str, Any]:
 def _normalize_execution_decision(payload: Dict[str, Any], user_input: str) -> Dict[str, Any]:
     mode = str(payload.get("executionMode") or "").strip().lower()
     use_sandbox = bool(payload.get("useSandbox")) or mode == "sandbox"
-    if mode not in {"chat", "sandbox"}:
+    use_deployment = bool(payload.get("useDeployment")) or mode in {"deployment", "deploy"}
+    if mode == "deploy":
+        mode = "deployment"
+    if mode not in {"chat", "sandbox", "deployment"}:
+        if use_deployment:
+            mode = "deployment"
+        else:
+            mode = "sandbox" if use_sandbox else "chat"
+    if mode == "deployment":
+        use_sandbox = False
+    if mode not in {"chat", "sandbox", "deployment"}:
         mode = "sandbox" if use_sandbox else "chat"
     try:
         confidence = float(payload.get("confidence") or 0.0)
@@ -322,7 +362,13 @@ def _normalize_execution_decision(payload: Dict[str, Any], user_input: str) -> D
     reason = str(payload.get("reason") or "").strip() or "模型未提供原因"
     suggested_run_prompt = str(payload.get("suggestedRunPrompt") or user_input).strip() or user_input
     suggested_agent_id = str(payload.get("suggestedAgentId") or "").strip()
-    if mode == "sandbox" and confidence >= EXECUTION_MODE_CONFIDENCE_THRESHOLD:
+    if mode == "deployment" and confidence >= EXECUTION_MODE_CONFIDENCE_THRESHOLD:
+        decision = _deployment_execution_decision(
+            suggested_run_prompt,
+            reason=reason,
+            confidence=confidence,
+        )
+    elif mode == "sandbox" and confidence >= EXECUTION_MODE_CONFIDENCE_THRESHOLD:
         decision = _sandbox_execution_decision(
             suggested_run_prompt,
             intent=intent,
@@ -354,6 +400,8 @@ def classify_message_execution_mode(
     explicit_mode = _explicit_execution_mode(payload)
     if explicit_mode == "chat":
         return _chat_execution_decision(content, reason="payload 显式指定普通聊天", confidence=1.0)
+    if explicit_mode == "deployment":
+        return _deployment_execution_decision(content, reason="payload 显式指定部署", confidence=1.0)
     if explicit_mode == "sandbox":
         return _sandbox_execution_decision(content, reason="payload 显式指定 sandbox 执行", confidence=1.0)
 

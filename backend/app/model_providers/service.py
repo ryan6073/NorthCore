@@ -11,13 +11,84 @@ from app.database import get_model_config, get_model_credential
 from app.model_providers.registry import get_model_provider
 
 
+def _merge_dicts_deep(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    result = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _merge_dicts_deep(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
 def _apply_provider_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
     provider = get_model_provider(str(config.get("provider") or ""))
     if not config.get("protocol"):
         config = {**config, "protocol": provider.get("protocol") or "openai_chat_completions"}
     if not config.get("baseUrl") and provider.get("defaultBaseUrl"):
         config = {**config, "baseUrl": provider["defaultBaseUrl"]}
+    runtime_defaults = provider.get("runtimeDefaults") if isinstance(provider.get("runtimeDefaults"), dict) else {}
+    extra_config = config.get("extraConfig") if isinstance(config.get("extraConfig"), dict) else {}
+    for runtime_default in runtime_defaults.values():
+        if not isinstance(runtime_default, dict):
+            continue
+        default_extra = runtime_default.get("extraConfig")
+        if isinstance(default_extra, dict):
+            extra_config = _merge_dicts_deep(default_extra, extra_config)
+    if extra_config:
+        config = {**config, "extraConfig": extra_config}
     return config
+
+
+def _codex_wire_api(config: Dict[str, Any]) -> str:
+    extra = config.get("extraConfig") if isinstance(config.get("extraConfig"), dict) else {}
+    codex = extra.get("codex") if isinstance(extra.get("codex"), dict) else {}
+    return str(
+        codex.get("wireApi")
+        or codex.get("wire_api")
+        or extra.get("codexWireApi")
+        or extra.get("wireApi")
+        or extra.get("wire_api")
+        or ""
+    ).strip()
+
+
+def model_config_supports_runtime(config: Dict[str, Any], runtime: str) -> bool:
+    runtime = str(runtime or "native").strip().lower() or "native"
+    config = _apply_provider_defaults(config)
+    provider = get_model_provider(str(config.get("provider") or ""))
+    provider_id = str(provider.get("id") or config.get("provider") or "").strip().lower()
+    protocol = str(config.get("protocol") or "").strip().lower()
+    if runtime in {"native", "opencode"}:
+        return True
+    if runtime in {"claude_code", "claude-code"}:
+        return (
+            provider_id in {"anthropic", "anthropic_compatible", "chatanywhere_claude_code"}
+            or protocol == "anthropic_messages"
+        )
+    if runtime == "codex":
+        return provider_id in {"openai", "chatanywhere_codex"} or bool(_codex_wire_api(config))
+    return True
+
+
+def validate_model_config_for_runtime(config: Optional[Dict[str, Any]], runtime: str) -> Optional[str]:
+    runtime = str(runtime or "native").strip().lower() or "native"
+    if runtime not in {"claude_code", "claude-code", "codex"}:
+        return None
+    if not config:
+        return f"{runtime} runtime 需要绑定支持该平台的模型配置"
+    if model_config_supports_runtime(config, runtime):
+        return None
+    provider = str(config.get("provider") or "").strip()
+    if runtime in {"claude_code", "claude-code"}:
+        return (
+            f"Claude Code runtime 不支持当前模型配置 provider={provider}。"
+            "请使用 Anthropic、Anthropic-compatible 或 ChatAnywhere / Claude Code 配置。"
+        )
+    return (
+        f"Codex runtime 不支持当前模型配置 provider={provider}。"
+        "请使用 OpenAI、ChatAnywhere / Codex，或显式配置 extraConfig.codex.wireApi。"
+    )
 
 
 def _normalize_api_secret(secret: str) -> str:
@@ -99,6 +170,31 @@ def _test_openai_compatible(config: Dict[str, Any], secret: str) -> None:
     )
 
 
+def _test_openai_responses(config: Dict[str, Any], secret: str) -> None:
+    if not config.get("modelName"):
+        raise ValueError("model_name 不能为空")
+    base_url = (config.get("baseUrl") or get_model_provider(config.get("provider", "")).get("defaultBaseUrl") or "").rstrip("/")
+    if not base_url:
+        raise ValueError("base_url 不能为空")
+    request = urllib.request.Request(
+        f"{base_url}/responses",
+        data=json.dumps(
+            {
+                "model": config["modelName"],
+                "input": "ping",
+                "max_output_tokens": 8,
+            }
+        ).encode("utf-8"),
+        headers={
+            "authorization": f"Bearer {secret}",
+            "content-type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        response.read()
+
+
 def _test_anthropic(config: Dict[str, Any], secret: str) -> None:
     if not config.get("modelName"):
         raise ValueError("model_name 不能为空")
@@ -133,8 +229,10 @@ def test_model_config_connectivity(config_id: str, owner_user_id: str) -> Dict[s
         return {"ok": False, "error": "credential 未配置"}
     started = time.time()
     try:
-        if config.get("protocol") == "anthropic_messages" or provider["id"] in {"anthropic", "anthropic_compatible"}:
+        if config.get("protocol") == "anthropic_messages" or provider["id"] in {"anthropic", "anthropic_compatible", "chatanywhere_claude_code"}:
             _test_anthropic(config, secret)
+        elif config.get("protocol") == "openai_responses" or provider["id"] == "chatanywhere_codex":
+            _test_openai_responses(config, secret)
         else:
             _test_openai_compatible(config, secret)
         return {

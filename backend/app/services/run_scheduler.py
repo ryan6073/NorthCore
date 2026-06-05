@@ -3,6 +3,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
+from urllib.parse import quote
 
 from app.config import settings
 from app.core.llm_client import client
@@ -24,7 +25,10 @@ from app.database import (
     list_sandbox_files_changed_by_run,
     list_sandbox_files,
     list_sandbox_conflicts,
+    heartbeat_workspace_mutation_lock,
+    is_workspace_mutation_lock_current,
     now_text,
+    release_workspace_mutation_lock,
     rollback_sandbox_files_for_run,
     set_sandbox_file_artifact,
     update_artifact,
@@ -34,6 +38,18 @@ from app.database import (
     update_sandbox,
 )
 from app.services.file_version_service import FileVersionService
+from app.services.office_file_service import (
+    is_legacy_office_path,
+    is_openxml_office_path,
+    validate_openxml_office_file,
+)
+from app.services.dag_step_policy import (
+    normalize_step_mutation_fields,
+    step_mutation_mode,
+    step_read_paths,
+    step_target_paths,
+    steps_compatible,
+)
 from app.services.sandbox_service import SandboxService
 from app.services.sandbox_tools import SANDBOX_TOOL_SPECS, SandboxToolExecutor
 from app.services.workspace_sync_service import sync_workspace_files
@@ -62,14 +78,27 @@ DAG_SYSTEM_PROMPT = """你是 AgentHub 的任务调度器。
       "agentName": "Claude Code",
       "task": "具体任务",
       "dependsOn": [],
-      "expectedOutputs": ["README.md"]
+      "expectedOutputs": ["README.md"],
+      "mutationMode": "write",
+      "targetPaths": ["README.md"],
+      "readPaths": [],
+      "usesStableSnapshot": false,
+      "writeToolOnly": true
     }
   ]
 }
 要求：
-- step 数量 1-4 个。
+- step 数量 1-8 个。
 - 如果任务能并行，dependsOn 为空。
 - 如果审查依赖生成，审查 step 依赖生成 step。
+- 每个 step 必须输出 mutationMode、targetPaths、readPaths、usesStableSnapshot、writeToolOnly。
+- review/解释/检查/只读分析标记 mutationMode=read，填写 readPaths，不允许写文件。
+- 生成/修改/运行命令/部署准备标记 mutationMode=write，尽量填写 targetPaths。
+- 无法预测文件名或自由 runtime 写入时，targetPaths=[]，由后端按整个 workspace 写 lane 串行处理。
+- 只有确认 write step 不需要 setup_environment/run_command/validate_command、只用 write_file/import_workspace_file 即可完成时，writeToolOnly=true；否则必须为 false。
+- 用户只说“生成 PPT / 做一个 ppt / 帮我生成演示文稿”时，默认目标是真实 .pptx Office 文件，必须分配给 agent-claude-code 单步生成 .pptx。
+- 只有用户明确说“PPT 大纲/文稿/Markdown”时，才分配给 agent-document 生成 .md 大纲。
+- 只有用户明确说“网页 PPT/HTML/reveal.js/浏览器演示”时，才生成 .html 演示页面。
 """
 
 SANDBOX_EXECUTOR_SYSTEM_PROMPT = """你是 AgentHub 的沙箱执行模式。
@@ -97,6 +126,11 @@ SANDBOX_EXECUTOR_SYSTEM_PROMPT = """你是 AgentHub 的沙箱执行模式。
 - Python 脚本运行统一优先使用 uv run python <script.py>；matplotlib/绘图任务使用 Agg 后端并保存图片文件，不要依赖 GUI 弹窗。
 - setup_environment 成功只代表环境准备完成，不代表任务成功；必须再执行 pytest、npm run build 或等价验证后才能 finish success。
 - 如果命令生成了文件，必须先 scan_workspace；UTF-8 文本文件再 import_workspace_file，图片、压缩包等二进制文件不要 import，只在 summary/changedFiles 中说明其 workspace 路径。
+- 用户要求 Office 文件时，只生成真实 .pptx/.docx/.xlsx，不生成老式 .ppt/.doc/.xls。
+- PPT 使用 python-pptx 生成 .pptx；Word 使用 python-docx 生成 .docx；Excel 使用 openpyxl 生成 .xlsx。需要依赖时先 setup_environment 安装对应依赖。
+- 禁止把 Markdown、纯文本或 HTML 写入 .ppt/.pptx/.doc/.docx/.xls/.xlsx 后缀。PPT 大纲/文稿用 .md，可演示网页 PPT 用 .html。
+- Office 文件生成后必须 validate_command 验证能被对应 Python 库打开：pptx.Presentation、docx.Document、openpyxl.load_workbook，并检查至少有一页/一段或表格/一个 worksheet。
+- 二进制 Office 文件不要 import_workspace_file；scan_workspace 后在 finish.changedFiles 中写 workspace 相对路径即可。
 - finish(success=true) 必须在最后一次文件修改后完成验证；优先使用 validate_command，成功的 run_command 也可作为验证依据。纯文档或纯静态展示型前端产物如果没有可运行环境，可以携带 validationSkippedReason 说明内容自检结果。
 - 纯静态 HTML/CSS/JS 任务不要调用 setup_environment；直接写文件，并通过文件完整性和内容自检完成验证。
 - 纯静态 HTML/CSS/JS 可用 validate_command 做轻量验证，例如 `test -s index.html`、`node --check src/app.js`、`find . -maxdepth 3 -type f`；如果环境没有 node/npm 且只是静态文件修改，finish(success=true) 必须填写 validationSkippedReason。
@@ -106,7 +140,7 @@ SANDBOX_EXECUTOR_SYSTEM_PROMPT = """你是 AgentHub 的沙箱执行模式。
 - 文件路径必须是相对路径，不能以 / 开头，不能包含 ..
 - 覆盖 README.md、配置、源码等已存在文件时，必须根据 read_file 读到的原内容进行增量更新，不要用 baseVersion=0 直接重写。
 - 失败后根据日志修复，不能盲目 finish success。
-- 完成时必须调用 finish。
+- 完成时必须调用 finish。finish.summary 只写 1-2 句中文结果，控制在 120 字以内；只说明改了什么、是否验证通过，不要输出 Markdown 标题、分章节报告、逐项清单或大段功能介绍。
 
 如果当前模型不支持原生 function calling，则输出一个 JSON 对象作为降级工具调用：
 {"tool": "write_file", "arguments": {"path": "README.md", "content": "...", "baseVersion": 1}}
@@ -150,6 +184,8 @@ def _fallback_path_for_step(step: Dict[str, Any]) -> str:
     for expected in step.get("expectedOutputs") or []:
         candidate = _safe_output_path(str(expected))
         if candidate and Path(candidate).suffix:
+            if Path(candidate).suffix.lower() in {".ppt", ".pptx", ".doc", ".docx", ".xls", ".xlsx"}:
+                return f"{Path(candidate).stem or 'office-output'}.md"
             return candidate
     step_id = str(step.get("id") or "step-output")
     return f"{step_id}-output{_fallback_extension_for_step(step)}"
@@ -213,6 +249,7 @@ def _agent_name_for_id(agent_id: str) -> str:
 
 
 def _fallback_dag(prompt: str, agent_id: str = "agent-claude-code") -> Dict[str, Any]:
+    target_paths = [path for path in [_safe_output_path("README.md")] if path]
     return {
         "summary": "单 Agent 沙箱任务",
         "steps": [
@@ -223,6 +260,52 @@ def _fallback_dag(prompt: str, agent_id: str = "agent-claude-code") -> Dict[str,
                 "task": prompt,
                 "dependsOn": [],
                 "expectedOutputs": ["README.md"],
+                "mutationMode": "write",
+                "targetPaths": target_paths,
+                "readPaths": [],
+                "usesStableSnapshot": False,
+                "writeToolOnly": False,
+            }
+        ],
+    }
+
+
+def _plain_pptx_request(prompt: str) -> bool:
+    text = str(prompt or "")
+    lowered = text.lower()
+    if not any(marker in lowered for marker in ("ppt", "pptx", "powerpoint")) and "演示文稿" not in text:
+        return False
+    outline_markers = ("大纲", "提纲", "markdown", ".md")
+    web_markers = ("网页", "html", "reveal", "浏览器", "web")
+    return not any(marker in lowered for marker in outline_markers) and not any(marker in lowered for marker in web_markers)
+
+
+def _force_plain_pptx_dag_if_needed(
+    dag: Dict[str, Any],
+    prompt: str,
+    allowed: set[str],
+) -> Dict[str, Any]:
+    if not _plain_pptx_request(prompt) or "agent-claude-code" not in allowed:
+        return dag
+    return {
+        "summary": "生成真实 PPTX 演示文稿",
+        "steps": [
+            {
+                "id": "step-1",
+                "agentId": "agent-claude-code",
+                "agentName": _agent_name_for_id("agent-claude-code"),
+                "task": (
+                    "请根据用户需求生成一个真实可下载的 .pptx Office 演示文稿。"
+                    "必须使用 python-pptx 生成 .pptx，不要生成 reveal.js、HTML、Markdown 大纲或 .ppt 老格式。"
+                    f"用户需求：{prompt}"
+                ),
+                "dependsOn": [],
+                "expectedOutputs": ["演示文稿.pptx"],
+                "mutationMode": "write",
+                "targetPaths": ["演示文稿.pptx"],
+                "readPaths": [],
+                "usesStableSnapshot": False,
+                "writeToolOnly": False,
             }
         ],
     }
@@ -262,11 +345,12 @@ def normalize_dag(
     name_map = agent_name_map or {}
     raw_steps = payload.get("steps") if isinstance(payload, dict) else None
     if not isinstance(raw_steps, list) or not raw_steps:
-        return _fallback_dag(prompt, fallback_agent_id)
+        fallback = _fallback_dag(prompt, fallback_agent_id)
+        return _force_plain_pptx_dag_if_needed(fallback, prompt, allowed)
 
     normalized: List[Dict[str, Any]] = []
     used_ids = set()
-    for index, step in enumerate(raw_steps[:4], start=1):
+    for index, step in enumerate(raw_steps[:8], start=1):
         if not isinstance(step, dict):
             continue
         step_id = str(step.get("id") or f"step-{index}").strip()
@@ -279,6 +363,14 @@ def normalize_dag(
         task = str(step.get("task") or prompt).strip()
         depends_on = step.get("dependsOn") if isinstance(step.get("dependsOn"), list) else []
         expected_outputs = step.get("expectedOutputs") if isinstance(step.get("expectedOutputs"), list) else []
+        mutation_fields = normalize_step_mutation_fields(
+            {
+                **step,
+                "task": task,
+                "expectedOutputs": expected_outputs,
+            },
+            prompt,
+        )
         normalized.append({
             "id": step_id,
             "agentId": agent_id,
@@ -286,17 +378,20 @@ def normalize_dag(
             "task": task,
             "dependsOn": [str(dep) for dep in depends_on],
             "expectedOutputs": [str(item) for item in expected_outputs],
+            **mutation_fields,
         })
 
     valid_ids = {step["id"] for step in normalized}
     for step in normalized:
         step["dependsOn"] = [dep for dep in step["dependsOn"] if dep in valid_ids and dep != step["id"]]
     if not normalized:
-        return _fallback_dag(prompt, fallback_agent_id)
-    return {
+        fallback = _fallback_dag(prompt, fallback_agent_id)
+        return _force_plain_pptx_dag_if_needed(fallback, prompt, allowed)
+    dag = {
         "summary": str(payload.get("summary") or "沙箱任务").strip(),
         "steps": normalized,
     }
+    return _force_plain_pptx_dag_if_needed(dag, prompt, allowed)
 
 
 async def generate_dag(prompt: str, allowed_agent_ids: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -325,7 +420,195 @@ class RunScheduler:
     ) -> None:
         self.sandbox_service = sandbox_service or SandboxService()
         self.file_service = file_service or FileVersionService(self.sandbox_service)
-        self.max_parallel_steps = max_parallel_steps or settings.SANDBOX_MAX_PARALLEL_STEPS
+        self.max_parallel_steps = max(1, int(max_parallel_steps or settings.SANDBOX_MAX_PARALLEL_STEPS or 1))
+        self._progress_message_keys: set[str] = set()
+
+    def _step_can_start_with_running(self, step: Dict[str, Any], running_steps: List[Dict[str, Any]]) -> bool:
+        return all(steps_compatible(step, running_step) for running_step in running_steps)
+
+    def _is_invalid_tool_call(self, call: Dict[str, Any], tool_result: Dict[str, Any]) -> bool:
+        if tool_result.get("ok"):
+            return False
+        name = str(call.get("name") or "")
+        arguments = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
+        if not arguments:
+            return True
+        required_keys = {
+            "read_workspace_file": {"path"},
+            "import_workspace_file": {"path"},
+            "read_file": {"path"},
+            "write_file": {"path", "content", "baseVersion"},
+            "run_command": {"command"},
+            "validate_command": {"command"},
+        }.get(name)
+        if required_keys and any(key not in arguments for key in required_keys):
+            return True
+        status = str(tool_result.get("status") or "")
+        if status in {"blocked_office_text_write", "blocked_office_text_import", "requires_read"}:
+            return True
+        error = str(tool_result.get("error") or "")
+        return "非法文件路径" in error
+
+    def _finish_office_error(
+        self,
+        sandbox: Dict[str, Any],
+        changed_files: List[str],
+        finish_data: Dict[str, Any],
+    ) -> Optional[str]:
+        paths = list(changed_files)
+        finish_changed_files = finish_data.get("changedFiles") if isinstance(finish_data.get("changedFiles"), list) else []
+        paths.extend([str(item) for item in finish_changed_files])
+        workspace_root = Path(str(sandbox.get("workspacePath") or "")).resolve()
+        for raw_path in dict.fromkeys(paths):
+            path = str(raw_path or "").strip().replace("\\", "/")
+            if not path:
+                continue
+            if is_legacy_office_path(path):
+                return f"不支持生成老式 Office 文件：{path}，请改为生成 .pptx/.docx/.xlsx"
+            if not is_openxml_office_path(path):
+                continue
+            candidate = (workspace_root / path).resolve()
+            try:
+                candidate.relative_to(workspace_root)
+            except ValueError:
+                return f"Office 文件路径非法：{path}"
+            office_error = validate_openxml_office_file(candidate)
+            if office_error:
+                return f"{path} 校验失败：{office_error}"
+        return None
+
+    def _step_agent_identity(self, step: Dict[str, Any]) -> tuple[str, str, str]:
+        agent_id = str(step.get("agentId") or "agent-claude-code")
+        agent_name = str(step.get("agentName") or _agent_name_for_id(agent_id) or "Agent")
+        return agent_id, agent_name, "agent"
+
+    def _progress_dedupe_key(
+        self,
+        run_id: str,
+        step_id: str,
+        phase: str,
+        tool_name: Optional[str] = None,
+    ) -> str:
+        if phase in {"tool_started", "tool_completed", "tool_failed"}:
+            bucket = self._tool_progress_bucket(tool_name or "")
+            return f"{run_id}:{step_id}:{phase}:{bucket}"
+        return f"{run_id}:{step_id}:{phase}"
+
+    def _tool_progress_bucket(self, tool_name: str) -> str:
+        if tool_name in {"inspect_environment", "read_dependency_manifest", "list_files", "scan_workspace", "read_workspace_file", "read_file"}:
+            return "inspect"
+        if tool_name in {"write_file", "import_workspace_file"}:
+            return "write"
+        if tool_name in {"run_command", "validate_command", "setup_environment"}:
+            return tool_name
+        if tool_name == "finish":
+            return "finish"
+        return tool_name or "tool"
+
+    def _tool_progress_content(
+        self,
+        agent_name: str,
+        phase: str,
+        tool_name: str,
+        metadata: Dict[str, Any],
+    ) -> str:
+        command = str(metadata.get("command") or "").strip()
+        changed_file_count = int(metadata.get("changedFileCount") or 0)
+        if phase == "tool_failed":
+            return f"我执行 {tool_name} 时遇到问题。"
+        if tool_name in {"inspect_environment", "read_dependency_manifest", "list_files", "scan_workspace", "read_workspace_file", "read_file"}:
+            return "我正在查看工作区文件和依赖配置。"
+        if tool_name in {"write_file", "import_workspace_file"}:
+            if changed_file_count > 0:
+                return f"我已更新 {changed_file_count} 个文件。"
+            return "我正在更新工作区文件。"
+        if tool_name == "setup_environment":
+            return "我正在准备运行环境。"
+        if tool_name in {"run_command", "validate_command"}:
+            if command:
+                return f"我正在运行 `{command[:160]}`。"
+            return "我正在运行验证命令。"
+        if tool_name == "finish":
+            return "我正在整理本步骤结果。"
+        return f"我正在执行 {tool_name}。"
+
+    async def _send_step_progress_message(
+        self,
+        run_id: str,
+        step: Dict[str, Any],
+        phase: str,
+        content: str,
+        send: EventEmitter,
+        metadata: Optional[Dict[str, Any]] = None,
+        *,
+        dedupe: bool = True,
+        finish_reason: str = "stop",
+    ) -> Optional[Dict[str, Any]]:
+        run = get_agent_run(run_id)
+        if not run or not run.get("conversationId"):
+            return None
+        step_id = str(step.get("id") or "")
+        if not step_id:
+            return None
+        tool_name = str((metadata or {}).get("toolName") or "")
+        dedupe_key = self._progress_dedupe_key(run_id, step_id, phase, tool_name)
+        if dedupe and dedupe_key in self._progress_message_keys:
+            return None
+        if dedupe:
+            self._progress_message_keys.add(dedupe_key)
+
+        sender_id, sender_name, role = self._step_agent_identity(step)
+        message_metadata = {
+            "source": "sandboxRunProgress",
+            "sourceRunId": run_id,
+            "runId": run_id,
+            "stepId": step_id,
+            "phase": phase,
+            "readOnly": True,
+            **(metadata or {}),
+        }
+        message = create_message(
+            conversation_id=run["conversationId"],
+            sender_id=sender_id,
+            sender_name=sender_name,
+            role=role,
+            msg_type="status",
+            content=content,
+            metadata=message_metadata,
+        )
+        update_conversation_activity(run["conversationId"], content)
+        await send(
+            "conversation.message.completed",
+            {
+                "conversationId": run["conversationId"],
+                "messageId": message["id"],
+                "finishReason": finish_reason,
+                "fullMessage": message,
+                "metadata": message_metadata,
+            },
+        )
+        return message
+
+    async def _send_tool_progress_message(
+        self,
+        run_id: str,
+        step: Dict[str, Any],
+        phase: str,
+        tool_name: str,
+        send: EventEmitter,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        _, agent_name, _ = self._step_agent_identity(step)
+        merged_metadata = {"toolName": tool_name, **(metadata or {})}
+        content = self._tool_progress_content(agent_name, phase, tool_name, merged_metadata)
+        return await self._send_step_progress_message(
+            run_id,
+            step,
+            phase,
+            content,
+            send,
+            merged_metadata,
+        )
 
     async def run(self, run_id: str, emit: Optional[EventEmitter] = None) -> None:
         run = get_agent_run(run_id)
@@ -340,14 +623,68 @@ class RunScheduler:
             if emit:
                 await emit(event_type, {"runId": run_id, **data})
 
+        heartbeat_stop = asyncio.Event()
+        lock_token = run.get("lockFencingToken")
+        lock_lost = False
+        active_container_id: Optional[str] = None
+
+        async def heartbeat_loop() -> None:
+            nonlocal lock_lost, active_container_id
+            if run.get("runMode") not in {"write", "deploy"} or not run.get("workspaceId") or not lock_token:
+                return
+            while not heartbeat_stop.is_set():
+                try:
+                    await asyncio.wait_for(heartbeat_stop.wait(), timeout=30)
+                    break
+                except asyncio.TimeoutError:
+                    ok = heartbeat_workspace_mutation_lock(
+                        run["workspaceId"],
+                        "run",
+                        run_id,
+                        int(lock_token),
+                    )
+                    if not ok:
+                        lock_lost = True
+                        print(f"[WorkspaceMutationLock] heartbeat lost run={run_id}", flush=True)
+                        latest_sandbox = get_sandbox(sandbox["id"])
+                        container_to_stop = (latest_sandbox or {}).get("containerId") or active_container_id
+                        if container_to_stop:
+                            await self.sandbox_service.stop_container(
+                                sandbox["id"],
+                                container_to_stop,
+                                final_status="failed",
+                            )
+                        break
+
+        heartbeat_task = asyncio.create_task(heartbeat_loop())
+
         try:
             print(f"[SandboxRun] scheduler start run={run_id}", flush=True)
+            if run.get("runMode") in {"write", "deploy"} and not is_workspace_mutation_lock_current(
+                str(run.get("workspaceId") or ""),
+                "run",
+                run_id,
+                int(lock_token or 0),
+            ):
+                update_agent_run(
+                    run_id,
+                    status="failed",
+                    error="workspace mutation lock is not current",
+                    mark_finished=True,
+                )
+                return
             update_agent_run(run_id, status="running", mark_started=True)
             update_sandbox(sandbox["id"], status="starting")
             await send("run.created", _run_snapshot_payload(run_id))
             container_id = await self.sandbox_service.start_container(sandbox["id"], sandbox["workspacePath"])
+            active_container_id = container_id
             sandbox = get_sandbox(sandbox["id"])
             await self._run_dag(run_id, sandbox, container_id, send)
+            if lock_lost or (
+                run.get("runMode") in {"write", "deploy"}
+                and not is_workspace_mutation_lock_current(str(run.get("workspaceId") or ""), "run", run_id, int(lock_token or 0))
+            ):
+                raise RuntimeError("workspace mutation lock lost during run")
             current_run = get_agent_run(run_id)
             if current_run and current_run["status"] == "cancelled":
                 update_sandbox(sandbox["id"], status="cancelled")
@@ -355,8 +692,22 @@ class RunScheduler:
             steps = list_agent_run_steps(run_id)
             failed_steps = [step for step in steps if step["status"] in {"failed", "blocked"}]
             conflicts = [item for item in list_sandbox_conflicts(run_id) if item["status"] == "open"]
-            if failed_steps:
-                summary = "任务部分步骤失败"
+            if conflicts:
+                summary = "任务完成但存在文件冲突"
+                update_agent_run(run_id, status="conflict", summary=summary, mark_finished=True)
+                await self.sandbox_service.stop_container(sandbox["id"], sandbox.get("containerId") or container_id, final_status="conflict")
+                print(f"[SandboxRun] conflict run={run_id} conflicts={len(conflicts)}", flush=True)
+                payload = _run_snapshot_payload(run_id, {"status": "conflict", "summary": summary, "conflicts": conflicts, "artifacts": list_artifacts_for_run(run_id), "artifactChanges": [], "rollbackChanges": []})
+                await self._send_run_summary_message(run_id, "conflict", summary, [], [], conflicts, send, rollback_changes=[])
+                await send("run.failed", payload)
+                await send("run.updated", payload)
+                await send("conversation.all_tasks.completed", payload)
+            elif failed_steps:
+                summary = (
+                    "任务需要补充信息"
+                    if all(step.get("status") == "blocked" for step in failed_steps)
+                    else "任务部分步骤失败"
+                )
                 rollback_changes = self._rollback_run_changes(run_id, sandbox)
                 update_agent_run(run_id, status="failed", summary=summary, mark_finished=True)
                 await self.sandbox_service.stop_container(sandbox["id"], sandbox.get("containerId") or container_id, final_status="failed")
@@ -364,20 +715,17 @@ class RunScheduler:
                 payload = _run_snapshot_payload(run_id, {"status": "failed", "summary": summary, "failedSteps": failed_steps, "artifacts": list_artifacts_for_run(run_id), "artifactChanges": [], "rollbackChanges": rollback_changes})
                 await self._send_run_summary_message(run_id, "failed", summary, [], failed_steps, [], send, rollback_changes=rollback_changes)
                 await send("run.failed", payload)
-                if not await self._continue_failed_run(run_id, "failed", summary, emit):
-                    await send("conversation.all_tasks.completed", payload)
-            elif conflicts:
-                summary = "任务完成但存在文件冲突"
-                rollback_changes = self._rollback_run_changes(run_id, sandbox)
-                update_agent_run(run_id, status="conflict", summary=summary, mark_finished=True)
-                await self.sandbox_service.stop_container(sandbox["id"], sandbox.get("containerId") or container_id, final_status="conflict")
-                print(f"[SandboxRun] conflict run={run_id} conflicts={len(conflicts)} rollbackFiles={len(rollback_changes)}", flush=True)
-                payload = _run_snapshot_payload(run_id, {"status": "conflict", "summary": summary, "conflicts": conflicts, "artifacts": list_artifacts_for_run(run_id), "artifactChanges": [], "rollbackChanges": rollback_changes})
-                await self._send_run_summary_message(run_id, "conflict", summary, [], [], conflicts, send, rollback_changes=rollback_changes)
-                await send("run.failed", payload)
-                if not await self._continue_failed_run(run_id, "conflict", summary, emit):
+                await send("run.updated", payload)
+                if not await self._continue_failed_run(run_id, "blocked" if summary == "任务需要补充信息" else "failed", summary, emit):
                     await send("conversation.all_tasks.completed", payload)
             else:
+                if run.get("runMode") in {"write", "deploy"} and not is_workspace_mutation_lock_current(
+                    str(run.get("workspaceId") or ""),
+                    "run",
+                    run_id,
+                    int(lock_token or 0),
+                ):
+                    raise RuntimeError("workspace mutation lock lost before workspace sync")
                 try:
                     synced_workspace_files = sync_workspace_files(
                         sandbox,
@@ -411,6 +759,7 @@ class RunScheduler:
                 payload = _run_snapshot_payload(run_id, {"status": "completed", "summary": summary, "artifacts": run_artifacts, "artifactChanges": artifact_changes})
                 await self._send_run_summary_message(run_id, "completed", summary, artifact_changes, [], [], send)
                 await send("run.completed", payload)
+                await send("run.updated", payload)
                 await send("conversation.all_tasks.completed", payload)
         except Exception as exc:
             rollback_changes = self._rollback_run_changes(run_id, sandbox) if sandbox else []
@@ -431,8 +780,26 @@ class RunScheduler:
             )
             await self._send_run_summary_message(run_id, "failed", "沙箱任务异常失败", [], [], [], send, rollback_changes=rollback_changes)
             await send("run.failed", payload)
+            await send("run.updated", payload)
             if not await self._continue_failed_run(run_id, "failed", "沙箱任务异常失败", emit):
                 await send("conversation.all_tasks.completed", payload)
+        finally:
+            heartbeat_stop.set()
+            await heartbeat_task
+            latest_run = get_agent_run(run_id) or run
+            if latest_run.get("runMode") in {"write", "deploy"} and latest_run.get("workspaceId") and latest_run.get("lockFencingToken"):
+                release_result = release_workspace_mutation_lock(
+                    latest_run["workspaceId"],
+                    "run",
+                    run_id,
+                    int(latest_run.get("lockFencingToken") or 0),
+                )
+                if release_result.get("released"):
+                    update_agent_run(run_id, queued_reason="", lock_owner_id="", lock_fencing_token=0)
+                    await send("workspace.mutation_lock.released", {"lock": release_result.get("lock")})
+                from app.services.run_service import schedule_next_workspace_mutation_owner
+
+                await schedule_next_workspace_mutation_owner(release_result.get("nextOwner"))
 
     async def _continue_failed_run(
         self,
@@ -441,6 +808,8 @@ class RunScheduler:
         summary: str,
         emit: Optional[EventEmitter],
     ) -> bool:
+        if status in {"conflict", "blocked"}:
+            return False
         if not settings.SANDBOX_AUTO_RETRY_ENABLED:
             return False
         run = get_agent_run_detail(run_id)
@@ -566,7 +935,7 @@ class RunScheduler:
             return 0
 
     async def _run_dag(self, run_id: str, sandbox: Dict[str, Any], container_id: str, send: EventEmitter) -> None:
-        running: Dict[str, asyncio.Task] = {}
+        running: Dict[str, Dict[str, Any]] = {}
         while True:
             run = get_agent_run(run_id)
             if run and run["status"] == "cancelled":
@@ -582,6 +951,14 @@ class RunScheduler:
             for step in pending:
                 if any(dep in failed_ids for dep in step["dependsOn"]):
                     update_agent_run_step(step["id"], status="blocked", error="依赖步骤未成功完成", mark_finished=True)
+                    await self._send_step_progress_message(
+                        run_id,
+                        step,
+                        "blocked",
+                        f"{step.get('agentName') or _agent_name_for_id(step.get('agentId'))} 暂停执行：依赖步骤未成功完成。",
+                        send,
+                        {"error": "依赖步骤未成功完成"},
+                    )
                     await send("run.step.failed", _run_snapshot_payload(run_id, {"stepId": step["id"], "step": get_agent_run_step_payload(step["id"])}))
 
             steps = list_agent_run_steps(run_id)
@@ -592,15 +969,30 @@ class RunScheduler:
                 and step["id"] not in running
             ]
             capacity = max(0, self.max_parallel_steps - len(running))
-            for step in ready[:capacity]:
-                running[step["id"]] = asyncio.create_task(self._execute_step(run_id, sandbox, container_id, step, send))
+            for step in ready:
+                if capacity <= 0:
+                    break
+                running_steps = [
+                    item["step"]
+                    for item in running.values()
+                    if isinstance(item.get("step"), dict)
+                ]
+                if not self._step_can_start_with_running(step, running_steps):
+                    continue
+                task = asyncio.create_task(self._execute_step(run_id, sandbox, container_id, step, send))
+                running[step["id"]] = {"task": task, "step": step}
+                capacity -= 1
 
             if not running:
                 await asyncio.sleep(0.2)
                 continue
-            done, _ = await asyncio.wait(running.values(), timeout=0.2, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(
+                [item["task"] for item in running.values()],
+                timeout=0.2,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
             for task in done:
-                step_id = next((key for key, value in running.items() if value is task), None)
+                step_id = next((key for key, value in running.items() if value.get("task") is task), None)
                 if step_id:
                     running.pop(step_id, None)
                 await task
@@ -632,8 +1024,8 @@ class RunScheduler:
             output = step.get("output") if isinstance(step.get("output"), dict) else {}
             finish = output.get("finish") if isinstance(output.get("finish"), dict) else {}
             finish_summary = str(finish.get("summary") or "").strip()
-            if finish_summary:
-                step_summaries.append(f"- {step.get('agentName') or step.get('agentId')}: {finish_summary[:500]}")
+            if step.get("status") == "completed" and finish_summary:
+                step_summaries.append(f"- {step.get('agentName') or step.get('agentId')}: {finish_summary[:180]}")
             validations = output.get("validations") if isinstance(output.get("validations"), list) else []
             for validation in validations:
                 if not isinstance(validation, dict):
@@ -669,9 +1061,16 @@ class RunScheduler:
         if validation_lines:
             lines.extend(["", "验证：", *validation_lines[:8]])
         if failed_steps:
-            lines.extend(["", "失败步骤："])
-            for step in failed_steps[:8]:
-                lines.append(f"- `{step.get('id')}`：{step.get('error') or step.get('task') or '步骤失败'}")
+            blocked_steps = [step for step in failed_steps if step.get("status") == "blocked"]
+            error_steps = [step for step in failed_steps if step.get("status") != "blocked"]
+            if blocked_steps:
+                lines.extend(["", "需要补充信息："])
+                for step in blocked_steps[:8]:
+                    lines.append(f"- `{step.get('id')}`：{step.get('error') or step.get('task') or '需要补充任务条件'}")
+            if error_steps:
+                lines.extend(["", "失败步骤："])
+                for step in error_steps[:8]:
+                    lines.append(f"- `{step.get('id')}`：{step.get('error') or step.get('task') or '步骤失败'}")
         if conflicts:
             lines.extend(["", "需要处理的冲突："])
             for conflict in conflicts[:8]:
@@ -829,22 +1228,32 @@ class RunScheduler:
         validations: List[Dict[str, Any]] = []
         workspace_scan: Optional[Dict[str, Any]] = None
         last_mutation_index = 0
+        invalid_tool_call_count = 0
+        rejected_finish_count = 0
         active_tool_name = {"name": ""}
         run = get_agent_run(run_id) or {}
         action_context = (run.get("dag") or {}).get("workspaceActionContext") or {}
         step_task_text = str(step.get("task") or "")
         step_agent_id = str(step.get("agentId") or "")
+        mutation_mode = step_mutation_mode(step)
+        declared_target_paths = set(step_target_paths(step))
         review_markers = ("review", "code review", "审查", "评审", "验证", "检查", "报告")
         requires_target_mutation = (
-            action_context.get("action") == "modify_existing"
+            mutation_mode == "write"
+            and action_context.get("action") == "modify_existing"
+            and bool(declared_target_paths)
             and step_agent_id != "agent-codex"
             and not any(marker in step_task_text.lower() or marker in step_task_text for marker in review_markers)
         )
-        required_target_paths = {
+        action_target_paths = {
             str(item.get("path"))
             for item in action_context.get("targetFiles") or []
             if isinstance(item, dict) and item.get("path")
-        } if requires_target_mutation else set()
+        }
+        required_target_paths = (
+            declared_target_paths.intersection(action_target_paths)
+            or declared_target_paths
+        ) if requires_target_mutation else set()
 
         async def setup_command_logger(command_result: Dict[str, Any]) -> None:
             if active_tool_name["name"] == "setup_environment":
@@ -862,6 +1271,7 @@ class RunScheduler:
             step_id=step["id"],
             environment_profile=(get_agent_run(run_id) or {}).get("dag", {}).get("environmentProfile") or {},
             command_callback=setup_command_logger,
+            agent=agent,
         )
         messages = self._build_tool_loop_messages(run_id, step, agent)
 
@@ -906,6 +1316,19 @@ class RunScheduler:
                 "run.step.tool.started",
                 _run_snapshot_payload(run_id, {"stepId": step["id"], "toolCall": record}),
             )
+            await self._send_tool_progress_message(
+                run_id,
+                step,
+                "tool_started",
+                call["name"],
+                send,
+                {
+                    "toolCallId": call["id"],
+                    "iteration": iteration + 1,
+                    "command": str(call["arguments"].get("command") or "").strip(),
+                    "path": str(call["arguments"].get("path") or "").strip(),
+                },
+            )
             try:
                 active_tool_name["name"] = call["name"]
                 tool_result = await executor.execute(call["name"], call["arguments"])
@@ -928,6 +1351,13 @@ class RunScheduler:
                 environment_state = tool_result["environmentState"]
             if isinstance(tool_result.get("workspaceScan"), dict):
                 workspace_scan = tool_result["workspaceScan"]
+            tool_changed_files = tool_result.get("changedFiles") if isinstance(tool_result.get("changedFiles"), list) else []
+            for changed_path in tool_changed_files:
+                path_text = str(changed_path or "").strip()
+                if path_text and path_text not in changed_files:
+                    changed_files.append(path_text)
+            if tool_changed_files and call["name"] in {"run_command", "validate_command"}:
+                last_mutation_index = len(tool_calls)
 
             output_snapshot = self._tool_loop_output(
                 tool_calls,
@@ -945,6 +1375,38 @@ class RunScheduler:
                 event_type,
                 _run_snapshot_payload(run_id, {"stepId": step["id"], "toolCall": record}),
             )
+            if not tool_result.get("ok"):
+                if self._is_invalid_tool_call(call, tool_result):
+                    invalid_tool_call_count += 1
+                    if invalid_tool_call_count >= 3:
+                        return self._tool_loop_result(
+                            "failed",
+                            tool_calls,
+                            command_results,
+                            changed_files,
+                            finish_data,
+                            logs,
+                            "模型连续 3 次发起无效工具调用，已停止本步骤",
+                            environment_state,
+                            validations,
+                            workspace_scan,
+                        )
+                else:
+                    invalid_tool_call_count = 0
+                await self._send_tool_progress_message(
+                    run_id,
+                    step,
+                    "tool_failed",
+                    call["name"],
+                    send,
+                    {
+                        "toolCallId": call["id"],
+                        "iteration": iteration + 1,
+                        "error": str(tool_result.get("error") or "").strip(),
+                    },
+                )
+            else:
+                invalid_tool_call_count = 0
 
             self._append_tool_result_message(messages, call, tool_result)
 
@@ -994,6 +1456,19 @@ class RunScheduler:
                     changed_files.append(saved_file["path"])
                 if tool_result.get("status") == "saved":
                     last_mutation_index = len(tool_calls)
+                    await self._send_tool_progress_message(
+                        run_id,
+                        step,
+                        "tool_completed",
+                        call["name"],
+                        send,
+                        {
+                            "toolCallId": call["id"],
+                            "path": saved_file.get("path") if saved_file else call["arguments"].get("path"),
+                            "changedFiles": changed_files[:20],
+                            "changedFileCount": len(changed_files),
+                        },
+                    )
             elif call["name"] == "import_workspace_file":
                 if tool_result.get("status") == "conflict":
                     await send(
@@ -1015,6 +1490,20 @@ class RunScheduler:
                 saved_file = tool_result.get("file") if isinstance(tool_result.get("file"), dict) else None
                 if saved_file and saved_file.get("path") not in changed_files:
                     changed_files.append(saved_file["path"])
+                if saved_file:
+                    await self._send_tool_progress_message(
+                        run_id,
+                        step,
+                        "tool_completed",
+                        call["name"],
+                        send,
+                        {
+                            "toolCallId": call["id"],
+                            "path": saved_file.get("path"),
+                            "changedFiles": changed_files[:20],
+                            "changedFileCount": len(changed_files),
+                        },
+                    )
                 # Importing a generated workspace file only syncs an existing file
                 # into the version DB. It should not invalidate a validation command
                 # that already produced or checked that file.
@@ -1033,11 +1522,70 @@ class RunScheduler:
                         validations,
                         workspace_scan,
                     )
+                if finish_data.get("success"):
+                    office_finish_error = self._finish_office_error(sandbox, changed_files, finish_data)
+                    if office_finish_error:
+                        rejected_finish_count += 1
+                        finish_data = {
+                            **finish_data,
+                            "success": False,
+                            "officeValidationRequired": True,
+                            "officeValidationError": office_finish_error,
+                        }
+                        if rejected_finish_count >= 2:
+                            return self._tool_loop_result(
+                                "failed",
+                                tool_calls,
+                                command_results,
+                                changed_files,
+                                finish_data,
+                                logs,
+                                office_finish_error,
+                                environment_state,
+                                validations,
+                                workspace_scan,
+                            )
+                        if iteration + 1 < settings.SANDBOX_MAX_TOOL_ITERATIONS:
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    f"finish 被后端拒绝：{office_finish_error}。"
+                                    "请使用 python-pptx/python-docx/openpyxl 生成真实 .pptx/.docx/.xlsx，"
+                                    "并调用 validate_command 验证文件可被对应库打开。"
+                                ),
+                            })
+                            update_agent_run_step(
+                                step["id"],
+                                status="running",
+                                output=self._tool_loop_output(
+                                    tool_calls,
+                                    command_results,
+                                    changed_files,
+                                    finish_data,
+                                    environment_state,
+                                    validations,
+                                    workspace_scan,
+                                ),
+                            )
+                            continue
+                        return self._tool_loop_result(
+                            "failed",
+                            tool_calls,
+                            command_results,
+                            changed_files,
+                            finish_data,
+                            logs,
+                            office_finish_error,
+                            environment_state,
+                            validations,
+                            workspace_scan,
+                        )
                 if (
                     finish_data.get("success")
                     and required_target_paths
                     and not required_target_paths.intersection(set(changed_files))
                 ):
+                    rejected_finish_count += 1
                     finish_data = {
                         **finish_data,
                         "success": False,
@@ -1045,6 +1593,19 @@ class RunScheduler:
                         "requiredTargetFiles": sorted(required_target_paths),
                         "actualChangedFiles": list(changed_files),
                     }
+                    if rejected_finish_count >= 2:
+                        return self._tool_loop_result(
+                            "failed",
+                            tool_calls,
+                            command_results,
+                            changed_files,
+                            finish_data,
+                            logs,
+                            "finish 被连续拒绝，模型未实际写入目标文件",
+                            environment_state,
+                            validations,
+                            workspace_scan,
+                        )
                     if iteration + 1 < settings.SANDBOX_MAX_TOOL_ITERATIONS:
                         messages.append({
                             "role": "user",
@@ -1085,11 +1646,25 @@ class RunScheduler:
                     and not self._finish_has_valid_validation(finish_data, validations, last_mutation_index)
                     and not self._finish_allows_validation_skip(step, changed_files, finish_data)
                 ):
+                    rejected_finish_count += 1
                     finish_data = {
                         **finish_data,
                         "success": False,
                         "validationRequired": True,
                     }
+                    if rejected_finish_count >= 2:
+                        return self._tool_loop_result(
+                            "failed",
+                            tool_calls,
+                            command_results,
+                            changed_files,
+                            finish_data,
+                            logs,
+                            "finish 被连续拒绝，模型未按要求完成验证",
+                            environment_state,
+                            validations,
+                            workspace_scan,
+                        )
                     if iteration + 1 < settings.SANDBOX_MAX_TOOL_ITERATIONS:
                         messages.append({
                             "role": "user",
@@ -1171,9 +1746,19 @@ class RunScheduler:
                 f"[WorkspaceAgentsContext] stage=run.step run={run_id} step={step.get('id')}\n{workspace_context}",
                 flush=True,
             )
+        runtime_metadata = step.get("runtimeMetadata") if isinstance(step.get("runtimeMetadata"), dict) else {}
+        task = str(runtime_metadata.get("executionTask") or step.get("task") or "")
+        step_access = {
+            "mutationMode": step.get("mutationMode") or runtime_metadata.get("mutationMode") or "unknown",
+            "targetPaths": step_target_paths(step),
+            "readPaths": step_read_paths(step),
+            "usesStableSnapshot": bool(step.get("usesStableSnapshot") or runtime_metadata.get("usesStableSnapshot")),
+            "writeToolOnly": bool(step.get("writeToolOnly") or runtime_metadata.get("writeToolOnly")),
+        }
         user_content = (
-            f"任务：{step['task']}\n\n"
+            f"任务：{task}\n\n"
             f"期望输出：{', '.join(step.get('expectedOutputs') or []) or '自行判断'}\n\n"
+            f"Step Access Declaration：\n{_json_text(step_access)}\n\n"
             f"环境约束：{_json_text(environment_profile or {'packageManager': 'uv'})}\n\n"
             f"AGENTS.md 项目上下文：\n{workspace_context or '暂无'}\n\n"
             f"Workspace Action Context：\n{_json_text(action_context or {'action': 'create_new'})}\n\n"
@@ -1181,6 +1766,9 @@ class RunScheduler:
             "如果 action=modify_existing，必须先 read_file 读取目标文件，再 write_file 写回；"
             "如果 candidateTargets 包含 feature，先读取 targetFiles，并按需读取 allowedRelatedFiles 中同一功能的测试、样式、配置或入口文件；"
             "finish.changedFiles 只是总结字段，不能替代 write_file；未实际 write_file 保存 targetFiles 时任务会失败；"
+            "如果 mutationMode=write 且 targetPaths 非空，只能写入 targetPaths 覆盖的路径；"
+            "如果 writeToolOnly=true，只能使用 write_file/import_workspace_file，不能调用 setup_environment/run_command/validate_command；"
+            "如果需要写入未声明路径，必须先停止并说明 targetPaths 声明不足，不能绕过后端校验；"
             "默认只修改 targetFiles 和 allowedRelatedFiles，不要凭空新建重复文件。请选择一个工具调用。完成时必须调用 finish。"
         )
         return [
@@ -1413,6 +2001,10 @@ class RunScheduler:
             for record in tool_calls
             if isinstance(record.get("result"), dict) and isinstance(record.get("result", {}).get("extraChangedFile"), dict)
         ]
+        for record in tool_calls:
+            result = record.get("result") if isinstance(record.get("result"), dict) else {}
+            items = result.get("extraChangedFiles") if isinstance(result.get("extraChangedFiles"), list) else []
+            extra_changed_files.extend([item for item in items if isinstance(item, dict)])
         if extra_changed_files:
             output["extraChangedFiles"] = extra_changed_files
         return output
@@ -1445,6 +2037,21 @@ class RunScheduler:
             "error": error,
         }
 
+    def _artifact_candidate_paths_for_run(self, run_id: str) -> set[str]:
+        paths: set[str] = set()
+        for step in list_agent_run_steps(run_id):
+            output = step.get("output") if isinstance(step.get("output"), dict) else {}
+            for path in output.get("changedFiles") or []:
+                clean_path = _safe_output_path(str(path))
+                if clean_path:
+                    paths.add(clean_path)
+            finish = output.get("finish") if isinstance(output.get("finish"), dict) else {}
+            for path in finish.get("changedFiles") or []:
+                clean_path = _safe_output_path(str(path))
+                if clean_path:
+                    paths.add(clean_path)
+        return paths
+
     async def _sync_artifacts(self, run_id: str, sandbox: Dict[str, Any], send: EventEmitter) -> List[Dict[str, Any]]:
         run = get_agent_run(run_id)
         if not run:
@@ -1463,17 +2070,43 @@ class RunScheduler:
         }
         if len(target_paths) == 1 and len(target_artifacts) == 1:
             target_artifact_by_path.setdefault(next(iter(target_paths)), next(iter(target_artifacts)))
+        candidate_paths = self._artifact_candidate_paths_for_run(run_id)
         for file_meta in list_sandbox_files_changed_by_run(run_id):
             version = get_sandbox_file_version(file_meta["id"], file_meta["currentVersion"])
-            if not version:
+            is_declared_output = str(file_meta.get("path") or "") in candidate_paths
+            if not version and not is_declared_output:
                 continue
-            if not version.get("createdByStepId"):
+            if version and not version.get("createdByStepId") and not is_declared_output:
                 continue
             target_artifact_id = target_artifact_by_path.get(file_meta["path"])
             if target_artifact_id and not file_meta.get("artifactId"):
                 file_meta = set_sandbox_file_artifact(file_meta["id"], target_artifact_id) or file_meta
             if is_modify_existing and not file_meta.get("artifactId") and file_meta.get("path") not in target_paths:
                 continue
+            workspace_file_path = (Path(sandbox["workspacePath"]).resolve() / str(file_meta["path"])).resolve()
+            try:
+                workspace_file_path.relative_to(Path(sandbox["workspacePath"]).resolve())
+            except ValueError:
+                print(
+                    f"[SandboxArtifact] skip unsafe path run={run_id} path={file_meta['path']}",
+                    flush=True,
+                )
+                continue
+            if is_legacy_office_path(file_meta["path"]):
+                print(
+                    f"[SandboxArtifact] skip legacy office run={run_id} path={file_meta['path']}",
+                    flush=True,
+                )
+                continue
+            if is_openxml_office_path(file_meta["path"]):
+                office_error = validate_openxml_office_file(workspace_file_path)
+                if office_error:
+                    print(
+                        f"[SandboxArtifact] skip invalid office run={run_id} "
+                        f"path={file_meta['path']} error={office_error}",
+                        flush=True,
+                    )
+                    continue
             artifact_type = _artifact_type_for_path(file_meta["path"])
             artifact_content = version.get("content") or (
                 f"[Binary Artifact]\n"
@@ -1481,22 +2114,35 @@ class RunScheduler:
                 f"mimeType={file_meta.get('mimeType')}\n"
                 f"size={file_meta.get('size')}\n"
                 f"sha256={file_meta.get('sha256') or file_meta.get('contentHash')}\n"
+            ) if version else (
+                f"[Binary Artifact]\n"
+                f"path={file_meta['path']}\n"
+                f"mimeType={file_meta.get('mimeType')}\n"
+                f"size={file_meta.get('size')}\n"
+                f"sha256={file_meta.get('sha256') or file_meta.get('contentHash')}\n"
             )
+            source_version = int((version or {}).get("version") or file_meta.get("currentVersion") or 0)
+            source_content_hash = str((version or {}).get("contentHash") or file_meta.get("sha256") or file_meta.get("contentHash") or "")
+            source_step_id = (version or {}).get("createdByStepId")
             metadata = {
                 "source": "sandbox",
+                "sourceConversationId": run.get("conversationId"),
                 "sourceRunId": run_id,
                 "sourceSandboxId": sandbox["id"],
                 "sourceWorkspaceId": run.get("workspaceId") or sandbox.get("workspaceId"),
                 "sourceSandboxFileId": file_meta["id"],
                 "sourceFilePath": file_meta["path"],
-                "sourceFileVersion": version["version"],
-                "sourceContentHash": version["contentHash"],
-                "sourceStepId": version.get("createdByStepId"),
+                "filePath": file_meta["path"],
+                "sourceFileVersion": source_version,
+                "sourceContentHash": source_content_hash,
+                "sourceStepId": source_step_id,
                 "mimeType": file_meta.get("mimeType"),
                 "size": file_meta.get("size"),
                 "sha256": file_meta.get("sha256"),
                 "isText": file_meta.get("isText"),
                 "contentPreview": file_meta.get("contentPreview"),
+                "downloadUrl": f"/api/v1/runs/{run_id}/files/{quote(str(file_meta['path']), safe='/')}/download",
+                "previewable": bool(file_meta.get("isText")),
             }
             if file_meta.get("artifactId"):
                 action = "updated"
@@ -1509,6 +2155,8 @@ class RunScheduler:
                     created_by=run_id,
                     created_by_type="agent",
                     metadata=metadata,
+                    source_conversation_id=run.get("conversationId"),
+                    source_workspace_id=run.get("workspaceId") or sandbox.get("workspaceId"),
                 )
                 if not artifact:
                     continue
@@ -1527,6 +2175,7 @@ class RunScheduler:
                     created_by=run_id,
                     created_by_type="agent",
                     metadata=metadata,
+                    workspace_id=run.get("workspaceId") or sandbox.get("workspaceId"),
                 )
                 set_sandbox_file_artifact(file_meta["id"], artifact["id"])
             synced += 1

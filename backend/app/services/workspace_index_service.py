@@ -14,6 +14,7 @@ from app.database import (
     get_workspace,
     get_workspace_index,
     list_artifacts,
+    list_artifacts_for_workspace,
     list_recent_workspace_deployments,
     list_sandbox_files_changed_by_run,
     list_sandbox_files_for_workspace,
@@ -252,7 +253,13 @@ def _build_artifact_map(workspace_id: str, conversation_id: str, files: List[Dic
         if not artifact_id:
             continue
         artifact = get_artifact(artifact_id)
-        if not artifact or artifact.get("conversationId") != conversation_id:
+        if not artifact:
+            continue
+        artifact_workspace_id = str(artifact.get("workspaceId") or "").strip()
+        if artifact_workspace_id:
+            if artifact_workspace_id != workspace_id:
+                continue
+        elif artifact.get("conversationId") != conversation_id:
             continue
         version = get_sandbox_file_version(file_meta["id"], file_meta.get("currentVersion"))
         artifact_map[artifact_id] = {
@@ -344,8 +351,15 @@ def _validate_index_payload(
     walk(tree)
     for artifact_id, item in artifact_map.items():
         artifact = get_artifact(artifact_id)
-        if not artifact or artifact.get("conversationId") != conversation_id:
-            raise ValueError(f"artifact 不属于当前会话: {artifact_id}")
+        artifact_workspace_id = str((artifact or {}).get("workspaceId") or "").strip()
+        if not artifact or (
+            artifact_workspace_id
+            and artifact_workspace_id != workspace_id
+        ) or (
+            not artifact_workspace_id
+            and artifact.get("conversationId") != conversation_id
+        ):
+            raise ValueError(f"artifact 不属于当前 Workspace: {artifact_id}")
         file_path = item.get("filePath")
         if file_path:
             validate_path(str(file_path))
@@ -365,7 +379,14 @@ def _validate_index_payload(
             artifact_id = artifact.get("id") or artifact_change.get("artifactId")
             if artifact_id and artifact_id not in artifact_ids:
                 artifact_obj = get_artifact(str(artifact_id))
-                if not artifact_obj or artifact_obj.get("conversationId") != conversation_id:
+                artifact_workspace_id = str((artifact_obj or {}).get("workspaceId") or "").strip()
+                if not artifact_obj or (
+                    artifact_workspace_id
+                    and artifact_workspace_id != workspace_id
+                ) or (
+                    not artifact_workspace_id
+                    and artifact_obj.get("conversationId") != conversation_id
+                ):
                     raise ValueError(f"recentChanges artifact 无效: {artifact_id}")
 
 
@@ -774,12 +795,19 @@ async def resolve_workspace_action(
     explicit_artifact_ref: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     files = _business_files(list_sandbox_files_for_workspace(workspace_id))
-    artifacts = list_artifacts(conversation_id)
+    artifacts = list_artifacts_for_workspace(workspace_id) or list_artifacts(conversation_id)
     index = get_workspace_index(workspace_id)
     if explicit_artifact_ref and explicit_artifact_ref.get("artifactId"):
         artifact_id = explicit_artifact_ref["artifactId"]
         artifact = get_artifact(artifact_id)
-        if not artifact or artifact.get("conversationId") != conversation_id:
+        artifact_workspace_id = str((artifact or {}).get("workspaceId") or "").strip()
+        if not artifact or (
+            artifact_workspace_id
+            and artifact_workspace_id != workspace_id
+        ) or (
+            not artifact_workspace_id
+            and artifact.get("conversationId") != conversation_id
+        ):
             return {
                 "action": "clarify",
                 "confidence": 0,
@@ -787,7 +815,7 @@ async def resolve_workspace_action(
                 "allowedRelatedFiles": [],
                 "targetArtifacts": [],
                 "candidateTargets": [],
-                "clarificationQuestion": "引用的产物不存在或不属于当前会话。",
+                "clarificationQuestion": "引用的产物不存在或不属于当前 Workspace。",
                 "reason": "invalid artifactRef",
             }
         bound = get_sandbox_file_by_artifact(workspace_id, artifact_id)
