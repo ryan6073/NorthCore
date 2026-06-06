@@ -8,6 +8,11 @@ MODEL_PROVIDERS: List[Dict[str, Any]] = [
         "protocol": "openai_chat_completions",
         "requiresBaseUrl": False,
         "defaultBaseUrl": "https://api.openai.com/v1",
+        "supportedRuntimes": ["native", "opencode", "codex"],
+        "runtimeDefaults": {
+            "codex": {},
+            "opencode": {},
+        },
     },
     {
         "id": "anthropic",
@@ -15,6 +20,11 @@ MODEL_PROVIDERS: List[Dict[str, Any]] = [
         "protocol": "anthropic_messages",
         "requiresBaseUrl": False,
         "defaultBaseUrl": "https://api.anthropic.com",
+        "supportedRuntimes": ["native", "opencode", "claude_code"],
+        "runtimeDefaults": {
+            "claude_code": {},
+            "opencode": {},
+        },
     },
     {
         "id": "anthropic_compatible",
@@ -22,6 +32,11 @@ MODEL_PROVIDERS: List[Dict[str, Any]] = [
         "protocol": "anthropic_messages",
         "requiresBaseUrl": True,
         "aliases": ["claude_code_router", "claude-router", "anthropic_proxy"],
+        "supportedRuntimes": ["native", "opencode", "claude_code"],
+        "runtimeDefaults": {
+            "claude_code": {},
+            "opencode": {},
+        },
     },
     {
         "id": "volcengine_ark",
@@ -30,6 +45,8 @@ MODEL_PROVIDERS: List[Dict[str, Any]] = [
         "requiresBaseUrl": False,
         "defaultBaseUrl": "https://ark.cn-beijing.volces.com/api/v3",
         "aliases": ["ark", "volcengine", "volces", "doubao", "bytedance"],
+        "supportedRuntimes": ["native", "opencode"],
+        "runtimeDefaults": {"opencode": {}},
     },
     {
         "id": "deepseek",
@@ -38,6 +55,8 @@ MODEL_PROVIDERS: List[Dict[str, Any]] = [
         "requiresBaseUrl": False,
         "defaultBaseUrl": "https://api.deepseek.com/v1",
         "aliases": ["deepseek_chat"],
+        "supportedRuntimes": ["native", "opencode"],
+        "runtimeDefaults": {"opencode": {}},
     },
     {
         "id": "qwen",
@@ -46,6 +65,8 @@ MODEL_PROVIDERS: List[Dict[str, Any]] = [
         "requiresBaseUrl": False,
         "defaultBaseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "aliases": ["dashscope", "aliyun", "tongyi", "千问", "通义千问"],
+        "supportedRuntimes": ["native", "opencode"],
+        "runtimeDefaults": {"opencode": {}},
     },
     {
         "id": "zhipu",
@@ -54,6 +75,8 @@ MODEL_PROVIDERS: List[Dict[str, Any]] = [
         "requiresBaseUrl": False,
         "defaultBaseUrl": "https://open.bigmodel.cn/api/paas/v4",
         "aliases": ["glm", "bigmodel", "智谱"],
+        "supportedRuntimes": ["native", "opencode"],
+        "runtimeDefaults": {"opencode": {}},
     },
     {
         "id": "moonshot",
@@ -62,6 +85,8 @@ MODEL_PROVIDERS: List[Dict[str, Any]] = [
         "requiresBaseUrl": False,
         "defaultBaseUrl": "https://api.moonshot.cn/v1",
         "aliases": ["kimi", "moonshot_ai", "月之暗面"],
+        "supportedRuntimes": ["native", "opencode"],
+        "runtimeDefaults": {"opencode": {}},
     },
     {
         "id": "openrouter",
@@ -69,6 +94,8 @@ MODEL_PROVIDERS: List[Dict[str, Any]] = [
         "protocol": "openai_chat_completions",
         "requiresBaseUrl": False,
         "defaultBaseUrl": "https://openrouter.ai/api/v1",
+        "supportedRuntimes": ["native", "opencode"],
+        "runtimeDefaults": {"opencode": {}},
     },
     {
         "id": "siliconflow",
@@ -77,6 +104,8 @@ MODEL_PROVIDERS: List[Dict[str, Any]] = [
         "requiresBaseUrl": False,
         "defaultBaseUrl": "https://api.siliconflow.cn/v1",
         "aliases": ["硅基流动"],
+        "supportedRuntimes": ["native", "opencode"],
+        "runtimeDefaults": {"opencode": {}},
     },
     {
         "id": "openai_compatible",
@@ -84,12 +113,47 @@ MODEL_PROVIDERS: List[Dict[str, Any]] = [
         "protocol": "openai_chat_completions",
         "requiresBaseUrl": True,
         "aliases": ["compatible"],
+        "supportedRuntimes": ["native", "opencode"],
+        "runtimeDefaults": {"opencode": {}},
     },
     {
         "id": "custom_openai_compatible",
         "name": "Custom OpenAI-compatible",
         "protocol": "openai_chat_completions",
         "requiresBaseUrl": True,
+        "supportedRuntimes": ["native", "opencode"],
+        "runtimeDefaults": {"opencode": {}},
+    },
+    {
+        "id": "chatanywhere_codex",
+        "name": "ChatAnywhere / Codex",
+        "protocol": "openai_responses",
+        "requiresBaseUrl": False,
+        "defaultBaseUrl": "https://api.chatanywhere.tech/v1",
+        "supportedRuntimes": ["codex"],
+        "runtimeDefaults": {
+            "codex": {
+                "extraConfig": {
+                    "codex": {
+                        "wireApi": "responses",
+                        "requiresOpenAIAuth": False,
+                    },
+                },
+            },
+        },
+        "runtimeNotes": "用于 Codex CLI 的 ChatAnywhere Responses API 中转站。",
+    },
+    {
+        "id": "chatanywhere_claude_code",
+        "name": "ChatAnywhere / Claude Code",
+        "protocol": "anthropic_messages",
+        "requiresBaseUrl": False,
+        "defaultBaseUrl": "https://api.chatanywhere.tech",
+        "supportedRuntimes": ["claude_code"],
+        "runtimeDefaults": {
+            "claude_code": {},
+        },
+        "runtimeNotes": "用于 Claude Code 的 ChatAnywhere Anthropic-compatible 中转站。",
     },
 ]
 

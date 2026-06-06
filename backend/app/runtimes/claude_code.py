@@ -6,12 +6,37 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from app.config import settings
-from app.database import get_workspace, update_agent_run_step
-from app.model_providers.service import resolve_model_config, resolve_model_secret
+from app.database import get_agent_run_detail, get_workspace, update_agent_run_step
+from app.model_providers.service import resolve_model_config, resolve_model_secret, validate_model_config_for_runtime
 from app.runtimes.base import RuntimeAdapter, RuntimeEventEmitter
-from app.runtimes.cli_utils import ensure_workspace_path, extract_json_object, validate_http_base_url
-from app.services.workspace_agents_service import write_workspace_agents_file
-from app.services.workspace_sync_service import sync_workspace_files
+from app.runtimes.cli_utils import (
+    READONLY_CHAT_MUTATION_MESSAGE,
+    apply_isolated_runtime_home_env,
+    ensure_workspace_path,
+    extract_json_object,
+    finalize_readonly_chat_workspace,
+    prepare_readonly_chat_workspace,
+    readonly_chat_prompt,
+    runtime_home_for_agent,
+    validate_http_base_url,
+)
+from app.services.platform_runtime_context_service import (
+    build_platform_runtime_context,
+    platform_output_requests_clarification,
+    platform_step_needs_write,
+    validate_platform_runtime_permissions,
+)
+from app.services.workspace_agents_service import read_workspace_agents_context
+from app.services.workspace_sync_service import (
+    capture_workspace_snapshot,
+    meaningful_workspace_changes,
+    sync_platform_workspace_changes,
+)
+
+
+def _step_execution_task(step: Dict[str, Any]) -> str:
+    metadata = step.get("runtimeMetadata") if isinstance(step.get("runtimeMetadata"), dict) else {}
+    return str(metadata.get("executionTask") or step.get("task") or "")
 
 
 class ClaudeCodeRuntimeAdapter(RuntimeAdapter):
@@ -23,6 +48,9 @@ class ClaudeCodeRuntimeAdapter(RuntimeAdapter):
     def _resolve_claude_config(self, agent: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         owner_user_id = (agent or {}).get("ownerUserId")
         config = resolve_model_config(agent, owner_user_id=owner_user_id)
+        config_error = validate_model_config_for_runtime(config, "claude_code")
+        if config_error:
+            raise RuntimeError(config_error)
         secret = resolve_model_secret(config, owner_user_id=owner_user_id)
         provider = str(config.get("provider") or "").strip().lower()
         protocol = str(config.get("protocol") or "").strip().lower()
@@ -62,38 +90,64 @@ class ClaudeCodeRuntimeAdapter(RuntimeAdapter):
             env["NO_PROXY"] = ",".join(filter(None, [env.get("NO_PROXY", ""), "127.0.0.1", "localhost"]))
         if model_name:
             env["ANTHROPIC_MODEL"] = model_name
-        return env
+            env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = model_name
+            env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = model_name
+            env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model_name
+            env["ANTHROPIC_REASONING_MODEL"] = model_name
+        env["CLAUDE_CODE_ATTRIBUTION_HEADER"] = "0"
+        env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
+        env["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"] = "1"
+        return apply_isolated_runtime_home_env(
+            env,
+            runtime_home_for_agent(agent, "claude_code", resolved["config"]),
+        )
 
     def _extract_text_output(self, stdout: str) -> str:
-        texts = []
+        result_texts = []
+        stream_texts = []
         fallback = ""
-        for line in str(stdout or "").splitlines():
-            clean_line = line.strip()
-            if not clean_line:
-                continue
+        raw = str(stdout or "")
+        decoder = json.JSONDecoder()
+        index = 0
+        while index < len(raw):
+            while index < len(raw) and raw[index].isspace():
+                index += 1
+            if index >= len(raw):
+                break
             try:
-                event = json.loads(clean_line)
+                event, next_index = decoder.raw_decode(raw, index)
+                index = next_index
             except json.JSONDecodeError:
-                fallback += clean_line + "\n"
+                next_object = raw.find("{", index + 1)
+                if next_object == -1:
+                    fallback += raw[index:].strip()
+                    break
+                fallback += raw[index:next_object].strip()
+                index = next_object
                 continue
             if not isinstance(event, dict):
                 continue
             if isinstance(event.get("result"), str) and event["result"].strip():
-                texts.append(event["result"].strip())
+                result_texts.append(event["result"].strip())
             if isinstance(event.get("text"), str) and event["text"].strip():
-                texts.append(event["text"].strip())
+                stream_texts.append(event["text"].strip())
             message = event.get("message") if isinstance(event.get("message"), dict) else {}
             content = message.get("content") or event.get("content")
             if isinstance(content, list):
                 for item in content:
                     if isinstance(item, dict) and str(item.get("text") or "").strip():
-                        texts.append(str(item["text"]).strip())
+                        stream_texts.append(str(item["text"]).strip())
             elif isinstance(content, str) and content.strip():
-                texts.append(content.strip())
+                stream_texts.append(content.strip())
             delta = event.get("delta") if isinstance(event.get("delta"), dict) else {}
             if isinstance(delta.get("text"), str) and delta["text"].strip():
-                texts.append(delta["text"].strip())
-        return "\n".join(texts).strip() or fallback.strip()
+                stream_texts.append(delta["text"].strip())
+        texts = result_texts or stream_texts
+        deduped = []
+        for text in texts:
+            if text not in deduped:
+                deduped.append(text)
+        return "\n".join(deduped).strip() or fallback.strip()
 
     async def _run_claude_code(self, agent: Optional[Dict[str, Any]], workspace_path: str, prompt: str) -> Dict[str, Any]:
         runtime_config = self._runtime_config(agent)
@@ -107,6 +161,7 @@ class ClaudeCodeRuntimeAdapter(RuntimeAdapter):
             "-p",
             "--output-format",
             "stream-json",
+            "--verbose",
             "--permission-mode",
             permission_mode,
             str(prompt or ""),
@@ -148,8 +203,18 @@ class ClaudeCodeRuntimeAdapter(RuntimeAdapter):
         workspace = get_workspace(workspace_id, owner_user_id=conversation.get("ownerUserId")) if workspace_id else None
         if not workspace:
             return "Claude Code Agent 需要在 single/group 会话中选择或新建工作区后才能执行。"
-        write_workspace_agents_file(workspace["id"])
-        result = await self._run_claude_code(agent, ensure_workspace_path(workspace["workspacePath"]), user_input)
+        workspace_context = read_workspace_agents_context(workspace["id"])
+        audit = prepare_readonly_chat_workspace(workspace, workspace_context)
+        try:
+            result = await self._run_claude_code(
+                agent,
+                ensure_workspace_path(audit["workspacePath"]),
+                readonly_chat_prompt(user_input, workspace_context),
+            )
+        finally:
+            audit = finalize_readonly_chat_workspace(audit)
+        if audit.get("tempWorkspaceMutated"):
+            return READONLY_CHAT_MUTATION_MESSAGE
         if result["returnCode"] != 0:
             return f"Claude Code 执行失败。\n\n{result['stderr'] or result['stdout']}"
         return result["text"] or result["stdout"] or "Claude Code 执行完成。"
@@ -157,13 +222,26 @@ class ClaudeCodeRuntimeAdapter(RuntimeAdapter):
     async def complete_json(self, agent: Dict[str, Any], conversation: Dict[str, Any], system_prompt: str, user_content: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         workspace_id = str(conversation.get("workspaceId") or "").strip()
         workspace = get_workspace(workspace_id, owner_user_id=conversation.get("ownerUserId")) if workspace_id else None
-        workspace_path = ensure_workspace_path(workspace["workspacePath"] if workspace else str((context or {}).get("workspacePath") or "."))
+        audit: Optional[Dict[str, Any]] = None
+        workspace_context = read_workspace_agents_context(workspace["id"]) if workspace else ""
+        if workspace:
+            audit = prepare_readonly_chat_workspace(workspace, workspace_context)
+            workspace_path = ensure_workspace_path(audit["workspacePath"])
+        else:
+            workspace_path = ensure_workspace_path(str((context or {}).get("workspacePath") or "."))
         prompt = (
+            f"{readonly_chat_prompt('', workspace_context)}\n\n"
             f"{system_prompt}\n\n"
             "你必须只输出一个 JSON 对象，不要输出 Markdown，不要输出解释文本。\n\n"
             f"{user_content}"
         )
-        result = await self._run_claude_code(agent, workspace_path, prompt)
+        try:
+            result = await self._run_claude_code(agent, workspace_path, prompt)
+        finally:
+            if audit:
+                audit = finalize_readonly_chat_workspace(audit)
+        if audit and audit.get("tempWorkspaceMutated"):
+            raise ValueError("Claude Code JSON 调用尝试修改临时工作区，已丢弃改动")
         raw_output = result["text"] or result["stdout"]
         if result["returnCode"] != 0:
             raise ValueError(result["stderr"] or raw_output or "Claude Code JSON 调用失败")
@@ -186,19 +264,76 @@ class ClaudeCodeRuntimeAdapter(RuntimeAdapter):
 
     async def execute_run_step(self, run_id: str, sandbox: Dict[str, Any], container_id: str, step: Dict[str, Any], agent: Optional[Dict[str, Any]], send: RuntimeEventEmitter, context: Optional[Dict[str, Any]] = None) -> bool:
         try:
-            result = await self._run_claude_code(agent, ensure_workspace_path(sandbox["workspacePath"]), step.get("task") or "")
+            run = get_agent_run_detail(run_id) or {}
+            permission_error = validate_platform_runtime_permissions(agent, run, step)
+            if permission_error:
+                raise RuntimeError(permission_error)
+            task = _step_execution_task(step)
+            context_payload = build_platform_runtime_context(run_id, step, agent, task)
+            snapshot = capture_workspace_snapshot(sandbox, run_id)
+            result = await self._run_claude_code(agent, ensure_workspace_path(sandbox["workspacePath"]), context_payload["prompt"])
             display_output = result["text"] or result["stdout"]
             logs = f"$ {' '.join(result['command'])}\n{display_output}\n{result['stderr']}".strip()
-            synced_files = sync_workspace_files(sandbox, run_id, created_by_step_id=step["id"])
-            status = "completed" if result["returnCode"] == 0 else "failed"
+            sync_result = sync_platform_workspace_changes(
+                sandbox,
+                run_id,
+                snapshot,
+                created_by_step_id=step["id"],
+            )
+            synced_files = sync_result["files"]
+            conflicts = sync_result["conflicts"]
+            if conflicts:
+                update_agent_run_step(
+                    step["id"],
+                    status="conflict",
+                    output={
+                        "runtime": "claude_code",
+                        "command": result["command"],
+                        "text": result["text"],
+                        "files": synced_files,
+                        "conflicts": conflicts,
+                        "agenthubContext": context_payload["metadata"],
+                    },
+                    append_log=logs,
+                    error="文件冲突",
+                    mark_finished=True,
+                    runtime_metadata={
+                        "claudeCode": {k: v for k, v in result.items() if k not in {"stdout", "stderr"}},
+                        **context_payload["metadata"],
+                        "workspaceSnapshotId": sync_result.get("snapshotId"),
+                    },
+                )
+                await send("run.step.conflict", {"runId": run_id, "stepId": step["id"], "conflicts": conflicts})
+                return True
+            meaningful_files = meaningful_workspace_changes(synced_files)
+            no_effective_changes = result["returnCode"] == 0 and platform_step_needs_write(step, run) and not meaningful_files
+            needs_clarification = no_effective_changes and platform_output_requests_clarification(display_output)
+            status = "completed" if result["returnCode"] == 0 and not no_effective_changes else ("blocked" if needs_clarification else "failed")
+            error = None
+            if needs_clarification:
+                error = display_output or "需要补充任务条件"
+            elif no_effective_changes:
+                error = "Platform Agent 没有生成或修改任何有效工作区文件"
+            elif status == "failed":
+                error = result["stderr"] or result["stdout"] or "Claude Code 执行失败"
             update_agent_run_step(
                 step["id"],
                 status=status,
-                output={"runtime": "claude_code", "command": result["command"], "text": result["text"], "files": synced_files},
+                output={
+                    "runtime": "claude_code",
+                    "command": result["command"],
+                    "text": result["text"],
+                    "files": synced_files,
+                    "agenthubContext": context_payload["metadata"],
+                },
                 append_log=logs,
-                error=None if status == "completed" else result["stderr"] or result["stdout"] or "Claude Code 执行失败",
+                error=error,
                 mark_finished=True,
-                runtime_metadata={"claudeCode": {k: v for k, v in result.items() if k not in {"stdout", "stderr"}}},
+                runtime_metadata={
+                    "claudeCode": {k: v for k, v in result.items() if k not in {"stdout", "stderr"}},
+                    **context_payload["metadata"],
+                    "workspaceSnapshotId": sync_result.get("snapshotId"),
+                },
             )
             await send(
                 "run.step.completed" if status == "completed" else "run.step.failed",

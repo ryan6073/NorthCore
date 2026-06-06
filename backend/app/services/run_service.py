@@ -7,6 +7,8 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from app.config import settings
 from app.database import *
+from app.services.agent_tool_catalog_service import agent_has_tool
+from app.services.attachment_context_service import materialize_attachments_to_workspace
 from app.services.file_version_service import FileVersionService
 from app.services.message_service import (
     agent_is_callable,
@@ -19,7 +21,7 @@ from app.services.run_scheduler import RunScheduler
 from app.services.planning_service import plan_run_for_conversation
 from app.services.sandbox_service import SandboxService
 from app.services.workspace_agents_service import ensure_workspace_agents_file, read_workspace_agents_context
-from app.services.workspace_index_service import resolve_workspace_action
+from app.services.workspace_index_service import rebuild_workspace_index_for_run, resolve_workspace_action
 
 RunEventEmitter = Callable[[str, Dict[str, Any]], Awaitable[None]]
 ORPHANED_RUN_RECOVERY_GRACE_SECONDS = 30
@@ -48,6 +50,68 @@ def run_allowed_agent_ids(conversation: Dict[str, Any]) -> List[str]:
         return callable_ids
     fallback = choose_agent_for_conversation(conversation)
     return [fallback["id"]] if fallback else ["agent-claude-code"]
+
+
+def _render_planning_message(message: Dict[str, Any]) -> str:
+    role = "用户" if message.get("role") == "user" else str(message.get("senderName") or "Agent")
+    content = str(message.get("content") or "").strip()
+    return f"{role}: {content}"
+
+
+def _conversation_planning_context(
+    conversation: Dict[str, Any],
+    agent: Optional[Dict[str, Any]] = None,
+    exclude_message_ids: Optional[set[str]] = None,
+) -> str:
+    conversation_id = str(conversation.get("id") or "")
+    if not conversation_id or conversation.get("mode") not in {"agent", "single", "group"}:
+        return ""
+    exclude_message_ids = exclude_message_ids or set()
+    sections: List[str] = []
+
+    summary = get_conversation_summary(conversation_id)
+    if summary and str(summary.get("summary") or "").strip():
+        sections.append("[会话摘要]\n" + str(summary["summary"]).strip())
+
+    memories = list_active_memories(conversation_id, limit=20) if agent_has_tool(agent, "memory.use") else []
+    if memories:
+        sections.append(
+            "[长期记忆]\n" + "\n".join(
+                f"- ({memory['category']}, {memory['confidence']:.2f}) {memory['content']}"
+                for memory in memories
+            )
+        )
+
+    pins = list_pins(conversation_id)
+    if pins:
+        sections.append(
+            "[Pinned Messages]\n" + "\n".join(
+                f"- {_render_planning_message(pin['message'])}"
+                for pin in pins
+                if pin.get("message")
+            )
+        )
+
+    pinned_ids = set(get_pinned_message_ids(conversation_id))
+    recent_messages = [
+        message for message in list_effective_messages(conversation_id)
+        if message.get("id") not in pinned_ids and message.get("id") not in exclude_message_ids
+    ][-8:]
+    if recent_messages:
+        sections.append(
+            "[最近有效消息]\n" + "\n".join(
+                f"- {_render_planning_message(message)}"
+                for message in recent_messages
+            )
+        )
+
+    if not sections:
+        return ""
+    return (
+        "[AgentHub Planning Context]\n"
+        "以下内容用于理解用户连续多轮意图、成员分工和约束；不要把它当成要执行的文件内容。\n"
+        + "\n\n".join(sections)
+    )
 
 
 def resolve_conversation_workspace(
@@ -136,6 +200,51 @@ def build_run_event_payload(run_id: str, extra: Optional[Dict[str, Any]] = None)
     if extra:
         payload.update(extra)
     return payload
+
+
+async def start_queued_agent_run(run_id: str) -> None:
+    run = get_agent_run(run_id)
+    if not run or run.get("status") != "queued":
+        return
+    user = get_user(run["ownerUserId"])
+    if not user:
+        update_agent_run(run_id, status="failed", error="Run owner 不存在", mark_finished=True)
+        return
+    runtime_metadata = run.get("runtimeMetadata") if isinstance(run.get("runtimeMetadata"), dict) else {}
+    queue_payload = runtime_metadata.get("queuePayload") if isinstance(runtime_metadata.get("queuePayload"), dict) else {}
+
+    async def queued_emit(event_type: str, data: Dict[str, Any]) -> None:
+        await emit_run_event(user, run["conversationId"], event_type, data)
+
+    try:
+        await create_run_for_conversation(
+            user,
+            run["conversationId"],
+            run["prompt"],
+            payload=queue_payload,
+            emit=queued_emit,
+            existing_run_id=run_id,
+        )
+    except Exception as exc:
+        current = get_agent_run(run_id)
+        if current and current.get("status") not in TERMINAL_RUN_STATUSES:
+            update_agent_run(run_id, status="failed", error=str(exc), mark_finished=True)
+        await queued_emit("run.failed", build_run_event_payload(run_id, {"error": str(exc)}))
+
+
+async def schedule_next_workspace_mutation_owner(next_owner: Optional[Dict[str, Any]]) -> None:
+    if not next_owner:
+        return
+    owner_type = next_owner.get("ownerType")
+    owner_id = str(next_owner.get("ownerId") or "")
+    if not owner_id:
+        return
+    if owner_type == "run":
+        asyncio.create_task(start_queued_agent_run(owner_id))
+    elif owner_type == "deployment":
+        from app.services.deployment_service import run_workspace_deployment
+
+        asyncio.create_task(asyncio.to_thread(run_workspace_deployment, owner_id))
 
 
 def _parse_timestamp(value: Optional[str]) -> Optional[datetime]:
@@ -273,6 +382,61 @@ def rollback_run_workspace_changes(
         "run": detail,
         "rollbackChanges": rollback_changes,
     }
+
+
+async def finalize_run_if_conflicts_resolved(
+    current_user: Dict[str, Any],
+    run_id: str,
+    emit: Optional[RunEventEmitter] = None,
+) -> Optional[Dict[str, Any]]:
+    detail = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
+    if not detail or detail.get("status") != "conflict":
+        return detail
+    open_conflicts = [
+        conflict for conflict in detail.get("conflicts") or []
+        if conflict.get("status") == "open"
+    ]
+    if open_conflicts:
+        return detail
+
+    sandbox = detail.get("sandbox")
+    if not sandbox:
+        return detail
+
+    async def send(event_type: str, data: Dict[str, Any]) -> None:
+        if emit:
+            await emit(event_type, {"runId": run_id, **data})
+
+    for step in detail.get("steps") or []:
+        if step.get("status") == "conflict":
+            output = step.get("output") if isinstance(step.get("output"), dict) else {}
+            update_agent_run_step(
+                step["id"],
+                status="completed",
+                output={**output, "conflictResolved": True},
+                error="",
+                mark_finished=True,
+            )
+
+    scheduler = RunScheduler()
+    artifact_changes = await scheduler._sync_artifacts(run_id, sandbox, send)
+    await rebuild_workspace_index_for_run(run_id, artifact_changes)
+    summary = "冲突已解决，沙箱任务完成"
+    update_agent_run(run_id, status="completed", summary=summary, error="", mark_finished=True)
+    update_sandbox(sandbox["id"], status="completed", error="")
+    payload = build_run_event_payload(
+        run_id,
+        {
+            "status": "completed",
+            "summary": summary,
+            "artifactChanges": artifact_changes,
+            "artifacts": list_artifacts_for_run(run_id),
+        },
+    )
+    await scheduler._send_run_summary_message(run_id, "completed", summary, artifact_changes, [], [], send)
+    await send("run.completed", payload)
+    await send("conversation.all_tasks.completed", payload)
+    return get_agent_run_detail(run_id, owner_user_id=current_user["id"])
 
 
 def _shorten_retry_text(value: Any, max_chars: int = 1200) -> str:
@@ -779,6 +943,7 @@ async def create_run_for_conversation(
     payload: Optional[Dict[str, Any]] = None,
     emit: Optional[RunEventEmitter] = None,
     runtime_agent: Optional[Dict[str, Any]] = None,
+    existing_run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
     if not conversation:
@@ -830,7 +995,110 @@ async def create_run_for_conversation(
     )
     if not workspace:
         raise ValueError("请先选择或新建工作区")
-    ensure_workspace_agents_file(workspace)
+
+    existing_run = get_agent_run(existing_run_id, owner_user_id=current_user["id"]) if existing_run_id else None
+    run_id = existing_run["id"] if existing_run else create_id("run")
+    selected_runtime_agent = runtime_agent or choose_agent_for_conversation(conversation)
+    if not agent_has_tool(selected_runtime_agent, "workspace.read"):
+        raise ValueError("当前 Agent 未启用 workspace.read，不能创建工作区沙箱任务")
+    run_runtime_metadata = {
+        **run_runtime_metadata,
+        "queuePayload": payload,
+    }
+    if not existing_run:
+        create_agent_run(
+            owner_user_id=current_user["id"],
+            conversation_id=conversation_id,
+            sandbox_id=None,
+            prompt=clean_prompt,
+            dag={},
+            run_id=run_id,
+            workspace_id=workspace["id"],
+            status="queued",
+            run_mode="write",
+            queued_reason="workspace_mutation_lock_pending",
+            runtime=(selected_runtime_agent or {}).get("runtime", "native"),
+            model_config_id=(selected_runtime_agent or {}).get("modelConfigId"),
+            runtime_metadata=run_runtime_metadata,
+        )
+    lock_result = try_acquire_workspace_mutation_lock(
+        workspace_id=workspace["id"],
+        owner_type="run",
+        owner_id=run_id,
+        mode="write",
+        acquired_status="planning",
+    )
+    if not lock_result.get("acquired"):
+        update_agent_run(run_id, queued_reason="workspace_mutation_lock_held")
+        detail = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
+        if detail is not None:
+            detail["queuePosition"] = lock_result.get("queuePosition") or mutation_queue_position(workspace["id"], "run", run_id)
+        if emit:
+            await emit("run.queued", build_run_event_payload(run_id, {"run": detail, "queuePosition": (detail or {}).get("queuePosition")}))
+        return detail or get_agent_run(run_id)
+
+    if emit:
+        await emit("workspace.mutation_lock.acquired", build_run_event_payload(run_id, {"lock": lock_result.get("lock")}))
+        started_payload = build_run_event_payload(run_id, {"runMode": "write"})
+        await emit("run.started", started_payload)
+        await emit("run.updated", started_payload)
+
+    lock_token = int((lock_result.get("lock") or {}).get("fencingToken") or 0)
+    planning_heartbeat_stop = asyncio.Event()
+
+    async def planning_heartbeat_loop() -> None:
+        while not planning_heartbeat_stop.is_set():
+            try:
+                await asyncio.wait_for(planning_heartbeat_stop.wait(), timeout=30)
+                break
+            except asyncio.TimeoutError:
+                current = get_agent_run(run_id)
+                if not current or current.get("status") not in {"queued", "planning"}:
+                    break
+                ok = heartbeat_workspace_mutation_lock(
+                    workspace["id"],
+                    "run",
+                    run_id,
+                    lock_token,
+                )
+                if not ok:
+                    update_agent_run(
+                        run_id,
+                        status="failed",
+                        error="workspace mutation lock lost during planning",
+                        mark_finished=True,
+                    )
+                    break
+
+    planning_heartbeat_task = asyncio.create_task(planning_heartbeat_loop())
+
+    def ensure_current_lock(stage: str) -> None:
+        if not is_workspace_mutation_lock_current(workspace["id"], "run", run_id, lock_token):
+            update_agent_run(
+                run_id,
+                status="failed",
+                error=f"workspace mutation lock lost before {stage}",
+                mark_finished=True,
+            )
+            raise RuntimeError(f"workspace mutation lock lost before {stage}")
+
+    try:
+        ensure_workspace_agents_file(workspace)
+    except Exception as exc:
+        planning_heartbeat_stop.set()
+        await planning_heartbeat_task
+        release_result = release_workspace_mutation_lock(workspace["id"], "run", run_id, lock_token)
+        update_agent_run(
+            run_id,
+            status="failed",
+            error=str(exc),
+            queued_reason="",
+            lock_owner_id="",
+            lock_fencing_token=0,
+            mark_finished=True,
+        )
+        await schedule_next_workspace_mutation_owner(release_result.get("nextOwner"))
+        raise
 
     explicit_artifact_ref = payload.get("artifactRef") if isinstance(payload.get("artifactRef"), dict) else None
     workspace_action_context = payload.get("workspaceActionContext") if isinstance(payload.get("workspaceActionContext"), dict) else None
@@ -843,19 +1111,106 @@ async def create_run_for_conversation(
         )
     action = workspace_action_context.get("action")
     if action in {"clarify", "answer_only"}:
+        planning_heartbeat_stop.set()
+        await planning_heartbeat_task
+        release_result = release_workspace_mutation_lock(
+            workspace["id"],
+            "run",
+            run_id,
+            (lock_result.get("lock") or {}).get("fencingToken"),
+        )
+        update_agent_run(
+            run_id,
+            status="completed" if action == "answer_only" else "failed",
+            summary="Workspace action downgraded",
+            queued_reason="",
+            lock_owner_id="",
+            lock_fencing_token=0,
+            mark_finished=True,
+        )
+        await schedule_next_workspace_mutation_owner(release_result.get("nextOwner"))
         raise WorkspaceActionDecision(workspace_action_context)
 
-    run_id = create_id("run")
-    selected_runtime_agent = runtime_agent or choose_agent_for_conversation(conversation)
-    workspace_agents_context = read_workspace_agents_context(workspace["id"])
+    try:
+        ensure_current_lock("attachment materialization")
+        uploaded_attachments = payload.get("attachments") if isinstance(payload.get("attachments"), list) else []
+        materialized_attachments: List[Dict[str, Any]] = []
+        if uploaded_attachments:
+            materialized_attachments = materialize_attachments_to_workspace(
+                uploaded_attachments,
+                str(workspace["workspacePath"]),
+            )
+            run_runtime_metadata = {
+                **run_runtime_metadata,
+                "uploadedAttachments": materialized_attachments,
+            }
+    except Exception as exc:
+        planning_heartbeat_stop.set()
+        await planning_heartbeat_task
+        release_result = release_workspace_mutation_lock(workspace["id"], "run", run_id, lock_token)
+        current = get_agent_run(run_id)
+        if current and current.get("status") not in TERMINAL_RUN_STATUSES:
+            update_agent_run(
+                run_id,
+                status="failed",
+                error=str(exc),
+                queued_reason="",
+                lock_owner_id="",
+                lock_fencing_token=0,
+                mark_finished=True,
+            )
+        await schedule_next_workspace_mutation_owner(release_result.get("nextOwner"))
+        raise
+
+    try:
+        workspace_agents_context = read_workspace_agents_context(workspace["id"])
+    except Exception as exc:
+        planning_heartbeat_stop.set()
+        await planning_heartbeat_task
+        release_result = release_workspace_mutation_lock(workspace["id"], "run", run_id, lock_token)
+        current = get_agent_run(run_id)
+        if current and current.get("status") not in TERMINAL_RUN_STATUSES:
+            update_agent_run(
+                run_id,
+                status="failed",
+                error=str(exc),
+                queued_reason="",
+                lock_owner_id="",
+                lock_fencing_token=0,
+                mark_finished=True,
+            )
+        await schedule_next_workspace_mutation_owner(release_result.get("nextOwner"))
+        raise
     if workspace_agents_context:
         print(
             f"[WorkspaceAgentsContext] stage=run.create workspace={workspace['id']}\n{workspace_agents_context}",
             flush=True,
         )
     dag_prompt = clean_prompt
+    planning_context = _conversation_planning_context(conversation, agent=runtime_agent)
+    if planning_context:
+        dag_prompt += "\n\n" + planning_context
     if workspace_agents_context:
         dag_prompt += "\n\n" + workspace_agents_context
+    if materialized_attachments:
+        lines = ["[Uploaded Attachments]"]
+        for item in materialized_attachments:
+            if item.get("status") == "materialized":
+                if item.get("archive") and item.get("extractDir"):
+                    lines.append(
+                        f"- {item.get('name')} zip={item.get('path')} extractedDir={item.get('extractDir')} "
+                        f"({item.get('mimeType')}, {item.get('size')} bytes, sha256={item.get('sha256')}, "
+                        f"extractStatus={item.get('extractStatus')}, skipped={len(item.get('skipped') or [])})"
+                    )
+                else:
+                    lines.append(
+                        f"- {item.get('path')} ({item.get('name')}, {item.get('mimeType')}, "
+                        f"{item.get('size')} bytes, sha256={item.get('sha256')})"
+                    )
+            else:
+                lines.append(f"- {item.get('name')} 未复制到工作区：{item.get('reason')}")
+        lines.append("只有当用户明确要求修改、转换、导出或生成文件时，才操作这些原始附件。")
+        dag_prompt += "\n\n" + "\n".join(lines)
     if workspace_action_context:
         dag_prompt += "\n\n[Workspace Action Context]\n" + json.dumps(workspace_action_context, ensure_ascii=False)
 
@@ -919,6 +1274,24 @@ async def create_run_for_conversation(
             f"Orchestrator 规划失败：{exc}",
             {"phase": "failed", "error": str(exc)},
         )
+        planning_heartbeat_stop.set()
+        await planning_heartbeat_task
+        release_result = release_workspace_mutation_lock(
+            workspace["id"],
+            "run",
+            run_id,
+            (lock_result.get("lock") or {}).get("fencingToken"),
+        )
+        update_agent_run(
+            run_id,
+            status="failed",
+            error=str(exc),
+            queued_reason="",
+            lock_owner_id="",
+            lock_fencing_token=0,
+            mark_finished=True,
+        )
+        await schedule_next_workspace_mutation_owner(release_result.get("nextOwner"))
         raise
     await emit_group_planning(
         "orchestrator.planning.model_completed",
@@ -944,6 +1317,7 @@ async def create_run_for_conversation(
             "runtimeMetadata": {
                 "agentRuntime": (step_agent or {}).get("runtime", "native"),
                 "agentModelConfigId": (step_agent or {}).get("modelConfigId"),
+                "displayTask": clean_prompt,
             },
         })
     dag = {**dag, "steps": enriched_steps}
@@ -972,56 +1346,80 @@ async def create_run_for_conversation(
         f"strategy={dag.get('strategy') or dag.get('planningStrategy')}",
         flush=True,
     )
-    sandbox = create_sandbox(
-        owner_user_id=current_user["id"],
-        conversation_id=conversation_id,
-        image=settings.SANDBOX_IMAGE,
-        network=sandbox_service.network,
-        workspace_path=str(workspace["workspacePath"]),
-        workspace_id=workspace["id"],
-    )
-    create_agent_run(
-        owner_user_id=current_user["id"],
-        conversation_id=conversation_id,
-        sandbox_id=sandbox["id"],
-        prompt=clean_prompt,
-        dag=dag,
-        run_id=run_id,
-        workspace_id=workspace["id"],
-        runtime=(selected_runtime_agent or {}).get("runtime", "native"),
-        model_config_id=(selected_runtime_agent or {}).get("modelConfigId"),
-        runtime_metadata=run_runtime_metadata,
-    )
-    if workspace_action_context.get("action") == "modify_existing" and workspace_action_context.get("targetArtifacts"):
-        workspace_action_context = _materialize_target_artifacts(
-            sandbox=sandbox,
-            run_id=run_id,
-            action_context=workspace_action_context,
-            file_service=FileVersionService(sandbox_service),
+    try:
+        ensure_current_lock("sandbox creation")
+        sandbox = create_sandbox(
+            owner_user_id=current_user["id"],
+            conversation_id=conversation_id,
+            image=settings.SANDBOX_IMAGE,
+            network=sandbox_service.network,
+            workspace_path=str(workspace["workspacePath"]),
+            workspace_id=workspace["id"],
         )
-        dag = {
-            **dag,
-            "workspaceActionContext": workspace_action_context,
-        }
+        update_sandbox(sandbox["id"], run_id=run_id)
+        update_agent_run(
+            run_id,
+            sandbox_id=sandbox["id"],
+            queued_reason="",
+            runtime_metadata=run_runtime_metadata,
+        )
         update_agent_run_dag(run_id, dag)
-    create_agent_run_steps(run_id, dag.get("steps", []))
-    print(
-        f"[SandboxRun] created run={run_id} sandbox={sandbox['id']} "
-        f"workspace={workspace['workspacePath']} network={sandbox_service.network}",
-        flush=True,
-    )
-    detail = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
-    if detail is not None:
-        detail["planningMessages"] = planning_messages
+        if workspace_action_context.get("action") == "modify_existing" and workspace_action_context.get("targetArtifacts"):
+            ensure_current_lock("target artifact materialization")
+            workspace_action_context = _materialize_target_artifacts(
+                sandbox=sandbox,
+                run_id=run_id,
+                action_context=workspace_action_context,
+                file_service=FileVersionService(sandbox_service),
+            )
+            dag = {
+                **dag,
+                "workspaceActionContext": workspace_action_context,
+            }
+            update_agent_run_dag(run_id, dag)
+        create_agent_run_steps(run_id, dag.get("steps", []))
+        print(
+            f"[SandboxRun] created run={run_id} sandbox={sandbox['id']} "
+            f"workspace={workspace['workspacePath']} network={sandbox_service.network}",
+            flush=True,
+        )
+        detail = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
+        if detail is not None:
+            detail["planningMessages"] = planning_messages
 
-    async def scheduler_emit(event_type: str, data: Dict[str, Any]) -> None:
+        async def scheduler_emit(event_type: str, data: Dict[str, Any]) -> None:
+            if emit:
+                await emit(event_type, data)
+
         if emit:
-            await emit(event_type, data)
-
-    if emit:
-        await emit("run.created", build_run_event_payload(run_id, {
-            "run": detail,
-            "planningMessages": planning_messages,
-        }))
-    asyncio.create_task(RunScheduler(sandbox_service=sandbox_service).run(run_id, emit=scheduler_emit))
-    return detail
+            await emit("run.created", build_run_event_payload(run_id, {
+                "run": detail,
+                "planningMessages": planning_messages,
+            }))
+        ensure_current_lock("scheduler start")
+        planning_heartbeat_stop.set()
+        await planning_heartbeat_task
+        asyncio.create_task(RunScheduler(sandbox_service=sandbox_service).run(run_id, emit=scheduler_emit))
+        return detail
+    except Exception as exc:
+        planning_heartbeat_stop.set()
+        await planning_heartbeat_task
+        release_result = release_workspace_mutation_lock(
+            workspace["id"],
+            "run",
+            run_id,
+            lock_token,
+        )
+        current = get_agent_run(run_id)
+        if current and current.get("status") not in TERMINAL_RUN_STATUSES:
+            update_agent_run(
+                run_id,
+                status="failed",
+                error=str(exc),
+                queued_reason="",
+                lock_owner_id="",
+                lock_fencing_token=0,
+                mark_finished=True,
+            )
+        await schedule_next_workspace_mutation_owner(release_result.get("nextOwner"))
+        raise

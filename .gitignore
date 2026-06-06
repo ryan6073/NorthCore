@@ -92,3 +92,6 @@ docs/
 *.md text eol=lf
 *.css text eol=lf
 *.scss text eol=lf
+=======
+ai-collab/
+

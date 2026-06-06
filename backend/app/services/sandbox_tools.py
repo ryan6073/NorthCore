@@ -6,9 +6,28 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from app.config import settings
-from app.database import create_id, get_agent_run, get_sandbox_file, list_sandbox_files, now_text
+from app.database import (
+    create_id,
+    get_agent_run,
+    get_agent_run_step,
+    get_sandbox_file,
+    is_workspace_mutation_lock_current,
+    list_sandbox_files,
+    now_text,
+)
+from app.services.dag_step_policy import (
+    path_matches_patterns,
+    safe_path_pattern,
+    step_mutation_mode,
+    step_read_paths,
+    step_target_paths,
+    step_write_tool_only,
+)
+from app.services.agent_tool_catalog_service import agent_has_tool
 from app.services.file_version_service import FileVersionService
+from app.services.office_file_service import office_write_block_reason
 from app.services.sandbox_service import SandboxService
+from app.services.workspace_sync_service import capture_workspace_snapshot, _restore_current_version_to_workspace
 
 
 SANDBOX_TOOL_SPECS: List[Dict[str, Any]] = [
@@ -232,6 +251,7 @@ class SandboxToolExecutor:
         step_id: str,
         environment_profile: Optional[Dict[str, Any]] = None,
         command_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+        agent: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.sandbox_service = sandbox_service
         self.file_service = file_service
@@ -241,10 +261,161 @@ class SandboxToolExecutor:
         self.step_id = step_id
         self.environment_profile = environment_profile or {}
         self.command_callback = command_callback
+        self.agent = agent or {}
         run = get_agent_run(run_id) or {}
+        self.run_mode = str(run.get("runMode") or "write")
+        self.workspace_id = str(run.get("workspaceId") or "")
+        self.lock_fencing_token = run.get("lockFencingToken")
         self.workspace_action_context = (run.get("dag") or {}).get("workspaceActionContext") or {}
+        self.step = get_agent_run_step(step_id) or {}
+
+    def _step_write_scope_error(self, path: str) -> Optional[Dict[str, Any]]:
+        mode = step_mutation_mode(self.step)
+        target_paths = step_target_paths(self.step)
+        if mode == "read":
+            return {
+                "ok": False,
+                "status": "read_step_write_blocked",
+                "error": "read step 不允许写入文件",
+                "path": path,
+            }
+        if target_paths and not path_matches_patterns(path, target_paths):
+            return {
+                "ok": False,
+                "status": "outside_declared_target_paths",
+                "error": "写入路径超出当前 step 声明的 targetPaths",
+                "path": path,
+                "targetPaths": target_paths,
+                "extraChangedFile": {
+                    "path": path,
+                    "reason": "outside declared targetPaths",
+                    "targetPaths": target_paths,
+                },
+            }
+        return None
+
+    def _command_write_validation_enabled(self) -> bool:
+        return step_mutation_mode(self.step) == "write" and bool(step_target_paths(self.step))
+
+    def _changed_paths_between(self, before: Dict[str, Any], after: Dict[str, Any]) -> List[str]:
+        before_files = before.get("files") if isinstance(before.get("files"), dict) else {}
+        after_files = after.get("files") if isinstance(after.get("files"), dict) else {}
+        changed: List[str] = []
+        for path in sorted(set(before_files.keys()) | set(after_files.keys())):
+            old = before_files.get(path) if isinstance(before_files.get(path), dict) else None
+            new = after_files.get(path) if isinstance(after_files.get(path), dict) else None
+            if old is None or new is None or old.get("sha256") != new.get("sha256"):
+                if safe_path_pattern(path):
+                    changed.append(path)
+        return changed
+
+    def _outside_declared_targets(self, paths: List[str]) -> List[str]:
+        target_paths = step_target_paths(self.step)
+        if not target_paths:
+            return []
+        return [path for path in paths if not path_matches_patterns(path, target_paths)]
+
+    def _outside_declared_target_result(
+        self,
+        changed_paths: List[str],
+        outside_paths: List[str],
+        error: str,
+        base_payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        target_paths = step_target_paths(self.step)
+        workspace_root = Path(str(self.sandbox.get("workspacePath") or "")).resolve()
+        for outside_path in outside_paths:
+            _restore_current_version_to_workspace(workspace_root, self.run_id, outside_path)
+        return {
+            **(base_payload or {}),
+            "ok": False,
+            "status": "outside_declared_target_paths",
+            "error": error,
+            "changedFiles": changed_paths,
+            "targetPaths": target_paths,
+            "extraChangedFile": {
+                "path": outside_paths[0],
+                "reason": "changed path outside declared targetPaths",
+                "targetPaths": target_paths,
+            },
+            "extraChangedFiles": [
+                {
+                    "path": path,
+                    "reason": "changed path outside declared targetPaths",
+                    "targetPaths": target_paths,
+                }
+                for path in outside_paths
+            ],
+        }
+
+    def _validate_declared_snapshot_changes(
+        self,
+        before_snapshot: Optional[Dict[str, Any]],
+        error: str,
+        base_payload: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if before_snapshot is None:
+            return None
+        after = capture_workspace_snapshot(self.sandbox, self.run_id)
+        changed_paths = self._changed_paths_between(before_snapshot, after)
+        outside_paths = self._outside_declared_targets(changed_paths)
+        if not outside_paths:
+            return None
+        return self._outside_declared_target_result(changed_paths, outside_paths, error, base_payload)
+
+    def _read_scope_error(self, path: str) -> Optional[Dict[str, Any]]:
+        if step_mutation_mode(self.step) != "read":
+            return None
+        read_paths = step_read_paths(self.step)
+        if read_paths and not path_matches_patterns(path, read_paths):
+            return {
+                "ok": False,
+                "status": "outside_declared_read_paths",
+                "error": "读取路径超出当前 read step 声明的 readPaths",
+                "path": path,
+                "readPaths": read_paths,
+            }
+        return None
+
+    def _read_scope_paths(self) -> List[str]:
+        if step_mutation_mode(self.step) != "read":
+            return []
+        return step_read_paths(self.step)
+
+    def _path_allowed_by_read_scope(self, path: str) -> bool:
+        read_paths = self._read_scope_paths()
+        return not read_paths or path_matches_patterns(path, read_paths)
+
+    def _filter_read_scoped_file_list(self, files: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        read_paths = self._read_scope_paths()
+        if not read_paths:
+            return files
+        return [
+            item
+            for item in files
+            if isinstance(item, dict) and self._path_allowed_by_read_scope(str(item.get("path") or ""))
+        ]
+
+    def _filter_read_scoped_scan(self, scan: Dict[str, Any]) -> Dict[str, Any]:
+        read_paths = self._read_scope_paths()
+        if not read_paths:
+            return scan
+        filtered = dict(scan)
+        for key in ("tracked", "untracked"):
+            items = scan.get(key) if isinstance(scan.get(key), list) else []
+            filtered[key] = [
+                item
+                for item in items
+                if isinstance(item, dict) and self._path_allowed_by_read_scope(str(item.get("path") or ""))
+            ]
+        filtered["readPaths"] = read_paths
+        filtered["readScopeFiltered"] = True
+        return filtered
 
     def _write_scope_error(self, path: str) -> Optional[Dict[str, Any]]:
+        step_scope_error = self._step_write_scope_error(path)
+        if step_scope_error:
+            return step_scope_error
         if self.workspace_action_context.get("action") != "modify_existing":
             return None
         allowed = {
@@ -267,16 +438,88 @@ class SandboxToolExecutor:
 
     async def execute(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         print(f"[SandboxTool] start run={self.run_id} step={self.step_id} tool={name} args={arguments}", flush=True)
+        required_tool_by_name = {
+            "read_dependency_manifest": "workspace.read",
+            "list_files": "workspace.read",
+            "scan_workspace": "workspace.read",
+            "read_workspace_file": "workspace.read",
+            "read_file": "workspace.read",
+            "import_workspace_file": "workspace.write",
+            "write_file": "workspace.write",
+            "setup_environment": "environment.setup",
+            "run_command": "command.run",
+            "validate_command": "command.run",
+        }
+        required_tool = required_tool_by_name.get(name)
+        if required_tool and not agent_has_tool(self.agent, required_tool):
+            return {
+                "ok": False,
+                "status": "agent_tool_not_authorized",
+                "error": f"当前 Agent 未启用 {required_tool}，不能调用 {name}",
+                "tool": name,
+                "requiredTool": required_tool,
+            }
+        mutating_tools = {"setup_environment", "run_command", "validate_command", "write_file", "import_workspace_file"}
+        dynamic_workspace_tools = {"setup_environment", "run_command", "validate_command"}
+        if step_write_tool_only(self.step) and name in dynamic_workspace_tools:
+            return {
+                "ok": False,
+                "status": "dynamic_workspace_tool_blocked",
+                "error": "writeToolOnly step 只能使用 write_file/import_workspace_file 写入声明的 targetPaths，不能执行命令或环境安装",
+                "tool": name,
+            }
+        if self.run_mode == "read" and name in mutating_tools:
+            return {
+                "ok": False,
+                "status": "read_only_blocked",
+                "error": "read run 不允许执行写入或命令类工具",
+                "tool": name,
+            }
+        if self.run_mode in {"write", "deploy"} and name in mutating_tools and self.workspace_id:
+            if not is_workspace_mutation_lock_current(
+                self.workspace_id,
+                "run",
+                self.run_id,
+                int(self.lock_fencing_token or 0),
+            ):
+                return {
+                    "ok": False,
+                    "status": "mutation_lock_lost",
+                    "error": "workspace mutation lock 已失效，禁止继续写入或执行命令",
+                    "tool": name,
+                }
         if name == "inspect_environment":
             result = await self._inspect_environment()
         elif name == "read_dependency_manifest":
             result = self._read_dependency_manifest()
+            read_paths = self._read_scope_paths()
+            if read_paths and isinstance(result.get("manifests"), dict):
+                result = {
+                    **result,
+                    "manifests": {
+                        path: manifest
+                        for path, manifest in result["manifests"].items()
+                        if self._path_allowed_by_read_scope(str(path))
+                    },
+                    "readPaths": read_paths,
+                    "readScopeFiltered": True,
+                }
         elif name == "setup_environment":
+            before = capture_workspace_snapshot(self.sandbox, self.run_id) if self._command_write_validation_enabled() else None
             result = await self._setup_environment(arguments)
+            validation_error = self._validate_declared_snapshot_changes(
+                before,
+                "环境安装产生了超出当前 step targetPaths 的文件变更",
+                result,
+            )
+            if validation_error:
+                result = validation_error
         elif name == "list_files":
-            result = {"ok": True, "files": list_sandbox_files(self.run_id)}
+            result = {"ok": True, "files": self._filter_read_scoped_file_list(list_sandbox_files(self.run_id))}
         elif name == "scan_workspace":
             result = self._scan_workspace()
+            if isinstance(result.get("workspaceScan"), dict):
+                result = {**result, "workspaceScan": self._filter_read_scoped_scan(result["workspaceScan"])}
         elif name == "read_workspace_file":
             result = self._read_workspace_file(arguments)
         elif name == "import_workspace_file":
@@ -706,6 +949,9 @@ class SandboxToolExecutor:
 
     def _read_file(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         path = safe_relative_path(str(arguments.get("path") or ""))
+        scope_error = self._read_scope_error(path)
+        if scope_error:
+            return scope_error
         detail = self.file_service.read_file(self.run_id, path)
         if not detail:
             return {"ok": False, "error": "文件不存在", "path": path}
@@ -721,6 +967,9 @@ class SandboxToolExecutor:
 
     def _read_workspace_file(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         path = safe_relative_path(str(arguments.get("path") or ""))
+        scope_error = self._read_scope_error(path)
+        if scope_error:
+            return scope_error
         try:
             file_payload = self.sandbox_service.safe_read_workspace_file(
                 self.sandbox["workspacePath"],
@@ -742,6 +991,14 @@ class SandboxToolExecutor:
 
     def _import_workspace_file(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         path = safe_relative_path(str(arguments.get("path") or ""))
+        office_block_reason = office_write_block_reason(path)
+        if office_block_reason:
+            return {
+                "ok": False,
+                "status": "blocked_office_text_import",
+                "error": "Office 文件不能通过 import_workspace_file 导入文本版本；请 scan_workspace 后在 finish.changedFiles 中说明路径",
+                "path": path,
+            }
         scope_error = self._write_scope_error(path)
         if scope_error:
             return scope_error
@@ -772,6 +1029,14 @@ class SandboxToolExecutor:
 
     def _write_file(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         path = safe_relative_path(str(arguments.get("path") or ""))
+        office_block_reason = office_write_block_reason(path)
+        if office_block_reason:
+            return {
+                "ok": False,
+                "status": "blocked_office_text_write",
+                "error": office_block_reason,
+                "path": path,
+            }
         scope_error = self._write_scope_error(path)
         if scope_error:
             return scope_error
@@ -825,14 +1090,34 @@ class SandboxToolExecutor:
             timeout_seconds = int(timeout) if timeout is not None else None
         except (TypeError, ValueError):
             timeout_seconds = None
+        before_snapshot = capture_workspace_snapshot(self.sandbox, self.run_id) if self._command_write_validation_enabled() else None
         result = await self._execute_backend_command(
             command,
             timeout_seconds=timeout_seconds or settings.SANDBOX_COMMAND_TIMEOUT_SECONDS,
         )
-        return {"ok": int(result.get("exitCode") or 0) == 0, "command": result}
+        changed_paths: List[str] = []
+        outside_paths: List[str] = []
+        if before_snapshot is not None:
+            after = capture_workspace_snapshot(self.sandbox, self.run_id)
+            changed_paths = self._changed_paths_between(before_snapshot, after)
+            outside_paths = self._outside_declared_targets(changed_paths)
+        if outside_paths:
+            return self._outside_declared_target_result(
+                changed_paths,
+                outside_paths,
+                "命令产生了超出当前 step targetPaths 的文件变更",
+                {"command": result},
+            )
+        payload: Dict[str, Any] = {"ok": int(result.get("exitCode") or 0) == 0, "command": result}
+        if changed_paths:
+            payload["changedFiles"] = changed_paths
+        return payload
 
     async def _validate_command(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        command_result = await self._run_command(arguments)
+        validation_arguments = dict(arguments)
+        if validation_arguments.get("timeoutSeconds") is None:
+            validation_arguments["timeoutSeconds"] = settings.SANDBOX_VALIDATION_TIMEOUT_SECONDS
+        command_result = await self._run_command(validation_arguments)
         result = command_result.get("command") if isinstance(command_result.get("command"), dict) else {}
         validation = {
             "id": create_id("validation"),
@@ -841,12 +1126,16 @@ class SandboxToolExecutor:
             "result": result,
             "createdAt": now_text(),
         }
-        return {
+        payload = {
             "ok": validation["success"],
             "validationId": validation["id"],
             "validation": validation,
             "command": result,
         }
+        for key in ("status", "error", "changedFiles", "targetPaths", "extraChangedFile", "extraChangedFiles"):
+            if key in command_result:
+                payload[key] = command_result[key]
+        return payload
 
     def _finish(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         changed_files = arguments.get("changedFiles") if isinstance(arguments.get("changedFiles"), list) else []

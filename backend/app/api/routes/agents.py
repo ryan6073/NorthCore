@@ -13,6 +13,7 @@ from app.services.memory_service import *
 from app.services.message_service import *
 from app.services.run_service import *
 from app.services.ws_service import *
+from app.services.agent_tool_catalog_service import list_agent_tool_catalog
 
 router = APIRouter(prefix="/api/v1")
 
@@ -46,10 +47,16 @@ async def api_list_agents(
     ))
 
 
+@router.get("/agent-tools")
+async def api_list_agent_tools():
+    return ok({"list": list_agent_tool_catalog()})
+
+
 @router.post("/agents")
 async def api_create_agent(payload: Dict[str, Any] = Body(...), authorization: Optional[str] = Header(None)):
     current_user = current_user_or_default(authorization)
-    security_error = validate_agent_payload_security(payload)
+    payload = sanitize_agent_payload(payload)
+    security_error = validate_agent_payload_security(payload, owner_user_id=current_user["id"])
     if security_error:
         return fail(40000, security_error)
     name = str(payload.get("name", "")).strip()
@@ -76,7 +83,9 @@ async def api_get_agent_contact_conversation(agent_id: str, authorization: Optio
         return fail(40001, "Agent 不存在")
     if agent_id == ORCHESTRATOR_AGENT_ID:
         return fail(40002, "Orchestrator 是群聊调度器，不提供长期联系人会话")
-    if not agent.get("enabled"):
+    if is_platform_agent(agent):
+        return fail(40002, platform_agent_contact_error(agent))
+    if not agent.get("enabled") or agent.get("status") == "disabled":
         return fail(40002, "Agent 已禁用，无法打开联系人会话")
     try:
         conversation = ensure_contact_conversation(current_user["id"], agent_id)
@@ -102,7 +111,9 @@ async def api_get_user_agent_contact_id(
         return fail(40001, "Agent 不存在")
     if agent_id == ORCHESTRATOR_AGENT_ID:
         return fail(40002, "Orchestrator 是群聊调度器，不提供长期联系人会话")
-    if not agent.get("enabled"):
+    if is_platform_agent(agent):
+        return fail(40002, platform_agent_contact_error(agent))
+    if not agent_is_callable(agent):
         return fail(40002, "Agent 已禁用，无法打开联系人会话")
 
     try:
@@ -121,6 +132,7 @@ async def api_get_user_agent_contact_id(
 @router.put("/agents/{agent_id}")
 async def api_update_agent(agent_id: str, payload: Dict[str, Any] = Body(...), authorization: Optional[str] = Header(None)):
     current_user = current_user_or_default(authorization)
+    payload = sanitize_agent_payload(payload)
     if "systemPrompt" in payload:
         prompt_preview = str(payload.get("systemPrompt") or "").strip().replace("\n", "\\n")
         print(
@@ -132,10 +144,10 @@ async def api_update_agent(agent_id: str, payload: Dict[str, Any] = Body(...), a
                 "promptPreview": prompt_preview[:120],
             },
         )
-    security_error = validate_agent_payload_security(payload)
+    existing_agent = get_agent(agent_id, owner_user_id=current_user["id"])
+    security_error = validate_agent_payload_security(payload, owner_user_id=current_user["id"], existing_agent=existing_agent)
     if security_error:
         return fail(40000, security_error)
-    existing_agent = get_agent(agent_id, owner_user_id=current_user["id"])
     if existing_agent and existing_agent.get("ownerUserId") is None and current_user.get("role") != "admin":
         agent = upsert_agent_user_override(
             current_user["id"],

@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set, Tuple
 
 from fastapi import WebSocket
 
@@ -12,11 +12,23 @@ from app.config import settings
 from app.core.llm_client import client
 from app.core.orchestrator import AGENT_CONFIGS, analyze_orchestrator_intent
 from app.database import *
-from app.model_providers.service import create_openai_client_for_agent, model_name_for_agent
+from app.model_providers.service import create_openai_client_for_agent, model_name_for_agent, validate_model_config_for_runtime
 from app.runtimes.router import runtime_router
+from app.services.agent_tool_catalog_service import agent_has_tool, normalize_agent_tools
+from app.services.attachment_context_service import (
+    append_attachment_context_to_input,
+    attachment_read_only_intent,
+    build_attachment_full_context,
+    build_attachment_context,
+    build_vision_user_content,
+    has_vision_attachments,
+    maybe_force_attachment_chat,
+    resolve_message_attachments,
+)
 from app.services.file_version_service import FileVersionService
 from app.services.intent_service import classify_for_conversation
 from app.services.sandbox_service import SandboxService
+from app.services.deployment_service import create_workspace_deployment_request, run_workspace_deployment
 from app.services.web_search_service import prepare_web_search_for_chat
 from app.services.workspace_agents_service import read_workspace_agents_context
 
@@ -51,6 +63,28 @@ MEMORY_EXTRACT_SYSTEM_PROMPT = """你是 AgentHub 的长期记忆提取器。
       "confidence": 0.9
     }
   ]
+}
+"""
+MEMORY_RESOLUTION_SYSTEM_PROMPT = """你是 AgentHub 的长期记忆冲突判断器。
+请判断一条新候选记忆与同一会话中已有 active 记忆的关系。
+
+关系只能是：
+- duplicate：新记忆与某条已有记忆语义相同或明显重复
+- conflict：新记忆与某条或多条已有记忆属于同一事实/偏好/约束槽位，但取值冲突，应以新记忆为准
+- independent：新记忆与已有记忆可以并存
+
+规则：
+- 同一偏好槽位的不同取值是 conflict，例如喜欢绿色 -> 喜欢蓝色。
+- 同一约束槽位的不同取值是 conflict，例如后端端口 9007 -> 9008。
+- 不同维度偏好是 independent，例如喜欢蓝色 + 喜欢简洁风格。
+- 语义重复是 duplicate，例如“用户喜欢蓝色”和“用户偏好的颜色为蓝色”。
+
+你必须只输出 JSON：
+{
+  "relationship": "duplicate | conflict | independent",
+  "duplicateMemoryId": "memory-id 或空字符串",
+  "conflictingMemoryIds": ["memory-id"],
+  "reason": "简短原因"
 }
 """
 CONTEXT_SUMMARY_SYSTEM_PROMPT = """你是 AgentHub 的会话压缩器。
@@ -164,6 +198,8 @@ def is_valid_email(email: str) -> bool:
 
 
 SENSITIVE_CONFIG_KEYS = {"apikey", "api_key", "secret", "token", "authorization", "headers"}
+BLOCKED_RUNTIME_CONFIG_KEYS = {"claude_code_bin", "codex_bin", "opencode_bin"}
+PLATFORM_AGENT_RUNTIMES = {"opencode", "codex", "claude_code", "claude-code"}
 CONVERSATION_AGENT_CONFIG_FIELDS = {
     "name",
     "avatar",
@@ -209,7 +245,60 @@ def find_sensitive_model_config_key(value: Any, path: str = "modelConfig") -> Op
     return None
 
 
-def validate_agent_payload_security(payload: Dict[str, Any]) -> Optional[str]:
+def find_blocked_runtime_config_key(value: Any, path: str = "runtimeConfig") -> Optional[str]:
+    if isinstance(value, dict):
+        for key, nested_value in value.items():
+            normalized_key = str(key).replace("-", "_").lower()
+            if normalized_key in BLOCKED_RUNTIME_CONFIG_KEYS:
+                return f"{path}.{key}"
+            nested_path = find_blocked_runtime_config_key(nested_value, f"{path}.{key}")
+            if nested_path:
+                return nested_path
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            nested_path = find_blocked_runtime_config_key(item, f"{path}[{index}]")
+            if nested_path:
+                return nested_path
+    return None
+
+
+def sanitize_runtime_config(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: Dict[str, Any] = {}
+        for key, nested_value in value.items():
+            normalized_key = str(key).replace("-", "_").lower()
+            if normalized_key in BLOCKED_RUNTIME_CONFIG_KEYS:
+                continue
+            sanitized[key] = sanitize_runtime_config(nested_value)
+        return sanitized
+    if isinstance(value, list):
+        return [sanitize_runtime_config(item) for item in value]
+    return value
+
+
+def sanitize_agent_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if "runtimeConfig" not in payload:
+        return payload
+    sanitized_runtime_config = sanitize_runtime_config(payload.get("runtimeConfig"))
+    return {**payload, "runtimeConfig": sanitized_runtime_config if isinstance(sanitized_runtime_config, dict) else {}}
+
+
+def is_platform_agent(agent: Optional[Dict[str, Any]]) -> bool:
+    runtime = str((agent or {}).get("runtime") or "native").strip().lower()
+    return runtime in PLATFORM_AGENT_RUNTIMES
+
+
+def platform_agent_contact_error(agent: Optional[Dict[str, Any]] = None) -> str:
+    runtime = str((agent or {}).get("runtime") or "platform").strip() or "platform"
+    return f"{runtime} Agent 需要在绑定 Workspace 的 single/group 会话中使用，不提供长期联系人会话"
+
+
+def validate_agent_payload_security(
+    payload: Dict[str, Any],
+    owner_user_id: Optional[str] = None,
+    existing_agent: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    payload = sanitize_agent_payload(payload)
     if "modelConfig" in payload:
         sensitive_path = find_sensitive_model_config_key(payload.get("modelConfig"))
         if sensitive_path:
@@ -218,17 +307,40 @@ def validate_agent_payload_security(payload: Dict[str, Any]) -> Optional[str]:
         sensitive_path = find_sensitive_model_config_key(payload.get("runtimeConfig"), "runtimeConfig")
         if sensitive_path:
             return f"runtimeConfig 不允许提交模型密钥或敏感鉴权字段: {sensitive_path}"
+    merged_agent = {**(existing_agent or {}), **payload}
+    runtime = str(merged_agent.get("runtime") or "native").strip().lower() or "native"
+    if "tools" in payload:
+        _, tools_error = normalize_agent_tools(
+            payload.get("tools"),
+            runtime=runtime,
+            agent_id=merged_agent.get("id"),
+            category=merged_agent.get("category"),
+            strict=True,
+        )
+        if tools_error:
+            return tools_error
+    model_config_id = str(merged_agent.get("modelConfigId") or merged_agent.get("model_config_id") or "").strip()
+    if runtime in {"claude_code", "claude-code", "codex"}:
+        model_config = get_model_config(model_config_id, owner_user_id=owner_user_id) if model_config_id else None
+        config_error = validate_model_config_for_runtime(model_config, runtime)
+        if config_error:
+            return config_error
     return None
 
 
-def sanitize_conversation_agent_config_payload(payload: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+def sanitize_conversation_agent_config_payload(
+    payload: Dict[str, Any],
+    owner_user_id: Optional[str] = None,
+    existing_agent: Optional[Dict[str, Any]] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    payload = sanitize_agent_payload(payload)
     blocked_fields = sorted(key for key in payload if key in CONVERSATION_AGENT_IDENTITY_FIELDS)
     if blocked_fields:
         return None, f"会话级 Agent 配置不允许修改身份字段: {', '.join(blocked_fields)}"
     unsupported_fields = sorted(key for key in payload if key not in CONVERSATION_AGENT_CONFIG_FIELDS)
     if unsupported_fields:
         return None, f"会话级 Agent 配置包含不支持字段: {', '.join(unsupported_fields)}"
-    security_error = validate_agent_payload_security(payload)
+    security_error = validate_agent_payload_security(payload, owner_user_id=owner_user_id, existing_agent=existing_agent)
     if security_error:
         return None, security_error
     return {key: payload[key] for key in CONVERSATION_AGENT_CONFIG_FIELDS if key in payload}, None
@@ -350,6 +462,36 @@ def callable_group_member_agents(conversation: Dict[str, Any]) -> List[Dict[str,
     return agents
 
 
+def conversation_allows_agent_tool(
+    conversation: Dict[str, Any],
+    tool_id: str,
+    target_agent_id: Optional[str] = None,
+) -> bool:
+    if target_agent_id:
+        target_agent = choose_target_agent(conversation, target_agent_id)
+        if target_agent:
+            return agent_has_tool(target_agent, tool_id)
+        return False
+    if conversation.get("mode") == "group":
+        return False
+    return agent_has_tool(choose_agent_for_conversation(conversation), tool_id)
+
+
+def agent_messages_allow_tool(
+    conversation: Dict[str, Any],
+    agent_messages: List[Dict[str, Any]],
+    tool_id: str,
+) -> bool:
+    for message in agent_messages or []:
+        sender_id = str(message.get("senderId") or "").strip()
+        if not sender_id or sender_id in {"system", "user"}:
+            continue
+        agent = get_effective_agent_for_conversation(conversation, sender_id)
+        if agent_has_tool(agent, tool_id):
+            return True
+    return False
+
+
 def _score_agent_for_task(agent: Dict[str, Any], task_text: str) -> int:
     text = (
         f"{agent.get('name') or ''} "
@@ -416,6 +558,9 @@ def system_prompt_for_conversation(
     conversation: Optional[Dict[str, Any]],
     agent: Optional[Dict[str, Any]],
 ) -> str:
+    # Prompt precedence is intentional: group member override first,
+    # then conversation.systemPrompt as a full conversation-level override,
+    # then the user/base Agent prompt.
     if (
         conversation
         and conversation.get("mode") == "group"
@@ -527,10 +672,18 @@ def build_artifact_ref_context(
     if not artifact_id:
         return None, "artifactRef.artifactId 不能为空"
     artifact = get_artifact(artifact_id)
-    if not artifact or artifact.get("conversationId") != conversation_id:
-        return None, "引用产物不存在或不属于当前会话"
-    if not get_conversation(conversation_id, owner_user_id=owner_user_id):
+    conversation = get_conversation(conversation_id, owner_user_id=owner_user_id)
+    if not conversation:
         return None, "会话不存在"
+    artifact_workspace_id = str((artifact or {}).get("workspaceId") or "").strip()
+    conversation_workspace_id = str(conversation.get("workspaceId") or "").strip()
+    if not artifact:
+        return None, "引用产物不存在或不属于当前会话"
+    if artifact_workspace_id:
+        if not conversation_workspace_id or artifact_workspace_id != conversation_workspace_id:
+            return None, "引用产物不存在或不属于当前 Workspace"
+    elif artifact.get("conversationId") != conversation_id:
+        return None, "引用产物不存在或不属于当前会话"
 
     quoted_text = str(raw_ref.get("quotedText") or "").strip()
     start_line = raw_ref.get("startLine")
@@ -552,6 +705,7 @@ def build_artifact_ref_context(
         "artifactId": artifact_id,
         "artifactTitle": str(raw_ref.get("artifactTitle") or artifact.get("title") or ""),
         "artifactType": artifact.get("type"),
+        "workspaceId": artifact.get("workspaceId"),
         "version": raw_ref.get("version") or artifact.get("latestVersion"),
         "startLine": start_line,
         "endLine": end_line,
@@ -726,7 +880,9 @@ async def resolve_artifact_context_with_model(
     conversation_id: str,
     owner_user_id: str,
 ) -> Optional[Dict[str, Any]]:
-    artifacts = list_artifacts(conversation_id)
+    conversation = get_conversation(conversation_id, owner_user_id=owner_user_id)
+    workspace_id = str((conversation or {}).get("workspaceId") or "").strip()
+    artifacts = list_artifacts_for_workspace(workspace_id) if workspace_id else list_artifacts(conversation_id)
     if not artifacts:
         return None
     candidate_artifacts = artifacts[:20]
@@ -812,7 +968,7 @@ def build_user_input_with_quote(content: str, quoted_message: Optional[Dict[str,
 
 
 def supports_persistent_context(conversation: Optional[Dict[str, Any]]) -> bool:
-    return bool(conversation and conversation.get("mode") in {"agent", "group"})
+    return bool(conversation and conversation.get("mode") in {"agent", "single", "group"})
 
 
 def build_context_usage(conversation: Dict[str, Any]) -> Dict[str, Any]:
@@ -854,6 +1010,8 @@ def attach_context_usage(conversation: Dict[str, Any]) -> Dict[str, Any]:
 
 RUN_ACTIVE_STATUSES = {"pending", "running", "conflict"}
 RUN_STALE_AFTER = timedelta(minutes=10)
+RUN_STALE_TIMEOUT_REASON = "沙箱任务超时未完成，已自动标记为失败"
+RUN_STALE_LOCK_LOST_REASON = "沙箱执行进程已中断或服务重启，任务已自动标记为失败"
 
 
 def parse_db_time(value: Optional[str]) -> Optional[datetime]:
@@ -868,19 +1026,44 @@ def parse_db_time(value: Optional[str]) -> Optional[datetime]:
 def run_is_stale(run: Dict[str, Any], now: Optional[datetime] = None) -> bool:
     if run.get("status") not in RUN_ACTIVE_STATUSES:
         return False
+    if (
+        run.get("runMode") in {"write", "deploy"}
+        and run.get("workspaceId")
+        and run.get("lockFencingToken")
+        and is_workspace_mutation_lock_current(
+            str(run.get("workspaceId") or ""),
+            "run",
+            str(run.get("id") or ""),
+            int(run.get("lockFencingToken") or 0),
+        )
+    ):
+        return False
     started_at = parse_db_time(run.get("startedAt") or run.get("createdAt"))
     if not started_at:
         return False
     return (now or now_datetime()) - started_at > RUN_STALE_AFTER
 
 
-def mark_run_stale(run: Dict[str, Any], reason: str = "沙箱任务超时未完成，已自动标记为失败") -> None:
+def stale_run_reason(run: Dict[str, Any]) -> str:
+    if run.get("runMode") in {"write", "deploy"} and run.get("workspaceId") and run.get("lockFencingToken"):
+        return RUN_STALE_LOCK_LOST_REASON
+    return RUN_STALE_TIMEOUT_REASON
+
+
+def mark_run_stale(run: Dict[str, Any], reason: str = RUN_STALE_TIMEOUT_REASON) -> None:
     for step in run.get("steps", []):
         if step.get("status") == "running":
             update_agent_run_step(step["id"], status="failed", error=reason, mark_finished=True)
         elif step.get("status") == "pending":
             update_agent_run_step(step["id"], status="blocked", error=reason, mark_finished=True)
     update_agent_run(run["id"], status="failed", summary=reason, error=reason, mark_finished=True)
+    if run.get("workspaceId") and run.get("lockFencingToken"):
+        release_workspace_mutation_lock(
+            str(run.get("workspaceId") or ""),
+            "run",
+            str(run.get("id") or ""),
+            int(run.get("lockFencingToken") or 0),
+        )
     sandbox = run.get("sandbox")
     if sandbox:
         update_sandbox(sandbox["id"], status="failed", error=reason)
@@ -896,7 +1079,7 @@ def cleanup_stale_runs_for_conversation(conversation_id: str, owner_user_id: str
     now = now_datetime()
     for run in page.get("list", []):
         if run_is_stale(run, now):
-            mark_run_stale(run)
+            mark_run_stale(run, stale_run_reason(run))
 
 
 def latest_active_run_for_conversation(
@@ -914,6 +1097,21 @@ def latest_active_run_for_conversation(
         if run.get("status") in {"pending", "running", "conflict"}:
             return run
     return None
+
+
+def latest_run_for_conversation(
+    conversation_id: str,
+    owner_user_id: str,
+) -> Optional[Dict[str, Any]]:
+    cleanup_stale_runs_for_conversation(conversation_id, owner_user_id)
+    page = list_agent_runs_for_conversation(
+        conversation_id,
+        owner_user_id=owner_user_id,
+        page=1,
+        page_size=1,
+    )
+    runs = page.get("list") or []
+    return runs[0] if runs else None
 
 
 def attach_context_usage_to_page(page_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1025,13 +1223,21 @@ async def compress_conversation_context(
     )
 
 
-def build_persistent_system_context(conversation_id: str, base_system_prompt: str) -> str:
+def build_persistent_system_context(
+    conversation_id: str,
+    base_system_prompt: str,
+    agent: Optional[Dict[str, Any]] = None,
+) -> str:
     sections = [base_system_prompt]
     conversation = get_conversation(conversation_id)
-    workspace_context = read_workspace_agents_context(conversation.get("workspaceId") if conversation else None)
+    workspace_context = (
+        read_workspace_agents_context(conversation.get("workspaceId") if conversation else None)
+        if agent_has_tool(agent, "workspace.read")
+        else ""
+    )
     if workspace_context:
         sections.append(workspace_context)
-    memories = list_active_memories(conversation_id)
+    memories = list_active_memories(conversation_id) if agent_has_tool(agent, "memory.use") else []
     if memories:
         sections.append(
             "[长期记忆]\n" + "\n".join(
@@ -1059,6 +1265,7 @@ async def maybe_auto_compress_context(
     conversation: Dict[str, Any],
     user_input: str,
     exclude_message_id: Optional[str] = None,
+    agent: Optional[Dict[str, Any]] = None,
 ) -> None:
     if not supports_persistent_context(conversation):
         return
@@ -1078,7 +1285,8 @@ async def maybe_auto_compress_context(
         return
     context_chars = len(user_input)
     context_chars += len(summary["summary"]) if summary else 0
-    context_chars += sum(len(memory["content"]) for memory in list_active_memories(conversation["id"]))
+    if agent_has_tool(agent, "memory.use"):
+        context_chars += sum(len(memory["content"]) for memory in list_active_memories(conversation["id"]))
     context_chars += sum(len(render_message_for_model_context(pin["message"])) for pin in list_pins(conversation["id"]))
     context_chars += sum(len(render_message_for_model_context(message)) for message in effective_messages)
     if context_chars < CONTEXT_CHAR_THRESHOLD:
@@ -1091,10 +1299,16 @@ async def build_model_messages(
     agent: Dict[str, Any],
     user_input: str,
     exclude_message_id: Optional[str] = None,
-) -> List[Dict[str, str]]:
+    vision_attachments: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
     conversation = get_conversation(conversation_id)
     base_system_prompt = system_prompt_for_conversation(conversation, agent)
-    workspace_context = read_workspace_agents_context(conversation.get("workspaceId") if conversation else None)
+    user_message_content = build_vision_user_content(user_input, vision_attachments or [])
+    workspace_context = (
+        read_workspace_agents_context(conversation.get("workspaceId") if conversation else None)
+        if agent_has_tool(agent, "workspace.read")
+        else ""
+    )
     if workspace_context:
         print(
             f"[WorkspaceAgentsContext] stage=chat conversation={conversation_id} workspace={conversation.get('workspaceId') if conversation else '-'}\n{workspace_context}",
@@ -1112,10 +1326,10 @@ async def build_model_messages(
             for message in history
         ]
         return [{"role": "system", "content": base_system_prompt}] + rendered_history + [
-            {"role": "user", "content": user_input}
+            {"role": "user", "content": user_message_content}
         ]
 
-    await maybe_auto_compress_context(conversation, user_input, exclude_message_id)
+    await maybe_auto_compress_context(conversation, user_input, exclude_message_id, agent=agent)
     summary = get_conversation_summary(conversation_id)
     covered_until_message_id = summary["coveredUntilMessageId"] if summary else None
     pinned_ids = set(get_pinned_message_ids(conversation_id))
@@ -1127,11 +1341,11 @@ async def build_model_messages(
         )
         if message["id"] not in pinned_ids
     ]
-    messages = [{"role": "system", "content": build_persistent_system_context(conversation_id, base_system_prompt)}]
+    messages = [{"role": "system", "content": build_persistent_system_context(conversation_id, base_system_prompt, agent=agent)}]
     for message in effective_messages:
         role = "assistant" if message["role"] in ("agent", "orchestrator", "system") else "user"
         messages.append({"role": role, "content": render_message_for_model_context(message)})
-    messages.append({"role": "user", "content": user_input})
+    messages.append({"role": "user", "content": user_message_content})
     return messages
 
 
@@ -1140,16 +1354,41 @@ async def call_agent_once(
     agent: Dict[str, Any],
     user_input: str,
     exclude_message_id: Optional[str] = None,
+    vision_attachments: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
-    messages = await build_model_messages(conversation_id, agent, user_input, exclude_message_id)
+    messages = await build_model_messages(
+        conversation_id,
+        agent,
+        user_input,
+        exclude_message_id,
+        vision_attachments=vision_attachments,
+    )
     owner_user_id = agent.get("ownerUserId") if agent else None
     agent_client = create_openai_client_for_agent(agent, owner_user_id=owner_user_id)
-    response = await asyncio.to_thread(
-        agent_client.chat.completions.create,
-        model=model_name_for_agent(agent, owner_user_id=owner_user_id),
-        messages=messages,
-        stream=False,
-    )
+    try:
+        response = await asyncio.to_thread(
+            agent_client.chat.completions.create,
+            model=model_name_for_agent(agent, owner_user_id=owner_user_id),
+            messages=messages,
+            stream=False,
+        )
+    except Exception as exc:
+        if not vision_attachments:
+            raise
+        print(f"⚠️ [Vision Chat Fallback] retry text-only: {format_model_error(exc)}")
+        messages = await build_model_messages(
+            conversation_id,
+            agent,
+            user_input,
+            exclude_message_id,
+            vision_attachments=None,
+        )
+        response = await asyncio.to_thread(
+            agent_client.chat.completions.create,
+            model=model_name_for_agent(agent, owner_user_id=owner_user_id),
+            messages=messages,
+            stream=False,
+        )
     return response.choices[0].message.content or ""
 
 
@@ -1158,16 +1397,41 @@ async def stream_agent_reply(
     agent: Dict[str, Any],
     user_input: str,
     exclude_message_id: Optional[str] = None,
+    vision_attachments: Optional[List[Dict[str, Any]]] = None,
 ):
-    messages = await build_model_messages(conversation_id, agent, user_input, exclude_message_id)
+    messages = await build_model_messages(
+        conversation_id,
+        agent,
+        user_input,
+        exclude_message_id,
+        vision_attachments=vision_attachments,
+    )
     owner_user_id = agent.get("ownerUserId") if agent else None
     agent_client = create_openai_client_for_agent(agent, owner_user_id=owner_user_id)
-    response = await asyncio.to_thread(
-        agent_client.chat.completions.create,
-        model=model_name_for_agent(agent, owner_user_id=owner_user_id),
-        messages=messages,
-        stream=True,
-    )
+    try:
+        response = await asyncio.to_thread(
+            agent_client.chat.completions.create,
+            model=model_name_for_agent(agent, owner_user_id=owner_user_id),
+            messages=messages,
+            stream=True,
+        )
+    except Exception as exc:
+        if not vision_attachments:
+            raise
+        print(f"⚠️ [Vision Stream Fallback] retry text-only: {format_model_error(exc)}")
+        messages = await build_model_messages(
+            conversation_id,
+            agent,
+            user_input,
+            exclude_message_id,
+            vision_attachments=None,
+        )
+        response = await asyncio.to_thread(
+            agent_client.chat.completions.create,
+            model=model_name_for_agent(agent, owner_user_id=owner_user_id),
+            messages=messages,
+            stream=True,
+        )
     for chunk in response:
         if chunk.choices and chunk.choices[0].delta.content:
             yield chunk.choices[0].delta.content
@@ -1274,14 +1538,15 @@ async def extract_long_term_memories(
                 confidence = float(memory.get("confidence") or 0.7)
             except (TypeError, ValueError):
                 confidence = 0.7
-            create_memory(
+            saved_memory = await upsert_memory_with_resolution(
                 conversation_id=conversation_id,
                 category=category,
                 content=content,
                 confidence=max(0.0, min(confidence, 1.0)),
                 source_message_id=source_message_id,
             )
-            created_count += 1
+            if saved_memory:
+                created_count += 1
             print(
                 "[Memory] extract.saved",
                 {
@@ -1290,6 +1555,7 @@ async def extract_long_term_memories(
                     "category": category,
                     "confidence": max(0.0, min(confidence, 1.0)),
                     "content": content,
+                    "memoryId": saved_memory.get("id") if saved_memory else None,
                 },
             )
         print(
@@ -1304,6 +1570,307 @@ async def extract_long_term_memories(
         print(f"❌ [Memory Extract Error]: {format_model_error(exc)}")
 
 
+COLOR_WORDS = (
+    "红色", "橙色", "黄色", "绿色", "青色", "蓝色", "紫色", "粉色", "黑色", "白色", "灰色",
+    "red", "orange", "yellow", "green", "cyan", "blue", "purple", "pink", "black", "white", "gray", "grey",
+)
+COLOR_CANONICALS = {
+    "红色": "红色",
+    "red": "红色",
+    "橙色": "橙色",
+    "orange": "橙色",
+    "黄色": "黄色",
+    "yellow": "黄色",
+    "绿色": "绿色",
+    "green": "绿色",
+    "青色": "青色",
+    "cyan": "青色",
+    "蓝色": "蓝色",
+    "blue": "蓝色",
+    "紫色": "紫色",
+    "purple": "紫色",
+    "粉色": "粉色",
+    "pink": "粉色",
+    "黑色": "黑色",
+    "black": "黑色",
+    "白色": "白色",
+    "white": "白色",
+    "灰色": "灰色",
+    "gray": "灰色",
+    "grey": "灰色",
+}
+
+
+def _mentioned_memory_colors(content: Any) -> Set[str]:
+    text = str(content or "").lower()
+    return {
+        canonical
+        for color, canonical in COLOR_CANONICALS.items()
+        if color in text
+    }
+
+
+def _memory_semantic_slot(memory: Dict[str, Any]) -> str:
+    category = str(memory.get("category") or "").strip()
+    content = str(memory.get("content") or "")
+    lowered = content.lower()
+    if category == "preference" and _mentioned_memory_colors(content):
+        return "preference:color"
+    if category == "constraint" and ("端口" in content or "port" in lowered) and re.search(r"\d{2,5}", content):
+        return "constraint:port"
+    return ""
+
+
+def _memory_source_created_at(conversation_id: str, source_message_id: Optional[str]) -> str:
+    if not source_message_id:
+        return ""
+    message = get_message_in_conversation(conversation_id, source_message_id)
+    return str((message or {}).get("createdAt") or "")
+
+
+def _candidate_is_older_than_memory(
+    conversation_id: str,
+    source_message_id: Optional[str],
+    memory: Dict[str, Any],
+) -> bool:
+    candidate_created_at = _memory_source_created_at(conversation_id, source_message_id)
+    existing_created_at = _memory_source_created_at(conversation_id, memory.get("sourceMessageId"))
+    return bool(candidate_created_at and existing_created_at and candidate_created_at < existing_created_at)
+
+
+def _fallback_memory_relationship(candidate: Dict[str, Any], existing_memories: List[Dict[str, Any]]) -> Dict[str, Any]:
+    candidate_content = str(candidate.get("content") or "").lower()
+    candidate_slot = _memory_semantic_slot(candidate)
+    candidate_colors = _mentioned_memory_colors(candidate.get("content"))
+    for memory in existing_memories:
+        memory_content = str(memory.get("content") or "").lower()
+        if memory_content == candidate_content:
+            return {
+                "relationship": "duplicate",
+                "duplicateMemoryId": memory.get("id") or "",
+                "conflictingMemoryIds": [],
+                "reason": "内容完全重复",
+            }
+    if candidate_slot:
+        duplicate_id = ""
+        conflicts: List[str] = []
+        for memory in existing_memories:
+            if _memory_semantic_slot(memory) != candidate_slot:
+                continue
+            memory_colors = _mentioned_memory_colors(memory.get("content"))
+            if candidate_colors and memory_colors and candidate_colors == memory_colors:
+                duplicate_id = str(memory.get("id") or "")
+                break
+            if memory.get("id"):
+                conflicts.append(str(memory["id"]))
+        if duplicate_id:
+            return {
+                "relationship": "duplicate",
+                "duplicateMemoryId": duplicate_id,
+                "conflictingMemoryIds": [],
+                "reason": "同一记忆槽位重复表达",
+            }
+        if conflicts:
+            return {
+                "relationship": "conflict",
+                "duplicateMemoryId": "",
+                "conflictingMemoryIds": conflicts,
+                "reason": f"{candidate_slot} 以最新表达为准",
+            }
+    return {
+        "relationship": "independent",
+        "duplicateMemoryId": "",
+        "conflictingMemoryIds": [],
+        "reason": "未发现明确重复或冲突",
+    }
+
+
+async def resolve_memory_relationship(
+    candidate: Dict[str, Any],
+    existing_memories: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if not existing_memories:
+        return {
+            "relationship": "independent",
+            "duplicateMemoryId": "",
+            "conflictingMemoryIds": [],
+            "reason": "无现有同类记忆",
+        }
+    deterministic = _fallback_memory_relationship(candidate, existing_memories)
+    if deterministic.get("relationship") in {"duplicate", "conflict"}:
+        return deterministic
+    prompt = json.dumps(
+        {
+            "candidate": {
+                "category": candidate.get("category"),
+                "content": candidate.get("content"),
+                "confidence": candidate.get("confidence"),
+            },
+            "existingMemories": [
+                {
+                    "id": memory.get("id"),
+                    "category": memory.get("category"),
+                    "content": memory.get("content"),
+                    "confidence": memory.get("confidence"),
+                }
+                for memory in existing_memories[:50]
+            ],
+        },
+        ensure_ascii=False,
+    )
+    try:
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model=settings.MODEL_EP,
+            messages=[
+                {"role": "system", "content": MEMORY_RESOLUTION_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            stream=False,
+        )
+        payload = parse_json_object(response.choices[0].message.content or "")
+        relationship = str(payload.get("relationship") or "independent").strip()
+        if relationship not in {"duplicate", "conflict", "independent"}:
+            relationship = "independent"
+        return {
+            "relationship": relationship,
+            "duplicateMemoryId": str(payload.get("duplicateMemoryId") or ""),
+            "conflictingMemoryIds": [
+                str(item)
+                for item in payload.get("conflictingMemoryIds") or []
+                if str(item or "").strip()
+            ],
+            "reason": str(payload.get("reason") or ""),
+        }
+    except Exception as exc:
+        print(f"❌ [Memory Resolution Error]: {format_model_error(exc)}")
+        return _fallback_memory_relationship(candidate, existing_memories)
+
+
+async def upsert_memory_with_resolution(
+    conversation_id: str,
+    category: str,
+    content: str,
+    confidence: float,
+    source_message_id: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    existing_memories = [
+        memory for memory in list_active_memories(conversation_id, limit=100)
+        if memory.get("category") == category
+    ]
+    candidate = {
+        "category": category,
+        "content": content,
+        "confidence": confidence,
+    }
+    relationship = await resolve_memory_relationship(candidate, existing_memories)
+    relation_type = relationship["relationship"]
+    reason = relationship.get("reason") or relation_type
+    if relation_type == "duplicate" and relationship.get("duplicateMemoryId"):
+        duplicate_memory = next(
+            (
+                memory for memory in existing_memories
+                if memory.get("id") == relationship["duplicateMemoryId"]
+            ),
+            None,
+        )
+        if duplicate_memory and _candidate_is_older_than_memory(conversation_id, source_message_id, duplicate_memory):
+            print(
+                "[Memory] upsert.skip_older_duplicate",
+                {
+                    "conversationId": conversation_id,
+                    "sourceMessageId": source_message_id,
+                    "duplicateMemoryId": duplicate_memory.get("id"),
+                },
+            )
+            return duplicate_memory
+        return refresh_memory(
+            conversation_id=conversation_id,
+            memory_id=relationship["duplicateMemoryId"],
+            confidence=confidence,
+            source_message_id=source_message_id,
+            resolution_reason=f"duplicate: {reason}",
+        )
+    conflict_ids = [
+        memory_id for memory_id in relationship.get("conflictingMemoryIds", [])
+        if str(memory_id or "").strip()
+    ]
+    if relation_type == "conflict":
+        conflicting_memories = [
+            memory for memory in existing_memories
+            if memory.get("id") in conflict_ids
+        ]
+        newer_conflicts = [
+            memory for memory in conflicting_memories
+            if _candidate_is_older_than_memory(conversation_id, source_message_id, memory)
+        ]
+        if newer_conflicts:
+            print(
+                "[Memory] upsert.skip_older_conflict",
+                {
+                    "conversationId": conversation_id,
+                    "sourceMessageId": source_message_id,
+                    "newerMemoryIds": [memory.get("id") for memory in newer_conflicts],
+                    "reason": reason,
+                },
+            )
+            return newer_conflicts[0]
+        conflict_ids = [
+            memory.get("id") for memory in conflicting_memories
+            if memory.get("id") and not _candidate_is_older_than_memory(conversation_id, source_message_id, memory)
+        ]
+    created = create_memory(
+        conversation_id=conversation_id,
+        category=category,
+        content=content,
+        confidence=confidence,
+        source_message_id=source_message_id,
+    )
+    if created and relation_type == "conflict":
+        supersede_memories(
+            conversation_id=conversation_id,
+            memory_ids=[memory_id for memory_id in conflict_ids if memory_id != created["id"]],
+            superseded_by_memory_id=created["id"],
+            resolution_reason=f"conflict: {reason}",
+        )
+    if created:
+        await consolidate_active_memories(conversation_id, category, preferred_memory_id=created["id"])
+    return created
+
+
+async def consolidate_active_memories(
+    conversation_id: str,
+    category: Optional[str] = None,
+    preferred_memory_id: Optional[str] = None,
+) -> None:
+    memories = list_active_memories(conversation_id, limit=100)
+    if category:
+        memories = [memory for memory in memories if memory.get("category") == category]
+    if len(memories) < 2:
+        return
+    latest = next((memory for memory in memories if memory.get("id") == preferred_memory_id), memories[0])
+    for memory in memories:
+        if memory.get("id") == latest.get("id"):
+            continue
+        relationship = await resolve_memory_relationship(latest, [memory])
+        relation_type = relationship.get("relationship")
+        reason = relationship.get("reason") or relation_type or "consolidate"
+        if relation_type == "duplicate":
+            supersede_memories(
+                conversation_id=conversation_id,
+                memory_ids=[memory["id"]],
+                superseded_by_memory_id=latest["id"],
+                resolution_reason=f"consolidate duplicate: {reason}",
+            )
+        elif relation_type == "conflict":
+            supersede_memories(
+                conversation_id=conversation_id,
+                memory_ids=[memory["id"]],
+                superseded_by_memory_id=latest["id"],
+                resolution_reason=f"consolidate conflict: {reason}",
+            )
+
+
 def schedule_memory_extraction(
     conversation: Dict[str, Any],
     user_message: Dict[str, Any],
@@ -1316,6 +1883,17 @@ def schedule_memory_extraction(
                 "conversationId": conversation.get("id"),
                 "mode": conversation.get("mode"),
                 "reason": "unsupported_conversation_mode",
+            },
+        )
+        return
+    if not agent_messages_allow_tool(conversation, agent_messages, "memory.use"):
+        print(
+            "[Memory] schedule.skip",
+            {
+                "conversationId": conversation.get("id"),
+                "mode": conversation.get("mode"),
+                "reason": "agent_tool_not_authorized",
+                "requiredTool": "memory.use",
             },
         )
         return
@@ -1463,10 +2041,15 @@ def artifact_extension(payload: Dict[str, str]) -> str:
     return "txt"
 
 
-def build_artifact_title(conversation_id: str, artifact_payload: Dict[str, str]) -> str:
+def build_artifact_title(
+    conversation_id: str,
+    artifact_payload: Dict[str, str],
+    workspace_id: Optional[str] = None,
+) -> str:
     extension = artifact_extension(artifact_payload)
     base_name = infer_artifact_base_name(artifact_payload["type"], artifact_payload["content"])
-    existing_titles = {artifact["title"] for artifact in list_artifacts(conversation_id)}
+    artifacts = list_artifacts_for_workspace(workspace_id) if workspace_id else list_artifacts(conversation_id)
+    existing_titles = {artifact["title"] for artifact in artifacts}
     candidate = f"{base_name}.{extension}"
     if candidate not in existing_titles:
         return candidate
@@ -1514,6 +2097,20 @@ def persist_artifact_from_message(
     artifact_payload = extract_artifact_payload(message["content"])
     if not artifact_payload:
         return None
+    conversation = get_conversation(conversation_id)
+    sender_id = str(message.get("senderId") or "").strip()
+    sender_agent = get_effective_agent_for_conversation(conversation, sender_id) if conversation and sender_id else None
+    if not agent_has_tool(sender_agent, "artifact.generate"):
+        print(
+            "[Artifact] persist.skip",
+            {
+                "conversationId": conversation_id,
+                "senderId": sender_id,
+                "reason": "agent_tool_not_authorized",
+                "requiredTool": "artifact.generate",
+            },
+        )
+        return None
 
     referenced_artifact_id = artifact_ref.get("artifactId") if artifact_ref else None
     if referenced_artifact_id:
@@ -1527,13 +2124,19 @@ def persist_artifact_from_message(
                 "sourceMessageId": message["id"],
                 "source": "artifactRef",
             },
+            source_conversation_id=conversation_id,
+            source_workspace_id=(conversation or {}).get("workspaceId"),
         )
         if not artifact:
             return None
         action = "updated"
         artifact_message_content = f"更新产物 {artifact['title']} 到 v{artifact['latestVersion']}"
     else:
-        artifact_title = build_artifact_title(conversation_id, artifact_payload)
+        artifact_title = build_artifact_title(
+            conversation_id,
+            artifact_payload,
+            workspace_id=(conversation or {}).get("workspaceId"),
+        )
         artifact = create_artifact(
             conversation_id=conversation_id,
             message_id=message["id"],
@@ -1543,6 +2146,7 @@ def persist_artifact_from_message(
             description=f"由 {message['senderName']} 生成",
             created_by=message["senderId"],
             created_by_type="orchestrator" if message["role"] == "orchestrator" else "agent",
+            workspace_id=(conversation or {}).get("workspaceId"),
         )
         action = "created"
         artifact_message_content = f"生成产物 {artifact['title']}"
@@ -1701,6 +2305,7 @@ READONLY_COLLABORATION_SOURCE = "groupChatCollaboration"
 READONLY_CONTEXT_MAX_CHARS = 18000
 READONLY_FILE_MAX_CHARS = 6000
 READONLY_ARTIFACT_MAX_CHARS = 6000
+CollaborationEmitter = Callable[[str, Dict[str, Any]], Awaitable[None]]
 
 
 def _unique_ordered(values: List[str]) -> List[str]:
@@ -1768,6 +2373,7 @@ def _build_readonly_context(
     conversation: Dict[str, Any],
     workspace_action_context: Optional[Dict[str, Any]],
     artifact_ref: Optional[Dict[str, Any]],
+    allow_workspace_context: bool = False,
 ) -> str:
     sections = [
         "[只读协作约束]",
@@ -1776,7 +2382,7 @@ def _build_readonly_context(
         "- 不要输出需要后端自动应用的 patch；如需修改，请建议用户后续发起执行任务。",
     ]
     workspace_id = str(conversation.get("workspaceId") or "").strip()
-    if workspace_id:
+    if workspace_id and allow_workspace_context:
         workspace_context = read_workspace_agents_context(workspace_id)
         if workspace_context:
             sections.append("[Workspace Agents Context]\n" + workspace_context[:4000])
@@ -1875,20 +2481,214 @@ async def execute_readonly_agent_chat(
     user_input: str,
     exclude_message_id: Optional[str] = None,
 ) -> str:
-    # Force all runtimes through the native model chat path for read-only
-    # collaboration. Platform CLI runtimes may edit files when used normally.
+    readonly_agent = _readonly_agent_config(agent)
+    return await call_agent_once(
+        conversation["id"],
+        readonly_agent,
+        user_input,
+        exclude_message_id=exclude_message_id,
+    )
+
+
+def _readonly_agent_config(agent: Dict[str, Any]) -> Dict[str, Any]:
     readonly_system_prompt = (
         system_prompt_for_agent(agent)
         + "\n\n[只读协作模式]\n"
         "你只能基于上下文分析、review 和给建议。不要修改文件，不要声称已经执行命令，"
         "不要输出可自动应用的 diff。"
     )
-    return await call_agent_once(
+    # Force all runtimes through the native model chat path for read-only
+    # collaboration. Platform CLI runtimes may edit files when used normally.
+    return {**agent, "runtime": "native", "systemPrompt": readonly_system_prompt}
+
+
+async def stream_readonly_agent_chat(
+    agent: Dict[str, Any],
+    conversation: Dict[str, Any],
+    user_input: str,
+    exclude_message_id: Optional[str] = None,
+):
+    readonly_agent = _readonly_agent_config(agent)
+    async for chunk in stream_agent_reply(
         conversation["id"],
-        {**agent, "runtime": "native", "systemPrompt": readonly_system_prompt},
+        readonly_agent,
         user_input,
         exclude_message_id=exclude_message_id,
+    ):
+        yield chunk
+
+
+async def _emit_collaboration_event(
+    emit: Optional[CollaborationEmitter],
+    event_type: str,
+    payload: Dict[str, Any],
+) -> None:
+    if emit:
+        await emit(event_type, payload)
+
+
+async def _emit_collaboration_completed(
+    emit: Optional[CollaborationEmitter],
+    conversation_id: str,
+    message: Dict[str, Any],
+    finish_reason: str = "stop",
+) -> None:
+    await _emit_collaboration_event(
+        emit,
+        "conversation.message.completed",
+        {
+            "conversationId": conversation_id,
+            "messageId": message["id"],
+            "finishReason": finish_reason,
+            "fullMessage": message,
+        },
     )
+
+
+async def _emit_collaboration_status(
+    emit: Optional[CollaborationEmitter],
+    conversation_id: str,
+    agent: Dict[str, Any],
+    status: str,
+) -> None:
+    await _emit_collaboration_event(
+        emit,
+        "agent.status.changed",
+        {
+            "conversationId": conversation_id,
+            "agentId": agent["id"],
+            "newStatus": status,
+            "timestamp": ws_now(),
+        },
+    )
+
+
+async def _execute_collaboration_agent_step(
+    conversation: Dict[str, Any],
+    user_message: Dict[str, Any],
+    agent: Dict[str, Any],
+    agent_input: str,
+    role: str,
+    metadata: Dict[str, Any],
+    emit: Optional[CollaborationEmitter],
+) -> Tuple[str, str, str]:
+    conversation_id = conversation["id"]
+    message_id = create_id("msg")
+    if emit:
+        await _emit_collaboration_status(emit, conversation_id, agent, "thinking")
+        await _emit_collaboration_event(
+            emit,
+            "agent.thinking.started",
+            {
+                "conversationId": conversation_id,
+                "agentId": agent["id"],
+                "agentName": agent.get("name") or "Agent",
+                "messageId": message_id,
+                "taskPlanStep": metadata.get("taskPlanStep"),
+                "source": READONLY_COLLABORATION_SOURCE,
+                "readOnly": True,
+            },
+        )
+    finish_reason = "stop"
+    if emit:
+        reply_parts: List[str] = []
+        sequence = 0
+        try:
+            async for chunk in stream_readonly_agent_chat(
+                agent,
+                conversation,
+                agent_input,
+                exclude_message_id=user_message["id"],
+            ):
+                sequence += 1
+                reply_parts.append(chunk)
+                await _emit_collaboration_event(
+                    emit,
+                    "conversation.message.chunk",
+                    {
+                        "messageId": message_id,
+                        "conversationId": conversation_id,
+                        "senderId": agent["id"],
+                        "senderName": agent.get("name") or "Agent",
+                        "role": role,
+                        "messageType": "text",
+                        "chunk": chunk,
+                        "sequence": sequence,
+                        "isFullContent": False,
+                        "source": READONLY_COLLABORATION_SOURCE,
+                        "readOnly": True,
+                        "taskPlanStep": metadata.get("taskPlanStep"),
+                        "metadata": metadata,
+                    },
+                )
+            reply_content = "".join(reply_parts).strip()
+        except Exception as exc:
+            reply_content = fallback_reply(agent, agent_input, exc)
+            finish_reason = "error"
+            await _emit_collaboration_event(
+                emit,
+                "conversation.message.chunk",
+                {
+                    "messageId": message_id,
+                    "conversationId": conversation_id,
+                    "senderId": agent["id"],
+                    "senderName": agent.get("name") or "Agent",
+                    "role": role,
+                    "messageType": "text",
+                    "chunk": reply_content,
+                    "sequence": sequence + 1,
+                    "isFullContent": True,
+                    "source": READONLY_COLLABORATION_SOURCE,
+                    "readOnly": True,
+                    "taskPlanStep": metadata.get("taskPlanStep"),
+                    "metadata": metadata,
+                },
+            )
+        return message_id, reply_content, finish_reason
+    try:
+        reply_content = await execute_readonly_agent_chat(
+            agent,
+            conversation,
+            agent_input,
+            exclude_message_id=user_message["id"],
+        )
+    except Exception as exc:
+        reply_content = fallback_reply(agent, agent_input, exc)
+        finish_reason = "error"
+    return message_id, reply_content, finish_reason
+
+
+def _build_collaboration_summary_input(
+    user_input: str,
+    task_plan: List[Dict[str, Any]],
+    readonly_context: str,
+    prior_outputs: List[Dict[str, str]],
+) -> str:
+    sections = [
+        readonly_context,
+        "[用户原始需求]\n" + user_input,
+        "[任务计划]\n" + json.dumps(task_plan, ensure_ascii=False),
+        "[各 Agent 产出]\n"
+        + "\n\n".join(
+            f"{item['agentName']}：\n{item['content'][:4000]}"
+            for item in prior_outputs
+        ),
+        "请作为 Orchestrator 做简短总结：概括每个 Agent 的核心意见、共识/分歧和下一步建议。"
+        "不要声称已经修改文件或执行命令。",
+    ]
+    return "\n\n".join(section for section in sections if section)
+
+
+def _fallback_collaboration_summary(prior_outputs: List[Dict[str, str]]) -> str:
+    if not prior_outputs:
+        return "群聊协作已完成，但没有可汇总的 Agent 产出。"
+    lines = ["群聊协作已完成，核心结果如下："]
+    for item in prior_outputs:
+        content = re.sub(r"\s+", " ", item["content"]).strip()
+        if len(content) > 220:
+            content = content[:220] + "..."
+        lines.append(f"- {item['agentName']}：{content}")
+    return "\n".join(lines)
 
 
 async def run_group_chat_collaboration(
@@ -1900,8 +2700,15 @@ async def run_group_chat_collaboration(
     web_search_metadata: Optional[Dict[str, Any]],
     web_search_model_user_input: str,
     execution_decision: Dict[str, Any],
+    emit: Optional[CollaborationEmitter] = None,
 ) -> Optional[Dict[str, Any]]:
-    intent_result = analyze_orchestrator_intent(user_input)
+    try:
+        from app.services.planning_service import plan_group_chat_collaboration
+
+        intent_result = await plan_group_chat_collaboration(conversation, user_input)
+    except Exception as exc:
+        print(f"⚠️ [Group Chat Planner Fallback]: {format_model_error(exc)}")
+        intent_result = analyze_orchestrator_intent(user_input)
     if intent_result.get("intent") != "task":
         return None
 
@@ -1960,6 +2767,7 @@ async def run_group_chat_collaboration(
     )
     agent_messages.append(orchestrator_message)
     update_conversation_activity(conversation["id"], plan_content)
+    await _emit_collaboration_completed(emit, conversation["id"], orchestrator_message)
 
     if workspace_action_context and workspace_action_context.get("action") == "clarify":
         clarification = (
@@ -1982,6 +2790,7 @@ async def run_group_chat_collaboration(
         )
         agent_messages.append(clarify_message)
         update_conversation_activity(conversation["id"], clarification)
+        await _emit_collaboration_completed(emit, conversation["id"], clarify_message)
         return {
             "handled": True,
             "agentMessages": agent_messages,
@@ -1991,7 +2800,24 @@ async def run_group_chat_collaboration(
             "summary": clarification,
         }
 
-    readonly_context = _build_readonly_context(conversation, workspace_action_context, artifact_ref)
+    callable_task_agents = [
+        agent
+        for agent in [
+        get_effective_agent_for_conversation(conversation, str(step.get("agentId") or ""))
+        for step in task_plan
+        ]
+        if agent_is_callable(agent)
+    ]
+    allow_workspace_context = bool(callable_task_agents) and all(
+        agent_has_tool(agent, "workspace.read")
+        for agent in callable_task_agents
+    )
+    readonly_context = _build_readonly_context(
+        conversation,
+        workspace_action_context,
+        artifact_ref,
+        allow_workspace_context=allow_workspace_context,
+    )
     prior_outputs: List[Dict[str, str]] = []
     for step in task_plan:
         agent = get_effective_agent_for_conversation(conversation, str(step.get("agentId") or ""))
@@ -2003,27 +2829,26 @@ async def run_group_chat_collaboration(
             readonly_context,
             prior_outputs,
         )
-        try:
-            reply_content = await execute_readonly_agent_chat(
-                agent,
-                conversation,
-                agent_input,
-                exclude_message_id=user_message["id"],
-            )
-            finish_reason = "stop"
-        except Exception as exc:
-            reply_content = fallback_reply(agent, user_input, exc)
-            finish_reason = "error"
         metadata = {
             "source": READONLY_COLLABORATION_SOURCE,
             "readOnly": True,
             "taskPlan": task_plan,
             "taskPlanStep": step,
             "workspaceActionContext": workspace_action_context,
-            "finishReason": finish_reason,
+            "finishReason": "running",
         }
         if web_search_metadata:
             metadata["webSearch"] = web_search_metadata
+        message_id, reply_content, finish_reason = await _execute_collaboration_agent_step(
+            conversation=conversation,
+            user_message=user_message,
+            agent=agent,
+            agent_input=agent_input,
+            role="agent",
+            metadata=metadata,
+            emit=emit,
+        )
+        metadata["finishReason"] = finish_reason
         agent_message = create_message(
             conversation_id=conversation["id"],
             sender_id=agent["id"],
@@ -2031,17 +2856,91 @@ async def run_group_chat_collaboration(
             role="agent",
             msg_type="text",
             content=reply_content,
+            message_id=message_id,
             metadata=metadata,
         )
         agent_messages.append(agent_message)
         prior_outputs.append({"agentName": agent.get("name") or "Agent", "content": reply_content})
         update_conversation_activity(conversation["id"], reply_content)
+        await _emit_collaboration_completed(emit, conversation["id"], agent_message, finish_reason)
         artifact_result = persist_artifact_from_message(conversation["id"], agent_message, artifact_ref)
         if artifact_result:
-            artifacts.append({**artifact_result["artifact"], "action": artifact_result["action"]})
+            artifact_payload = {**artifact_result["artifact"], "action": artifact_result["action"]}
+            artifacts.append(artifact_payload)
             artifact_message = artifact_result["message"]
             agent_messages.append(artifact_message)
             update_conversation_activity(conversation["id"], artifact_message["content"])
+            await _emit_collaboration_event(
+                emit,
+                "artifact.created",
+                {
+                    "conversationId": conversation["id"],
+                    "artifact": artifact_result["artifact"],
+                    "action": artifact_result["action"],
+                },
+            )
+            await _emit_collaboration_completed(emit, conversation["id"], artifact_message)
+        if emit:
+            await _emit_collaboration_status(emit, conversation["id"], agent, "online")
+
+    summary_content = _fallback_collaboration_summary(prior_outputs)
+    if prior_outputs:
+        orchestrator_agent = get_enabled_orchestrator(conversation) or get_agent(ORCHESTRATOR_AGENT_ID)
+        if orchestrator_agent:
+            summary_metadata = {
+                "source": READONLY_COLLABORATION_SOURCE,
+                "readOnly": True,
+                "taskPlan": task_plan,
+                "workspaceActionContext": workspace_action_context,
+                "summary": True,
+            }
+            summary_input = _build_collaboration_summary_input(
+                user_input,
+                task_plan,
+                readonly_context,
+                prior_outputs,
+            )
+            try:
+                message_id, summary_content, summary_finish_reason = await _execute_collaboration_agent_step(
+                    conversation=conversation,
+                    user_message=user_message,
+                    agent=orchestrator_agent,
+                    agent_input=summary_input,
+                    role="orchestrator",
+                    metadata=summary_metadata,
+                    emit=emit,
+                )
+            except Exception as exc:
+                message_id = create_id("msg")
+                summary_finish_reason = "error"
+                summary_content = _fallback_collaboration_summary(prior_outputs)
+                print(f"⚠️ [Group Chat Summary Fallback]: {format_model_error(exc)}")
+            summary_metadata["finishReason"] = summary_finish_reason
+            summary_message = create_message(
+                conversation_id=conversation["id"],
+                sender_id=ORCHESTRATOR_AGENT_ID,
+                sender_name="Orchestrator",
+                role="orchestrator",
+                msg_type="text",
+                content=summary_content,
+                message_id=message_id,
+                metadata=summary_metadata,
+            )
+            agent_messages.append(summary_message)
+            update_conversation_activity(conversation["id"], summary_content)
+            await _emit_collaboration_completed(
+                emit,
+                conversation["id"],
+                summary_message,
+                summary_finish_reason,
+            )
+            if emit:
+                await _emit_collaboration_status(
+                    emit,
+                    conversation["id"],
+                    orchestrator_agent,
+                    "online",
+                )
 
     return {
         "handled": True,
@@ -2049,7 +2948,7 @@ async def run_group_chat_collaboration(
         "artifacts": artifacts,
         "workspaceActionContext": workspace_action_context,
         "taskPlan": task_plan,
-        "summary": "群聊只读协作已完成",
+        "summary": summary_content,
     }
 
 
@@ -2059,18 +2958,16 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
     event_id = event.get("eventId")
     data = event.get("data") or {}
     conversation_id = str(data.get("conversationId", "")).strip()
-    content = str(data.get("content", "")).strip()
-    attachments = normalize_message_attachments(data)
-    if not content and attachments:
-        content = attachment_summary_content(attachments)
+    original_content = str(data.get("content", "")).strip()
+    content = original_content
     target_agent_id = str(data.get("targetAgentId") or data.get("targetAgentID") or "").strip() or None
     quoted_message_id = get_quoted_message_id(data)
 
     if not conversation_id:
         await send_ws_error(websocket, event_id, 40000, "conversationId 不能为空")
         return
-    if not content and not attachments:
-        await send_ws_error(websocket, event_id, 40000, "消息内容不能为空")
+    if is_system_message_payload(data):
+        await send_ws_error(websocket, event_id, 40002, "客户端不允许创建 system/status 消息")
         return
 
     current_user = current_user or get_default_user()
@@ -2079,6 +2976,14 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
         await send_ws_error(websocket, event_id, 40001, "会话不存在")
         return
     ws_manager.subscribe(websocket, current_user["id"], conversation_id)
+    resolved_attachments = resolve_message_attachments(data, conversation_id)
+    attachments = resolved_attachments["public"]
+    internal_attachments = resolved_attachments["internal"]
+    attachment_summary = attachment_summary_content(attachments) if attachments else ""
+    model_content = content or attachment_summary
+    if not content and not attachments:
+        await send_ws_error(websocket, event_id, 40000, "消息内容不能为空")
+        return
     quoted_message = None
     message_metadata: Dict[str, Any] = {}
     if quoted_message_id:
@@ -2091,22 +2996,36 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
         data,
         conversation_id,
         current_user["id"],
-        content,
+        model_content,
     )
     if artifact_ref_error:
         await send_ws_error(websocket, event_id, 40003, artifact_ref_error)
         return
     if artifact_ref:
         message_metadata["artifactRef"] = artifact_ref
+    attachment_context = build_attachment_context(attachments) if attachments else {"items": [], "context": ""}
     if attachments:
         message_metadata["attachments"] = attachments
-    model_user_input = build_user_input_with_references(content, quoted_message, artifact_ref)
+        message_metadata["attachmentContext"] = attachment_context
+    model_user_input = build_user_input_with_references(model_content, quoted_message, artifact_ref)
+    if original_content and attachments and attachment_read_only_intent(original_content):
+        full_context = build_attachment_full_context(internal_attachments)
+        if full_context:
+            model_user_input = f"{model_user_input}\n\n[本轮临时加载的附件正文]\n{full_context}".strip()
+    model_user_input = append_attachment_context_to_input(model_user_input, attachment_context)
     execution_payload = payload_with_resolved_artifact_ref(data, artifact_ref)
+    if attachments:
+        execution_payload = {
+            **execution_payload,
+            "attachments": internal_attachments,
+            "attachmentPlaceholders": attachments,
+            "attachmentContext": attachment_context,
+        }
     pending_clarification = latest_pending_workspace_clarification(conversation_id) if artifact_ref else None
     if pending_clarification and looks_like_target_clarification(content, artifact_ref):
         execution_payload = {**execution_payload, "pendingWorkspaceClarification": True}
     execution_user_input = build_execution_input_for_workspace_action(
-        content,
+        model_content,
         model_user_input,
         pending_clarification,
         artifact_ref,
@@ -2142,7 +3061,10 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
             user_message["id"],
             attachments,
         )
-    update_conversation_activity(conversation_id, content)
+    update_conversation_activity(conversation_id, content or attachment_summary)
+    chat_context: Dict[str, Any] = {"excludeMessageId": user_message["id"]}
+    if has_vision_attachments(internal_attachments):
+        chat_context["visionAttachments"] = internal_attachments
     await emit_conversation_event(
         current_user,
         conversation_id,
@@ -2153,40 +3075,53 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
 
     total_artifacts = 0
     completed_messages: List[Dict[str, Any]] = []
-    try:
-        execution_decision = await classify_for_conversation(
-            conversation=conversation,
-            selected_agent=target_agent,
-            content=content,
-            payload=execution_payload,
-        )
-    except Exception as exc:
-        error_content = f"意图识别失败：{format_model_error(exc)}"
-        error_message = create_message(
-            conversation_id=conversation_id,
-            sender_id="system",
-            sender_name="系统",
-            role="system",
-            msg_type="status",
-            content=error_content,
-            metadata={"event": "execution.mode.failed"},
-        )
-        completed_messages.append(error_message)
-        await send_message_completed(current_user, conversation_id, event_id, error_message)
-        await emit_conversation_event(
-            current_user,
-            conversation_id,
-            "conversation.all_tasks.completed",
-            event_id,
-            {
-                "conversationId": conversation_id,
-                "summary": "意图识别失败",
-                "totalMessages": 2,
-                "totalArtifacts": 0,
-                "contextUsage": build_context_usage(conversation),
-            },
-        )
-        return
+    raw_execution_mode = str(data.get("executionMode") or data.get("runMode") or "").strip().lower()
+    if attachments and not original_content and raw_execution_mode not in {"deployment", "deploy"}:
+        execution_decision = {
+            "executionMode": "chat",
+            "intent": "attachment_only",
+            "confidence": 1.0,
+            "reason": "用户只上传了附件，默认基于附件摘要走普通聊天",
+        }
+    else:
+        execution_decision = None
+    if execution_decision is None:
+        classification_content = append_attachment_context_to_input(content, attachment_context)
+        try:
+            execution_decision = await classify_for_conversation(
+                conversation=conversation,
+                selected_agent=target_agent,
+                content=classification_content,
+                payload=execution_payload,
+            )
+        except Exception as exc:
+            error_content = f"意图识别失败：{format_model_error(exc)}"
+            error_message = create_message(
+                conversation_id=conversation_id,
+                sender_id="system",
+                sender_name="系统",
+                role="system",
+                msg_type="status",
+                content=error_content,
+                metadata={"event": "execution.mode.failed"},
+            )
+            completed_messages.append(error_message)
+            await send_message_completed(current_user, conversation_id, event_id, error_message)
+            await emit_conversation_event(
+                current_user,
+                conversation_id,
+                "conversation.all_tasks.completed",
+                event_id,
+                {
+                    "conversationId": conversation_id,
+                    "summary": "意图识别失败",
+                    "totalMessages": 2,
+                    "totalArtifacts": 0,
+                    "contextUsage": build_context_usage(conversation),
+                },
+            )
+            return
+    execution_decision = maybe_force_attachment_chat(content, attachments, execution_decision)
     if execution_decision["executionMode"] == "sandbox" and artifact_ref:
         execution_decision = {**execution_decision, "suggestedRunPrompt": execution_user_input}
     await emit_conversation_event(
@@ -2202,6 +3137,140 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
             "reason": execution_decision["reason"],
         },
     )
+    if execution_decision["executionMode"] == "deployment":
+        deploy_agent_id = target_agent.get("id") if target_agent else target_agent_id
+        if not conversation_allows_agent_tool(conversation, "deploy.run", deploy_agent_id):
+            status_content = "当前 Agent 未启用 deploy.run，不能发起部署。"
+            status_message = create_message(
+                conversation_id=conversation_id,
+                sender_id="system",
+                sender_name="系统",
+                role="system",
+                msg_type="status",
+                content=status_content,
+                metadata={
+                    "event": "agent.tool.rejected",
+                    "requiredTool": "deploy.run",
+                    "executionMode": "deployment",
+                },
+            )
+            completed_messages.append(status_message)
+            update_conversation_activity(conversation_id, status_content)
+            await send_message_completed(current_user, conversation_id, event_id, status_message)
+            await emit_conversation_event(
+                current_user,
+                conversation_id,
+                "conversation.all_tasks.completed",
+                event_id,
+                {
+                    "conversationId": conversation_id,
+                    "summary": status_content,
+                    "totalMessages": 2,
+                    "totalArtifacts": 0,
+                    "contextUsage": build_context_usage(conversation),
+                    "executionMode": "deployment",
+                },
+            )
+            schedule_memory_extraction(conversation, user_message, completed_messages)
+            return
+        workspace_id = str(conversation.get("workspaceId") or "").strip()
+        workspace = get_workspace(workspace_id, owner_user_id=current_user["id"]) if workspace_id else None
+        if not workspace:
+            status_content = "当前会话没有绑定 Workspace，无法部署。请先在带工作区的 single/group 会话中发起部署。"
+            status_message = create_message(
+                conversation_id=conversation_id,
+                sender_id="system",
+                sender_name="系统",
+                role="system",
+                msg_type="status",
+                content=status_content,
+                metadata={
+                    "source": "chatDeployment",
+                    "status": "requires_config",
+                    "reason": "missing_workspace",
+                },
+            )
+            completed_messages.append(status_message)
+            update_conversation_activity(conversation_id, status_content)
+            await send_message_completed(current_user, conversation_id, event_id, status_message)
+            await emit_conversation_event(
+                current_user,
+                conversation_id,
+                "conversation.all_tasks.completed",
+                event_id,
+                {
+                    "conversationId": conversation_id,
+                    "summary": status_content,
+                    "totalMessages": 2,
+                    "totalArtifacts": 0,
+                    "contextUsage": build_context_usage(conversation),
+                    "executionMode": "deployment",
+                },
+            )
+            schedule_memory_extraction(conversation, user_message, completed_messages)
+            return
+
+        loop = asyncio.get_running_loop()
+        deployment_message_futures: List[asyncio.Future] = []
+
+        def deployment_message_callback(message: Dict[str, Any]) -> None:
+            future = asyncio.run_coroutine_threadsafe(
+                send_message_completed(current_user, conversation_id, event_id, message),
+                loop,
+            )
+            deployment_message_futures.append(asyncio.wrap_future(future, loop=loop))
+
+        explicit_public_base_url = str(data.get("publicBaseUrl") or "").strip().rstrip("/")
+        if not explicit_public_base_url:
+            forwarded_proto = websocket.headers.get("x-forwarded-proto")
+            forwarded_host = websocket.headers.get("x-forwarded-host")
+            host = forwarded_host or websocket.headers.get("host") or websocket.url.hostname or "localhost"
+            scheme = forwarded_proto or ("https" if websocket.url.scheme == "wss" else "http")
+            explicit_public_base_url = f"{scheme}://{host}".rstrip("/")
+
+        deployment = create_workspace_deployment_request(
+            workspace_id=workspace["id"],
+            owner_user_id=current_user["id"],
+            conversation_id=conversation_id,
+            config=data.get("deploymentConfig") if isinstance(data.get("deploymentConfig"), dict) else {},
+            public_base_url=explicit_public_base_url,
+            chat_deployment=True,
+            on_message=deployment_message_callback,
+        )
+        initial_message = deployment.get("initialMessage")
+        if initial_message:
+            completed_messages.append(initial_message)
+
+        async def run_deployment_background() -> None:
+            await asyncio.to_thread(run_workspace_deployment, deployment["id"], deployment_message_callback)
+            if deployment_message_futures:
+                await asyncio.gather(*deployment_message_futures, return_exceptions=True)
+            final_deployment = get_workspace_deployment(deployment["id"], owner_user_id=current_user["id"])
+            if final_deployment and final_deployment.get("status") == "queued":
+                return
+            await emit_conversation_event(
+                current_user,
+                conversation_id,
+                "conversation.all_tasks.completed",
+                event_id,
+                {
+                    "conversationId": conversation_id,
+                    "summary": (
+                        "部署已完成"
+                        if final_deployment and final_deployment.get("status") == "deployed"
+                        else "部署流程已结束"
+                    ),
+                    "totalMessages": len(deployment_message_futures) + (1 if initial_message else 0),
+                    "totalArtifacts": 0,
+                    "contextUsage": build_context_usage(conversation),
+                    "executionMode": "deployment",
+                    "deployment": final_deployment,
+                },
+            )
+
+        asyncio.create_task(run_deployment_background())
+        schedule_memory_extraction(conversation, user_message, completed_messages)
+        return
     if execution_decision["executionMode"] == "sandbox":
         async def emit_run(event_type: str, payload: Dict[str, Any]) -> None:
             await emit_conversation_event(current_user, conversation_id, event_type, event_id, payload)
@@ -2226,7 +3295,7 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
                             agent,
                             conversation,
                             model_user_input,
-                            {"excludeMessageId": user_message["id"]},
+                            chat_context,
                         )
                     except Exception as answer_exc:
                         answer_content = fallback_reply(agent, content, answer_exc)
@@ -2352,14 +3421,19 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
 
     web_search_model_user_input = model_user_input
     web_search_metadata: Optional[Dict[str, Any]] = None
-    web_search_model_user_input, web_search_metadata = await prepare_web_search_for_chat(
-        content,
-        model_user_input,
-        payload=data,
-        conversation=conversation,
-    )
+    web_agent_id = target_agent.get("id") if target_agent else target_agent_id
+    if conversation_allows_agent_tool(conversation, "web.search", web_agent_id):
+        web_search_model_user_input, web_search_metadata = await prepare_web_search_for_chat(
+            content,
+            model_user_input,
+            payload=data,
+            conversation=conversation,
+        )
 
     if should_run_group_chat_collaboration(conversation, target_agent, execution_decision):
+        async def emit_collaboration(event_type: str, payload: Dict[str, Any]) -> None:
+            await emit_conversation_event(current_user, conversation_id, event_type, event_id, payload)
+
         collaboration = await run_group_chat_collaboration(
             conversation=conversation,
             user_message=user_message,
@@ -2369,12 +3443,11 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
             web_search_metadata=web_search_metadata,
             web_search_model_user_input=web_search_model_user_input,
             execution_decision=execution_decision,
+            emit=emit_collaboration,
         )
         if collaboration and collaboration.get("handled"):
             collaboration_messages = collaboration.get("agentMessages") or []
             completed_messages.extend(collaboration_messages)
-            for message in collaboration_messages:
-                await send_message_completed(current_user, conversation_id, event_id, message)
             total_artifacts += len(collaboration.get("artifacts") or [])
             await emit_conversation_event(
                 current_user,
@@ -2397,14 +3470,14 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
         intent_result = analyze_orchestrator_intent(content)
         if intent_result["intent"] == "chat":
             orchestrator_content = intent_result["reply"]
-            if quoted_message or artifact_ref or (web_search_metadata and web_search_metadata.get("shouldSearch")):
+            if attachments or quoted_message or artifact_ref or (web_search_metadata and web_search_metadata.get("shouldSearch")):
                 orchestrator_agent = get_enabled_orchestrator(conversation) or choose_agent_for_conversation(conversation)
                 try:
                     orchestrator_content = await runtime_router.execute_chat(
                         orchestrator_agent,
                         conversation,
                         web_search_model_user_input,
-                        {"excludeMessageId": user_message["id"]},
+                        chat_context,
                     )
                 except Exception as exc:
                     orchestrator_content = fallback_reply(orchestrator_agent, content, exc)
@@ -2471,7 +3544,7 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
             agent,
             conversation,
             web_search_model_user_input,
-            {"excludeMessageId": user_message["id"]},
+            chat_context,
         )
         await emit_conversation_event(
             current_user,
