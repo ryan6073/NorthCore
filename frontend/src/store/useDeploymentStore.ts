@@ -63,8 +63,57 @@ export const useDeploymentStore = create<DeploymentState>((set, get) => ({
   startDeploy: async (workspaceId, payload) => {
     set({ isLoading: true });
     try {
-      const res = await deploymentService.createDeployment(workspaceId, payload);
-      const newDeployment = res.data;
+      let res: any;
+      // Use mock mode if VITE_USE_MOCK is true
+      if ((import.meta as any).env?.VITE_USE_MOCK === 'true') {
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        const agentId = payload.targetAgentId || payload.agentId;
+        const { mockAgents } = await import('@/mock');
+        const agent = mockAgents.find((a) => a.id === agentId);
+        const hasDeployTool = agent?.tools?.some((t) => t.id === 'deploy.run' && t.enabled) ?? false;
+
+        if (!hasDeployTool) {
+          res = {
+            code: 40002,
+            message: "当前 Agent 未启用 deploy.run，不能发起部署",
+            data: null,
+          };
+        } else {
+          const newId = 'dep-' + Math.random().toString(36).substring(2, 11);
+          res = {
+            code: 0,
+            message: "success",
+            data: {
+              id: newId,
+              workspaceId,
+              ownerUserId: 'user-mock',
+              conversationId: payload.conversationId || null,
+              runId: payload.runId || null,
+              status: 'running',
+              deployType: 'local_docker',
+              projectType: 'node',
+              serviceUrls: {},
+              ports: {},
+              containerIds: [newId + '-container'],
+              config: payload.config || {},
+              logs: 'Building Docker image...\nStep 1/5 : FROM node:18-alpine\nStep 2/5 : WORKDIR /app\nStep 3/5 : COPY . .\nStep 4/5 : RUN npm install\nStep 5/5 : CMD ["npm", "run", "dev"]',
+              error: '',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            } as WorkspaceDeployment,
+          };
+        }
+      } else {
+        res = await deploymentService.createDeployment(workspaceId, payload);
+      }
+
+      if (res && res.code === 40002) {
+        throw new Error(res.message || "当前 Agent 未启用 deploy.run，不能发起部署");
+      }
+      if (res && res.code !== 0) {
+        throw new Error(res.message || "部署请求失败");
+      }
+      const newDeployment = res.data as WorkspaceDeployment;
 
       // Update history & active deployment
       set((state) => {
@@ -83,7 +132,7 @@ export const useDeploymentStore = create<DeploymentState>((set, get) => ({
       });
 
       // Start polling
-      if (['queued', 'running'].includes(newDeployment.status)) {
+      if (newDeployment && ['queued', 'running'].includes(newDeployment.status)) {
         get().startPolling(newDeployment.id, workspaceId);
       }
 

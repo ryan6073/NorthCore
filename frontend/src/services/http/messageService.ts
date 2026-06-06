@@ -13,6 +13,7 @@ interface GetMessageListParams {
   page?: number;
   pageSize?: number;
   beforeId?: string;
+  limit?: number;
 }
 
 export async function getMessageList(

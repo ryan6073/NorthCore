@@ -1,5 +1,5 @@
 import React from 'react';
-import { MessageSquare, Users, Folder, Briefcase, Bell, Settings } from 'lucide-react';
+import { MessageSquare, Users, Folder, Cloud, Bell, Settings } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 export const LeftNavBar: React.FC = () => {
@@ -19,7 +19,7 @@ export const LeftNavBar: React.FC = () => {
     { id: 'conversations', label: '会话', icon: MessageSquare },
     { id: 'agents', label: '智能体', icon: Users },
     { id: 'files', label: '文件', icon: Folder },
-    { id: 'workspace', label: '工作区', icon: Briefcase },
+    { id: 'workspace', label: '沙箱工作区', icon: Cloud },
     { id: 'notifications', label: '通知', icon: Bell, badge: unreadCount },
     { id: 'settings', label: '设置', icon: Settings },
   ];

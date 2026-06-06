@@ -13,6 +13,7 @@ import sandboxService from '@/services/http/sandboxService';
 import DocPreview from './DocPreview';
 import PptPreview from './PptPreview';
 import { PptxPreview } from '@/components/file/PptxPreview';
+import { ZoomableContainer } from '../common/ZoomableContainer';
 
 interface ArtifactPreviewProps {
   artifact: Artifact | null;
@@ -967,10 +968,12 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
                 </div>
               </div>
             ) : mermaidSvg ? (
-              <div 
-                className="w-full h-full flex items-center justify-center"
-                dangerouslySetInnerHTML={{ __html: mermaidSvg }}
-              />
+              <ZoomableContainer className="w-full h-full">
+                <div 
+                  className="flex items-center justify-center"
+                  dangerouslySetInnerHTML={{ __html: mermaidSvg }}
+                />
+              </ZoomableContainer>
             ) : (
               <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
                 <RefreshCw className="w-4 h-4 animate-spin" /> 渲染中...

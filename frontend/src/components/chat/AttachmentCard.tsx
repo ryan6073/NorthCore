@@ -10,8 +10,14 @@ interface AttachmentCardProps {
 
 const resolveAttachmentUrl = (url?: string) => {
   if (!url) return '';
-  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('blob:')) {
-    return url;
+  
+  let processedUrl = url;
+  if (processedUrl.includes('http://localhost:9007')) {
+    processedUrl = processedUrl.replace('http://localhost:9007', 'https://test2.yeolde.fun');
+  }
+
+  if (processedUrl.startsWith('http://') || processedUrl.startsWith('https://') || processedUrl.startsWith('blob:')) {
+    return processedUrl;
   }
   
   let apiBase = '';

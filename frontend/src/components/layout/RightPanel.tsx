@@ -5,6 +5,7 @@ import { AgentMiniConfigPanel } from '../agent/AgentMiniConfigPanel';
 import ArtifactList from '../artifact/ArtifactList';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 import { SandboxPanel } from '../sandbox/SandboxPanel';
+import { FilePreviewPanel } from '../file/FilePreviewPanel';
 
 interface RightPanelProps {
   conversation: Conversation | undefined;
@@ -27,6 +28,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
   const isDragging = useRef(false);
   const startY = useRef(0);
   const startHeight = useRef(0);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -42,7 +44,9 @@ const RightPanel: React.FC<RightPanelProps> = ({
     if (!isDragging.current) return;
     const deltaY = e.clientY - startY.current;
     const newHeight = startHeight.current + deltaY;
-    if (newHeight >= 150 && newHeight <= 500) {
+    const containerHeight = containerRef.current?.clientHeight || window.innerHeight;
+    const maxTopHeight = containerHeight - 50;
+    if (newHeight >= 150 && newHeight <= maxTopHeight) {
       setTopHeight(newHeight);
     }
   }, []);
@@ -64,7 +68,22 @@ const RightPanel: React.FC<RightPanelProps> = ({
 
   const globalRightPanelTab = useAgentHubStore(state => state.rightPanelTab);
   const setGlobalRightPanelTab = useAgentHubStore(state => state.setRightPanelTab);
-  const [localRightPanelTab, setLocalRightPanelTab] = useState<'artifacts' | 'sandbox'>('artifacts');
+  const [localRightPanelTab, setLocalRightPanelTab] = useState<'artifacts' | 'sandbox' | 'file-preview'>('artifacts');
+
+  const selectedWorkspaceFilePath = useAgentHubStore(state => state.selectedWorkspaceFilePath);
+  const selectedWorkspaceFileContent = useAgentHubStore(state => state.selectedWorkspaceFileContent);
+  const serverSelectedFileContent = useAgentHubStore(state => state.serverSelectedFileContent);
+
+  const isServerPreview = !!(serverSelectedFileContent && serverSelectedFileContent.path === selectedWorkspaceFilePath);
+  const localPreviewItem = !isServerPreview && selectedWorkspaceFilePath ? {
+    path: selectedWorkspaceFilePath,
+    name: selectedWorkspaceFilePath.split('/').pop() || '',
+    content: selectedWorkspaceFileContent || '',
+    isText: true,
+    isLocal: true
+  } : null;
+
+  const previewItem = isServerPreview ? serverSelectedFileContent : localPreviewItem;
 
   const rightPanelTab = customConversationId ? localRightPanelTab : globalRightPanelTab;
   const setRightPanelTab = customConversationId ? setLocalRightPanelTab : setGlobalRightPanelTab;
@@ -96,7 +115,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
   }, [onSelectArtifact, onOpenFullScreenPreview]);
 
   return (
-    <div className="bg-lark-sidebar-bg dark:bg-slate-950 h-full flex flex-col border-l border-lark-border dark:border-slate-800 w-full min-w-0 transition-colors font-sans">
+    <div ref={containerRef} className="bg-lark-sidebar-bg dark:bg-slate-950 h-full flex flex-col border-l border-lark-border dark:border-slate-800 w-full min-w-0 transition-colors font-sans">
       <div style={{ height: topHeight, minHeight: 150 }} className="border-b border-lark-border/60 dark:border-slate-800/60 overflow-hidden bg-white dark:bg-slate-900 transition-colors">
         {conversation?.mode === 'agent' && agents.length > 0 ? (
           <AgentMiniConfigPanel agent={agents[0]} />
@@ -133,11 +152,22 @@ const RightPanel: React.FC<RightPanelProps> = ({
           >
             沙箱运行
           </button>
+          {rightPanelTab === 'file-preview' && (
+            <button
+              className="flex-1 py-2 text-xs font-semibold border-b-2 border-lark-primary dark:border-indigo-500 text-lark-primary dark:text-indigo-400 bg-slate-900/10 dark:bg-slate-900/50 cursor-default"
+            >
+              文件预览
+            </button>
+          )}
         </div>
 
         <div className="flex-grow overflow-hidden min-w-0 flex flex-col">
           {rightPanelTab === 'sandbox' ? (
             <SandboxPanel customConversationId={customConversationId} />
+          ) : rightPanelTab === 'file-preview' && previewItem ? (
+            <div className="p-4 h-full min-w-0 overflow-hidden">
+              <FilePreviewPanel item={previewItem} />
+            </div>
           ) : (
             <ArtifactList
               conversation={conversation}
