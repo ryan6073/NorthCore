@@ -4,6 +4,7 @@ import MessageBubble from './MessageBubble';
 import ContextUsageRing from '@/components/common/ContextUsageRing';
 import { Send, Paperclip, Smile, AtSign, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight, Settings, Pencil, Check, Terminal, Cpu, FileText, Folder, Save, Globe, Loader2, ChevronDown, Plus, Search, AlertTriangle, Cloud, Laptop } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
+import { AgentOfficePlayground } from '@/components/agent/AgentOfficePlayground';
 
 interface ChatPanelProps {
   conversation: Conversation | undefined;
@@ -168,6 +169,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   }, [conversation?.id]);
   const [isApplyToLocal, setIsApplyToLocal] = useState(false);
   const [showMemoryPanel, setShowMemoryPanel] = useState(false);
+  const [showOfficeStatus, setShowOfficeStatus] = useState(true);
   const [memoryTab, setMemoryTab] = useState<'pins' | 'memories'>('pins');
 
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
@@ -1025,6 +1027,25 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                 )}
               </button>
 
+              <button
+                onClick={() => setShowOfficeStatus((prev) => !prev)}
+                className={`p-1.5 border rounded-lg transition-all flex items-center gap-1.5 shadow-sm relative group active:scale-95
+                  ${showOfficeStatus
+                    ? 'bg-indigo-50 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-900/50 text-indigo-700 dark:text-indigo-350 font-semibold shadow-inner'
+                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50/40 dark:hover:bg-indigo-950/15'
+                  }`}
+                title="查看办公室状态"
+              >
+                <Cpu className={`w-3.5 h-3.5 ${showOfficeStatus ? 'text-indigo-600 dark:text-indigo-400' : ''}`} />
+                <span className="text-xs font-medium hidden md:inline">办公室状态</span>
+                {activeAgents.some((agent) => agent.status === 'thinking') && (
+                  <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                    <span className="absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75 animate-ping" />
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-indigo-500 border border-white dark:border-slate-900" />
+                  </span>
+                )}
+              </button>
+
               {/* Exclusive Chat Settings button */}
               {conversation.mode === 'agent' && (
                 <button
@@ -1058,6 +1079,16 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
           >
             绑定沙箱
           </button>
+        </div>
+      )}
+
+      {showOfficeStatus && conversation && activeAgents.length > 0 && (
+        <div className="px-5 pt-3 bg-[#fafbfb] dark:bg-slate-950/40 border-b border-slate-200/70 dark:border-slate-800/70">
+          <AgentOfficePlayground
+            agents={activeAgents}
+            agentIds={conversation.agentIds}
+            onClose={() => setShowOfficeStatus(false)}
+          />
         </div>
       )}
 
