@@ -1,10 +1,11 @@
 import { create } from 'zustand';
 import { Message, AgentStatus, PinItem, MemoryItem, ContextUsage, Artifact, ArtifactVersion, SendMessageRequest, MessageAttachment } from '@/types';
 import { messageApi } from '@/api/messageApi';
-import { artifactApi } from '@/api/artifactApi';
 import { conversationApi } from '@/api/conversationApi';
 import { attachmentApi } from '@/api/attachmentApi';
 import { wsClient } from '@/services/ws';
+import { getMessages, sendMessage } from '@/services/messageService';
+import { getArtifacts, getArtifactVersions } from '@/services/artifactService';
 import type {
   ChunkEvent,
   CompletedEvent,
@@ -16,6 +17,8 @@ import type {
 } from '@/types';
 
 interface MessageState {
+  currentConversationId: string | null;
+  conversationCache: Record<string, ConversationMessageCache>;
   messages: Message[];
   /** 当前会话的产物列表 */
   artifacts: Artifact[];
@@ -73,11 +76,85 @@ interface MessageState {
   updateAgentStatus: (agentId: string, status: AgentStatus) => void;
 }
 
+interface ConversationMessageCache {
+  messages: Message[];
+  artifacts: Artifact[];
+  pins: PinItem[];
+  memories: MemoryItem[];
+  contextUsage: ContextUsage | null;
+  hasMore: boolean;
+  cursor: string | null;
+  updatedAt: number;
+}
+
+type ConversationCachePatch = Partial<
+  Pick<
+    ConversationMessageCache,
+    'messages' | 'artifacts' | 'pins' | 'memories' | 'contextUsage' | 'hasMore' | 'cursor'
+  >
+>;
+
+type LocalMessageAttachment = MessageAttachment & {
+  file?: {
+    uri?: string;
+    type?: string;
+  };
+  uri?: string;
+};
+
 /** Get current timestamp in ISO-like format */
 const now = () => new Date().toISOString();
 
 /** Store WS unsubscribers so they can be cleaned up on disconnect */
 let wsUnsubscribers: (() => void)[] = [];
+const artifactContentRequests = new Map<string, Promise<ArtifactVersion[]>>();
+
+const cacheConversationPatch = (
+  state: MessageState,
+  conversationId: string | null | undefined,
+  patch: ConversationCachePatch
+) => {
+  if (!conversationId) return {};
+
+  const previous = state.conversationCache[conversationId] || {
+    messages: state.currentConversationId === conversationId ? state.messages : [],
+    artifacts: state.currentConversationId === conversationId ? state.artifacts : [],
+    pins: state.currentConversationId === conversationId ? state.pins : [],
+    memories: state.currentConversationId === conversationId ? state.memories : [],
+    contextUsage: state.currentConversationId === conversationId ? state.contextUsage : null,
+    hasMore: state.currentConversationId === conversationId ? state.hasMore : true,
+    cursor: state.currentConversationId === conversationId ? state.cursor : null,
+    updatedAt: 0,
+  };
+
+  return {
+    conversationCache: {
+      ...state.conversationCache,
+      [conversationId]: {
+        ...previous,
+        ...patch,
+        updatedAt: Date.now(),
+      },
+    },
+  };
+};
+
+const patchActiveConversation = (
+  state: MessageState,
+  patch: ConversationCachePatch
+) => cacheConversationPatch(state, state.currentConversationId, patch);
+
+const isUncertainPostTransportError = (error: any) => {
+  const message = String(error?.message || '').toLowerCase();
+  const code = String(error?.code || '').toLowerCase();
+
+  return (
+    message.includes('network error') ||
+    message.includes('timeout') ||
+    code === 'err_network' ||
+    code === 'econnaborted'
+  );
+};
 
 function registerWSEventHandlers() {
   // Clean up previous
@@ -100,10 +177,19 @@ function registerWSEventHandlers() {
             quotedMessage:
               state.messages[optimisticIndex].quotedMessage || message.quotedMessage,
           };
-          return { messages: updated, isStreaming: true };
+          return {
+            messages: updated,
+            isStreaming: true,
+            ...cacheConversationPatch(state, message.conversationId, { messages: updated }),
+          };
         }
         if (!state.messages.some((m) => m.id === message.id)) {
-          return { messages: [...state.messages, message], isStreaming: true };
+          const updated = [...state.messages, message];
+          return {
+            messages: updated,
+            isStreaming: true,
+            ...cacheConversationPatch(state, message.conversationId, { messages: updated }),
+          };
         }
         return { isStreaming: true };
       });
@@ -129,7 +215,11 @@ function registerWSEventHandlers() {
         if (state.messages.some((m) => m.id === thinkingMsg.id)) {
           return {};
         }
-        return { messages: [...state.messages, thinkingMsg] };
+        const updated = [...state.messages, thinkingMsg];
+        return {
+          messages: updated,
+          ...cacheConversationPatch(state, thinkingMsg.conversationId, { messages: updated }),
+        };
       });
     })
   );
@@ -137,7 +227,7 @@ function registerWSEventHandlers() {
   // 3. Streaming chunk — append or create
   wsUnsubscribers.push(
     wsClient.on<ChunkEvent>('conversation.message.chunk', (event) => {
-      const { messageId, senderId, senderName, role, chunk, messageType, language } = event.data;
+      const { messageId, senderId, senderName, role, chunk, messageType, language, conversationId: convId } = event.data;
       useMessageStore.setState((state) => {
         const existingIndex = state.messages.findIndex((m) => m.id === messageId);
         if (existingIndex > -1) {
@@ -146,13 +236,16 @@ function registerWSEventHandlers() {
             ...updated[existingIndex],
             content: updated[existingIndex].content + chunk,
           };
-          return { messages: updated };
+          return {
+            messages: updated,
+            ...cacheConversationPatch(state, updated[existingIndex].conversationId || convId, { messages: updated }),
+          };
         }
         // First chunk — remove thinking placeholder
         const filtered = state.messages.filter((m) => m.id !== `thinking-${senderId}`);
         const newMsg: Message = {
           id: messageId,
-          conversationId: state.messages[0]?.conversationId || '',
+          conversationId: convId || state.currentConversationId || '',
           senderId,
           senderName,
           role: role as any,
@@ -161,7 +254,11 @@ function registerWSEventHandlers() {
           language,
           createdAt: now(),
         };
-        return { messages: [...filtered, newMsg] };
+        const updated = [...filtered, newMsg];
+        return {
+          messages: updated,
+          ...cacheConversationPatch(state, newMsg.conversationId, { messages: updated }),
+        };
       });
     })
   );
@@ -178,7 +275,11 @@ function registerWSEventHandlers() {
           updated = [...updated, fullMessage];
         }
         updated = updated.filter((m) => m.id !== `thinking-${fullMessage.senderId}`);
-        return { messages: updated };
+        return {
+          messages: updated,
+          isStreaming: false,
+          ...cacheConversationPatch(state, fullMessage.conversationId, { messages: updated }),
+        };
       });
     })
   );
@@ -241,7 +342,7 @@ function registerWSEventHandlers() {
         }
 
         const systemMsg: Message = {
-          id: `system-completed-${Date.now()}`,
+          id: `system-completed-${conversationId}-${runId || 'default'}`,
           conversationId,
           senderId: 'system',
           senderName: '系统',
@@ -249,12 +350,23 @@ function registerWSEventHandlers() {
           type: 'status',
           content: summary || '所有任务已完成',
           createdAt: now(),
+          metadata: {
+            eventType: 'conversation.all_tasks.completed',
+            runId,
+          },
         };
+        const updatedMessages = state.messages.some((message) => message.id === systemMsg.id)
+          ? state.messages
+          : [...state.messages, systemMsg];
         return {
-          messages: [...state.messages, systemMsg],
+          messages: updatedMessages,
           isStreaming: false,
           agentStatusMap: nextStatusMap,
           artifacts: updatedArtifacts,
+          ...cacheConversationPatch(state, conversationId, {
+            messages: updatedMessages,
+            artifacts: updatedArtifacts,
+          }),
         };
       });
     })
@@ -295,7 +407,11 @@ function registerWSEventHandlers() {
         if (state.artifacts.some((a) => a.id === artItem.id)) {
           return {};
         }
-        return { artifacts: [...state.artifacts, artItem] };
+        const updatedArtifacts = [...state.artifacts, artItem];
+        return {
+          artifacts: updatedArtifacts,
+          ...cacheConversationPatch(state, convId, { artifacts: updatedArtifacts }),
+        };
       });
     })
   );
@@ -314,7 +430,11 @@ function registerWSEventHandlers() {
             const actualIdx = state.messages.length - 1 - lastUserIdx;
             const updated = [...state.messages];
             updated.splice(actualIdx, 1);
-            return { messages: updated, isStreaming: false };
+            return {
+              messages: updated,
+              isStreaming: false,
+              ...patchActiveConversation(state, { messages: updated }),
+            };
           }
           return { isStreaming: false };
         });
@@ -324,6 +444,8 @@ function registerWSEventHandlers() {
 }
 
 export const useMessageStore = create<MessageState>((set, get) => ({
+  currentConversationId: null,
+  conversationCache: {},
   messages: [],
   artifacts: [],
   artifactVersions: {},
@@ -344,17 +466,22 @@ export const useMessageStore = create<MessageState>((set, get) => ({
 
   /** 首次加载 / 刷新：获取最新一页消息 */
   fetchMessages: async (conversationId: string) => {
-    set({ loading: true, hasMore: true, cursor: null });
+    set({ currentConversationId: conversationId, loading: true, hasMore: true, cursor: null });
     try {
-      const data = await messageApi.getMessages(conversationId, { limit: 20 });
-      const list = data.list || [];
-      const nextCursor = data.nextCursor || (list.length > 0 ? list[list.length - 1].id : null);
+      const list = await getMessages(conversationId);
+      const nextMessages = list.slice(); // 直接用Mock数据，不需要处理分页，因为Mock数据是全量的
+      const nextCursor = list.length > 0 ? list[list.length - 1].id : null;
 
-      set({
-        messages: list.slice().reverse(), // ASC order for FlatList
-        hasMore: data.hasMore,
+      set((state) => ({
+        messages: nextMessages, // ASC order for FlatList
+        hasMore: false,
         cursor: nextCursor,
-      });
+        ...cacheConversationPatch(state, conversationId, {
+          messages: nextMessages,
+          hasMore: false,
+          cursor: nextCursor,
+        }),
+      }));
     } catch (error) {
       console.warn('[MessageStore] fetchMessages failed', error);
       set({ hasMore: false });
@@ -367,42 +494,90 @@ export const useMessageStore = create<MessageState>((set, get) => ({
    * 并发: 消息 / pin / 记忆 / 上下文使用 / 产物
    */
   loadConversationData: async (conversationId: string) => {
-    set({ loading: true });
-
-    const [msgResult, pinsResult, memoriesResult, contextResult, artifactsResult] = await Promise.all([
-      messageApi.getMessages(conversationId, { limit: 20 }).catch(() => null),
-      conversationApi.getPins(conversationId).catch(() => [] as PinItem[]),
-      conversationApi.getMemories(conversationId).catch(() => [] as MemoryItem[]),
-      conversationApi.getContextUsage(conversationId).catch(() => null),
-      artifactApi.getArtifactMetaList(conversationId).catch(() => [] as Artifact[]),
-    ]);
-
-    let messagesData: Message[] = [];
-    let hasMore = true;
-    let cursor: string | null = null;
-
-    if (msgResult) {
-      messagesData = msgResult.list || [];
-      hasMore = msgResult.hasMore;
-      cursor = msgResult.nextCursor || (messagesData.length > 0 ? messagesData[messagesData.length - 1].id : null);
+    const cached = get().conversationCache[conversationId];
+    if (cached) {
+      set({
+        currentConversationId: conversationId,
+        messages: cached.messages,
+        artifacts: cached.artifacts,
+        pins: cached.pins,
+        memories: cached.memories,
+        contextUsage: cached.contextUsage,
+        hasMore: cached.hasMore,
+        cursor: cached.cursor,
+        loading: false,
+        loadingMore: false,
+      });
+      return;
     }
 
-    const pinMessageIds = new Set(pinsResult.map((p) => p.messageId));
-    const messagesWithPin = messagesData.map((m) => ({
-      ...m,
-      isPinned: pinMessageIds.has(m.id) || m.isPinned,
-    }));
-
     set({
-      messages: messagesWithPin.slice().reverse(),
-      artifacts: artifactsResult || [],
-      pins: pinsResult,
-      memories: memoriesResult,
-      contextUsage: contextResult,
-      hasMore,
-      cursor,
-      loading: false,
+      currentConversationId: conversationId,
+      messages: [],
+      artifacts: [],
+      pins: [],
+      memories: [],
+      contextUsage: null,
+      loading: true,
+      loadingMore: false,
+      hasMore: true,
+      cursor: null,
     });
+
+    try {
+      const [messagesData, pinsResult, memoriesResult, contextResult, nextArtifacts] = await Promise.all([
+        getMessages(conversationId).catch(() => [] as Message[]),
+        conversationApi.getPins(conversationId).catch(() => [] as PinItem[]),
+        conversationApi.getMemories(conversationId).catch(() => [] as MemoryItem[]),
+        conversationApi.getContextUsage(conversationId).catch(() => null),
+        getArtifacts(conversationId).catch(() => [] as Artifact[]),
+      ]);
+
+      const pinsList = Array.isArray(pinsResult) ? pinsResult : [];
+      const memoriesList = Array.isArray(memoriesResult) ? memoriesResult : [];
+      const pinMessageIds = new Set(pinsList.map((p) => p.messageId));
+      const messagesWithPin = messagesData.map((m) => ({
+        ...m,
+        isPinned: pinMessageIds.has(m.id) || m.isPinned,
+      }));
+
+      set((state) => ({
+        messages: messagesWithPin,
+        artifacts: nextArtifacts,
+        pins: pinsList,
+        memories: memoriesList,
+        contextUsage: contextResult,
+        hasMore: false,
+        cursor: messagesData.length > 0 ? messagesData[messagesData.length - 1].id : null,
+        loading: false,
+        ...cacheConversationPatch(state, conversationId, {
+          messages: messagesWithPin,
+          artifacts: nextArtifacts,
+          pins: pinsList,
+          memories: memoriesList,
+          contextUsage: contextResult,
+          hasMore: false,
+          cursor: messagesData.length > 0 ? messagesData[messagesData.length - 1].id : null,
+        }),
+      }));
+    } catch (error) {
+      console.warn('[MessageStore] loadConversationData failed', error);
+      set((state) => ({
+        loading: false,
+        loadingMore: false,
+        hasMore: false,
+        cursor: null,
+        ...cacheConversationPatch(state, conversationId, {
+          messages: state.currentConversationId === conversationId ? state.messages : [],
+          artifacts: state.currentConversationId === conversationId ? state.artifacts : [],
+          pins: state.currentConversationId === conversationId ? state.pins : [],
+          memories: state.currentConversationId === conversationId ? state.memories : [],
+          contextUsage: state.currentConversationId === conversationId ? state.contextUsage : null,
+          hasMore: false,
+          cursor: null,
+        }),
+      }));
+    }
   },
 
   /** 滚动到底部时加载更早的历史消息 */
@@ -419,22 +594,35 @@ export const useMessageStore = create<MessageState>((set, get) => ({
 
       const newMessages = data.list || [];
       if (newMessages.length === 0) {
-        set({ hasMore: false, loadingMore: false });
+        set((prev) => ({
+          hasMore: false,
+          loadingMore: false,
+          ...cacheConversationPatch(prev, conversationId, { hasMore: false }),
+        }));
         return;
       }
 
       const nextCursor = data.nextCursor || newMessages[newMessages.length - 1].id;
 
-      set((prev) => ({
+      set((prev) => {
         // 旧消息追加到头部（更旧的在最前），因为数据是 DESC 顺序（最新在前）
-        messages: [
+        const nextMessages = [
           ...newMessages.slice().reverse(),
           ...prev.messages,
-        ],
-        hasMore: data.hasMore,
-        cursor: nextCursor,
-        loadingMore: false,
-      }));
+        ];
+
+        return {
+          messages: nextMessages,
+          hasMore: data.hasMore,
+          cursor: nextCursor,
+          loadingMore: false,
+          ...cacheConversationPatch(prev, conversationId, {
+            messages: nextMessages,
+            hasMore: data.hasMore,
+            cursor: nextCursor,
+          }),
+        };
+      });
     } catch (error) {
       console.warn('[MessageStore] loadMoreMessages failed', error);
       set({ loadingMore: false });
@@ -448,8 +636,11 @@ export const useMessageStore = create<MessageState>((set, get) => ({
   /** 获取当前会话的产物元数据列表 */
   loadArtifacts: async (conversationId: string) => {
     try {
-      const list = await artifactApi.getArtifactMetaList(conversationId);
-      set({ artifacts: list });
+      const list = await getArtifacts(conversationId);
+      set((state) => ({
+        artifacts: list,
+        ...cacheConversationPatch(state, conversationId, { artifacts: list }),
+      }));
     } catch (error) {
       console.warn('[MessageStore] loadArtifacts failed', error);
     }
@@ -457,16 +648,39 @@ export const useMessageStore = create<MessageState>((set, get) => ({
 
   /** 获取产物的所有版本并缓存到 artifactVersions map */
   loadArtifactContent: async (artifactId: string) => {
-    try {
-      const versions = await artifactApi.getArtifactVersions(artifactId);
-      set((state) => ({
-        artifactVersions: { ...state.artifactVersions, [artifactId]: versions },
-      }));
-      return versions;
-    } catch (error) {
-      console.warn('[MessageStore] loadArtifactContent failed', error);
-      return [];
-    }
+    const cached = get().artifactVersions[artifactId];
+    if (cached) return cached;
+
+    const pending = artifactContentRequests.get(artifactId);
+    if (pending) return pending;
+
+    const request = getArtifactVersions(artifactId)
+      .then((versions) => {
+        set((state) => {
+          const existing = state.artifactVersions[artifactId];
+          const existingKey = existing?.map((v) => `${v.id}:${v.version}:${v.size || 0}`).join('|');
+          const nextKey = versions.map((v) => `${v.id}:${v.version}:${v.size || 0}`).join('|');
+
+          if (existing && existingKey === nextKey) {
+            return {};
+          }
+
+          return {
+            artifactVersions: { ...state.artifactVersions, [artifactId]: versions },
+          };
+        });
+        return versions;
+      })
+      .catch((error) => {
+        console.warn('[MessageStore] loadArtifactContent failed', error);
+        return [];
+      })
+      .finally(() => {
+        artifactContentRequests.delete(artifactId);
+      });
+
+    artifactContentRequests.set(artifactId, request);
+    return request;
   },
 
   // ---------------------------------------------------------------------------
@@ -504,20 +718,28 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     };
 
     // Optimistically add user message
-    set((state) => ({
-      messages: [...state.messages, userMessage],
-      isStreaming: true,
-    }));
+    set((state) => {
+      const nextMessages = [...state.messages, userMessage];
+      return {
+        messages: nextMessages,
+        isStreaming: true,
+        ...cacheConversationPatch(state, conversationId, { messages: nextMessages }),
+      };
+    });
+
+    let reachedMessagePost = false;
 
     try {
       let finalAttachments = attachments || [];
-      const filesToUpload = finalAttachments.filter((a) => a.file || (a as any).uri);
+      const filesToUpload = (finalAttachments as LocalMessageAttachment[]).filter(
+        (a) => a.file?.uri || a.uri
+      );
 
       if (filesToUpload.length > 0) {
         const uploadResponse = await attachmentApi.uploadAttachmentBatch(
           conversationId,
           filesToUpload.map((f) => ({
-            uri: f.file?.uri || (f as any).uri || '',
+            uri: f.file?.uri || f.uri || '',
             name: f.name,
             type: f.file?.type || f.mimeType || 'application/octet-stream',
           }))
@@ -531,11 +753,15 @@ export const useMessageStore = create<MessageState>((set, get) => ({
             }
           });
           finalAttachments = uploadedList;
-          set((state) => ({
-            messages: state.messages.map((m) =>
+          set((state) => {
+            const nextMessages = state.messages.map((m) =>
               m.id === clientMsgId ? { ...m, attachments: uploadedList } : m
-            ),
-          }));
+            );
+            return {
+              messages: nextMessages,
+              ...cacheConversationPatch(state, conversationId, { messages: nextMessages }),
+            };
+          });
         } else {
           throw new Error(uploadResponse.message || '文件上传失败');
         }
@@ -552,7 +778,8 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         webSearchMode,
       };
 
-      const payload = await messageApi.sendMessage(conversationId, requestPayload);
+      reachedMessagePost = true;
+      const payload = await sendMessage(conversationId, requestPayload);
       const { userMessage: serverUserMsg, agentMessages, artifacts: responseArtifacts } = payload;
 
       // 处理返回的产物元数据
@@ -560,7 +787,11 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         set((state) => {
           const currentIds = new Set(state.artifacts.map((a) => a.id));
           const newArtifacts = responseArtifacts.filter((a: any) => !currentIds.has(a.id));
-          return { artifacts: [...state.artifacts, ...newArtifacts] };
+          const nextArtifacts = [...state.artifacts, ...newArtifacts];
+          return {
+            artifacts: nextArtifacts,
+            ...cacheConversationPatch(state, conversationId, { artifacts: nextArtifacts }),
+          };
         });
       }
 
@@ -579,9 +810,44 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         return {
           messages: merged,
           isStreaming: false,
+          ...cacheConversationPatch(state, conversationId, { messages: merged }),
         };
       });
     } catch (error: any) {
+      if (reachedMessagePost && isUncertainPostTransportError(error)) {
+        console.warn('[MessageStore] sendMessage response lost, waiting for websocket sync', error);
+        set((state) => {
+          const nextMessages = state.messages.map((m) =>
+            m.id === clientMsgId
+              ? {
+                  ...m,
+                  metadata: {
+                    ...m.metadata,
+                    deliveryState: 'pending_confirmation',
+                  },
+                }
+              : m
+          );
+
+          return {
+            messages: nextMessages,
+            isStreaming: true,
+            ...cacheConversationPatch(state, conversationId, { messages: nextMessages }),
+          };
+        });
+
+        setTimeout(() => {
+          const state = get();
+          const hasPendingClientMessage = state.messages.some((m) => m.id === clientMsgId);
+          if (state.currentConversationId === conversationId && hasPendingClientMessage) {
+            state.loadConversationData(conversationId).catch((syncError) => {
+              console.warn('[MessageStore] delayed message sync failed', syncError);
+            });
+          }
+        }, 2500);
+        return;
+      }
+
       console.error('[MessageStore] sendMessage failed', error);
       const agentMessage: Message = {
         id: 'mock_' + Date.now(),
@@ -594,8 +860,8 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         createdAt: now(),
       };
 
-      set((state) => ({
-        messages: state.messages
+      set((state) => {
+        const nextMessages = state.messages
           .map((m) =>
             m.id === clientMsgId
               ? {
@@ -604,9 +870,14 @@ export const useMessageStore = create<MessageState>((set, get) => ({
                 }
               : m
           )
-          .concat(agentMessage),
-        isStreaming: false,
-      }));
+          .concat(agentMessage);
+
+        return {
+          messages: nextMessages,
+          isStreaming: false,
+          ...cacheConversationPatch(state, conversationId, { messages: nextMessages }),
+        };
+      });
     }
   },
 
@@ -619,11 +890,15 @@ export const useMessageStore = create<MessageState>((set, get) => ({
 
     const nextPinState = !targetMsg.isPinned;
 
-    set((state) => ({
-      messages: state.messages.map((m) =>
+    set((state) => {
+      const nextMessages = state.messages.map((m) =>
         m.id === messageId ? { ...m, isPinned: nextPinState } : m
-      ),
-    }));
+      );
+      return {
+        messages: nextMessages,
+        ...cacheConversationPatch(state, conversationId, { messages: nextMessages }),
+      };
+    });
 
     try {
       if (nextPinState) {
@@ -632,11 +907,15 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         await conversationApi.unpinMessage(conversationId, messageId);
       }
     } catch {
-      set((state) => ({
-        messages: state.messages.map((m) =>
+      set((state) => {
+        const nextMessages = state.messages.map((m) =>
           m.id === messageId ? { ...m, isPinned: !nextPinState } : m
-        ),
-      }));
+        );
+        return {
+          messages: nextMessages,
+          ...cacheConversationPatch(state, conversationId, { messages: nextMessages }),
+        };
+      });
     }
   },
 
@@ -649,9 +928,13 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     } catch {
       // ignore — optimistic remove below
     }
-    set((state) => ({
-      memories: state.memories.filter((m) => m.id !== memoryId),
-    }));
+    set((state) => {
+      const nextMemories = state.memories.filter((m) => m.id !== memoryId);
+      return {
+        memories: nextMemories,
+        ...cacheConversationPatch(state, conversationId, { memories: nextMemories }),
+      };
+    });
   },
 
   // ---------------------------------------------------------------------------

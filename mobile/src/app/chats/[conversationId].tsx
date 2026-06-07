@@ -29,8 +29,21 @@ import type { Artifact, ArtifactVersion, MessageAttachment } from '@/types';
 
 export default function ConversationScreen() {
   const { conversationId } = useLocalSearchParams<{ conversationId: string }>();
-  const { messages, loading, loadingMore, hasMore, memories, contextUsage,
-    loadConversationData, loadMoreMessages, sendMessage, togglePinMessage, deleteMemory } = useMessageStore();
+  const currentConversationId = useMessageStore((state) => state.currentConversationId);
+  const messages = useMessageStore((state) => state.messages);
+  const artifacts = useMessageStore((state) => state.artifacts);
+  const loading = useMessageStore((state) => state.loading);
+  const loadingMore = useMessageStore((state) => state.loadingMore);
+  const hasMore = useMessageStore((state) => state.hasMore);
+  const memories = useMessageStore((state) => state.memories);
+  const contextUsage = useMessageStore((state) => state.contextUsage);
+  const loadConversationData = useMessageStore((state) => state.loadConversationData);
+  const loadMoreMessages = useMessageStore((state) => state.loadMoreMessages);
+  const sendMessage = useMessageStore((state) => state.sendMessage);
+  const togglePinMessage = useMessageStore((state) => state.togglePinMessage);
+  const deleteMemory = useMessageStore((state) => state.deleteMemory);
+  const subConv = useMessageStore((state) => state.subscribeConversation);
+  const unsubConv = useMessageStore((state) => state.unsubscribeConversation);
   const { conversations } = useConversationStore();
   const { agents, fetchAgents } = useAgentStore();
 
@@ -56,16 +69,19 @@ export default function ConversationScreen() {
   const [msgMenuX, setMsgMenuX] = useState(150);
   const [replyContext, setReplyContext] = useState<{ id: string; senderName: string; content: string } | null>(null);
   const [showMemoryPanel, setShowMemoryPanel] = useState(false);
+  const [showArtifactPanel, setShowArtifactPanel] = useState(false);
+  const [artifactSearch, setArtifactSearch] = useState('');
   const [showContextDialog, setShowContextDialog] = useState(false);
   const [compressing, setCompressing] = useState(false);
   const [memoryTab, setMemoryTab] = useState<'pins' | 'memories'>('pins');
   // 用户是否在最新消息附近（用于控制新消息是否自动滚动）
   const [isNearBottom, setIsNearBottom] = useState(true);
+  const [shouldInvertMessages, setShouldInvertMessages] = useState(false);
+  const [isMessageListReady, setIsMessageListReady] = useState(false);
+  const listLayoutHeightRef = useRef(0);
+  const listContentHeightRef = useRef(0);
   // 是否正在加载历史消息（避免在加载历史时滚动到底部）
   const isLoadingHistory = useRef(false);
-
-  // ── WS subscribe / unsubscribe ──
-  const { subscribeConversation: subConv, unsubscribeConversation: unsubConv } = useMessageStore();
 
   const conversation = conversations.find((c) => c.id === conversationId);
 
@@ -116,11 +132,64 @@ export default function ConversationScreen() {
     }
   }, [conversationId]);
 
-  // 按 createdAt 升序排列（旧→新），短会话自然从顶部开始，长会话再滚到最新消息。
-  const sortedMessages = useMemo(
-    () => [...messages].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
-    [messages],
+  const chronologicalMessages = useMemo(
+    () => (
+      currentConversationId === conversationId
+        ? [...messages].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+        : []
+    ),
+    [conversationId, currentConversationId, messages],
   );
+
+  const displayMessages = useMemo(
+    () => shouldInvertMessages ? [...chronologicalMessages].reverse() : chronologicalMessages,
+    [chronologicalMessages, shouldInvertMessages],
+  );
+
+  const conversationArtifacts = useMemo(
+    () => (currentConversationId === conversationId ? artifacts : []),
+    [artifacts, conversationId, currentConversationId],
+  );
+
+  const filteredArtifacts = useMemo(() => {
+    const query = artifactSearch.trim().toLowerCase();
+    if (!query) return conversationArtifacts;
+
+    return conversationArtifacts.filter((artifact) => {
+      const searchable = [
+        artifact.title,
+        artifact.type,
+        (artifact as any).description,
+        artifact.runId,
+        artifact.filePath,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+      return searchable.includes(query);
+    });
+  }, [artifactSearch, conversationArtifacts]);
+
+  const updateMessageListMode = (contentHeight = listContentHeightRef.current) => {
+    const layoutHeight = listLayoutHeightRef.current;
+    const canInvert = chronologicalMessages.length > 1 && layoutHeight > 0;
+
+    setShouldInvertMessages((prev) => {
+      if (!canInvert) return false;
+      if (contentHeight > layoutHeight + 48) return true;
+      if (contentHeight < layoutHeight - 80) return false;
+      return prev;
+    });
+    setIsMessageListReady(layoutHeight > 0 && (chronologicalMessages.length <= 1 || contentHeight > 0));
+  };
+
+  useEffect(() => {
+    listContentHeightRef.current = 0;
+    setShouldInvertMessages(false);
+    setIsMessageListReady(false);
+    setIsNearBottom(true);
+  }, [conversationId]);
 
   const pickDocuments = async () => {
     try {
@@ -219,6 +288,20 @@ export default function ConversationScreen() {
     }
   };
 
+  const getArtifactIcon = (type: string) => {
+    switch (type) {
+      case 'code': return 'code-slash-outline';
+      case 'html': return 'globe-outline';
+      case 'markdown': return 'document-text-outline';
+      case 'mermaid': return 'git-network-outline';
+      case 'image': return 'image-outline';
+      case 'document': return 'reader-outline';
+      case 'ppt': return 'easel-outline';
+      case 'diff': return 'git-compare-outline';
+      default: return 'cube-outline';
+    }
+  };
+
   const COMMON_EMOJIS = ['😊', '😂', '👍', '🔥', '🙌', '🎉', '🤔', '👀', '💡', '🚀', '💻', '📝', '✨', '⚠️', '❌', '✅'];
 
   return (
@@ -271,6 +354,24 @@ export default function ConversationScreen() {
                       <View style={styles.headerBadge}>
                         <Text style={styles.headerBadgeText}>
                           {messages.filter(m => m.isPinned).length}
+                        </Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => setShowArtifactPanel(!showArtifactPanel)}
+                    style={[styles.headerIndicatorBtn, showArtifactPanel && styles.artifactHeaderBtnActive]}
+                  >
+                    <Ionicons
+                      name="cube-outline"
+                      size={15}
+                      color={showArtifactPanel ? '#3370ff' : '#646a73'}
+                    />
+                    {conversationArtifacts.length > 0 && (
+                      <View style={[styles.headerBadge, styles.artifactHeaderBadge]}>
+                        <Text style={styles.headerBadgeText}>
+                          {conversationArtifacts.length > 99 ? '99+' : conversationArtifacts.length}
                         </Text>
                       </View>
                     )}
@@ -368,9 +469,91 @@ export default function ConversationScreen() {
         </View>
       )}
 
+      {showArtifactPanel && (
+        <View style={styles.artifactPanel}>
+          <View style={styles.artifactPanelHeader}>
+            <View>
+              <Text style={styles.artifactPanelTitle}>会话产物</Text>
+              <Text style={styles.artifactPanelSubtitle}>
+                {conversationArtifacts.length > 0 ? `共 ${conversationArtifacts.length} 个产物` : '暂无产物'}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={() => setShowArtifactPanel(false)}>
+              <Ionicons name="close" size={18} color="#8f959e" />
+            </TouchableOpacity>
+          </View>
+
+          {conversationArtifacts.length > 0 && (
+            <View style={styles.artifactSearchBox}>
+              <Ionicons name="search-outline" size={15} color="#8f959e" />
+              <TextInput
+                value={artifactSearch}
+                onChangeText={setArtifactSearch}
+                placeholder="搜索产物名称、类型或运行批次"
+                placeholderTextColor="#8f959e"
+                style={styles.artifactSearchInput}
+              />
+              {artifactSearch.length > 0 && (
+                <TouchableOpacity onPress={() => setArtifactSearch('')}>
+                  <Ionicons name="close-circle" size={16} color="#8f959e" />
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          {conversationArtifacts.length === 0 ? (
+            <Text style={styles.emptyArtifactText}>当前会话还没有生成产物。</Text>
+          ) : filteredArtifacts.length === 0 ? (
+            <Text style={styles.emptyArtifactText}>没有匹配的产物。</Text>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.artifactListContent}
+            >
+              {filteredArtifacts.map((artifact) => (
+                <TouchableOpacity
+                  key={artifact.id}
+                  style={styles.artifactCard}
+                  activeOpacity={0.86}
+                  onPress={() => setArtifactPreview({ visible: true, artifact })}
+                >
+                  <View style={styles.artifactCardTop}>
+                    <View style={styles.artifactIconBox}>
+                      <Ionicons name={getArtifactIcon(artifact.type) as any} size={18} color="#3370ff" />
+                    </View>
+                    <Ionicons name="expand-outline" size={15} color="#8f959e" />
+                  </View>
+                  <Text style={styles.artifactCardTitle} numberOfLines={2}>
+                    {artifact.title || '未命名产物'}
+                  </Text>
+                  <View style={styles.artifactCardMeta}>
+                    <Text style={styles.artifactTypeText}>{artifact.type.toUpperCase()}</Text>
+                    <Text style={styles.artifactMetaDot}>·</Text>
+                    <Text style={styles.artifactTypeText}>v{artifact.latestVersion || '?'}</Text>
+                  </View>
+                  {artifact.runId ? (
+                    <Text style={styles.artifactRunText} numberOfLines={1}>
+                      {artifact.runId === 'direct' ? '直接生成' : artifact.runId}
+                    </Text>
+                  ) : (
+                    <Text style={styles.artifactRunText}>未关联运行批次</Text>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+      )}
+
       <FlatList
         ref={flatListRef}
-        data={sortedMessages}
+        data={displayMessages}
+        inverted={shouldInvertMessages}
+        style={[
+          styles.messageList,
+          !isMessageListReady && chronologicalMessages.length > 1 && styles.messageListHidden,
+        ]}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
           <TouchableOpacity
@@ -394,26 +577,41 @@ export default function ConversationScreen() {
           </TouchableOpacity>
         )}
         contentContainerStyle={styles.listContent}
-        // 新消息到来时，如果用户已经在底部附近，则保持滚动到最新。
-        onContentSizeChange={() => {
-          if (!loading && !isLoadingHistory.current && isNearBottom) {
-            flatListRef.current?.scrollToEnd({ animated: true });
+        // 新消息到来时，如果用户已经在最新消息附近，则保持贴住最新。
+        onContentSizeChange={(_, height) => {
+          listContentHeightRef.current = height;
+          updateMessageListMode(height);
+
+          if (isMessageListReady && !loading && !isLoadingHistory.current && isNearBottom) {
+            if (shouldInvertMessages) {
+              flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+            } else {
+              flatListRef.current?.scrollToEnd({ animated: true });
+            }
           }
         }}
-        onLayout={() => {
-          if (!loading && sortedMessages.length > 1) {
-            flatListRef.current?.scrollToEnd({ animated: false });
-          }
+        onLayout={(event) => {
+          listLayoutHeightRef.current = event.nativeEvent.layout.height;
+          updateMessageListMode();
+          setIsNearBottom(true);
         }}
-        // 非 inverted 列表中，顶部接近 0 时加载更早的历史消息。
+        // inverted 列表中 offset 0 就是最新消息位置，滚到远端时加载更早历史。
         onScroll={(e) => {
+          if (!isMessageListReady) return;
+
           const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
-          const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
-          setIsNearBottom(distanceFromBottom < 80);
+          const latestDistance = shouldInvertMessages
+            ? contentOffset.y
+            : contentSize.height - layoutMeasurement.height - contentOffset.y;
+          const olderDistance = shouldInvertMessages
+            ? contentSize.height - layoutMeasurement.height - contentOffset.y
+            : contentOffset.y;
+
+          setIsNearBottom(latestDistance < 80);
 
           if (hasMore && conversationId && !loadingMore) {
-            const isNearTop = contentOffset.y < 40;
-            if (isNearTop) {
+            const canLoadOlder = contentSize.height > layoutMeasurement.height + 40;
+            if (canLoadOlder && olderDistance >= 0 && olderDistance < 40) {
               isLoadingHistory.current = true;
               loadMoreMessages(conversationId).finally(() => {
                 isLoadingHistory.current = false;
@@ -422,7 +620,8 @@ export default function ConversationScreen() {
           }
         }}
         scrollEventThrottle={100}
-        initialNumToRender={15}
+        initialNumToRender={20}
+        maxToRenderPerBatch={20}
         maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
         ListEmptyComponent={
           loading ? (
@@ -436,7 +635,15 @@ export default function ConversationScreen() {
           )
         }
         ListHeaderComponent={
-          loadingMore ? (
+          !shouldInvertMessages && loadingMore ? (
+            <View style={styles.loadingMoreContainer}>
+              <ActivityIndicator size="small" color="#8f959e" />
+              <Text style={styles.loadingMoreText}>加载更多...</Text>
+            </View>
+          ) : null
+        }
+        ListFooterComponent={
+          shouldInvertMessages && loadingMore ? (
             <View style={styles.loadingMoreContainer}>
               <ActivityIndicator size="small" color="#8f959e" />
               <Text style={styles.loadingMoreText}>加载更多...</Text>
@@ -774,11 +981,17 @@ export default function ConversationScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f6f7',
+    backgroundColor: '#f6f8fb',
+  },
+  messageList: {
+    flex: 1,
+  },
+  messageListHidden: {
+    opacity: 0,
   },
   listContent: {
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingBottom: 24,
   },
   loadingContainer: {
@@ -807,11 +1020,11 @@ const styles = StyleSheet.create({
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     backgroundColor: '#ffffff',
     borderTopWidth: 1,
-    borderTopColor: '#eff0f1',
+    borderTopColor: '#e8ecf3',
     shadowColor: '#1f2329',
     shadowOffset: { width: 0, height: -3 },
     shadowOpacity: 0.03,
@@ -820,22 +1033,22 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    backgroundColor: '#f5f6f7',
+    backgroundColor: '#f8fafc',
     borderWidth: 1,
-    borderColor: '#dee0e3',
-    borderRadius: 16,
+    borderColor: '#e1e7f0',
+    borderRadius: 18,
     paddingHorizontal: 14,
-    paddingTop: 8,
-    paddingBottom: 8,
+    paddingTop: 10,
+    paddingBottom: 10,
     maxHeight: 120,
     fontSize: 15,
     color: '#1f2329',
     lineHeight: 20,
   },
   sendButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 14,
     backgroundColor: '#3370ff',
     justifyContent: 'center',
     alignItems: 'center',
@@ -857,19 +1070,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 6,
+    paddingVertical: 8,
     backgroundColor: '#ffffff',
     borderTopWidth: 1,
-    borderTopColor: '#f5f6f7',
-    gap: 12,
+    borderTopColor: '#eef2f7',
+    gap: 8,
   },
   toolbarBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 6,
-    backgroundColor: '#f5f6f7',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: '#f5f7fb',
     gap: 4,
   },
   toolbarBtnActive: {
@@ -932,14 +1145,17 @@ const styles = StyleSheet.create({
   headerIndicatorBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f5f6f7',
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
+    backgroundColor: '#f5f7fb',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
     gap: 3,
   },
   headerIndicatorBtnActive: {
     backgroundColor: '#fef3c7',
+  },
+  artifactHeaderBtnActive: {
+    backgroundColor: '#deebff',
   },
   headerIndicatorText: {
     fontSize: 10,
@@ -962,6 +1178,133 @@ const styles = StyleSheet.create({
     fontSize: 7,
     fontWeight: '800',
     color: '#fff',
+  },
+  artifactHeaderBadge: {
+    backgroundColor: '#3370ff',
+  },
+  artifactPanel: {
+    backgroundColor: '#ffffff',
+    borderTopWidth: 1,
+    borderTopColor: '#e8ecf3',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e8ecf3',
+    paddingTop: 12,
+    paddingBottom: 12,
+    shadowColor: '#1f2329',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 4,
+  },
+  artifactPanelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 8,
+  },
+  artifactPanelTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#1f2329',
+  },
+  artifactPanelSubtitle: {
+    marginTop: 2,
+    fontSize: 11,
+    color: '#646a73',
+  },
+  artifactSearchBox: {
+    marginHorizontal: 16,
+    marginBottom: 10,
+    height: 38,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e6eaf2',
+    backgroundColor: '#f8fafc',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    gap: 6,
+  },
+  artifactSearchInput: {
+    flex: 1,
+    height: 38,
+    fontSize: 12,
+    color: '#1f2329',
+    paddingVertical: 0,
+  },
+  artifactListContent: {
+    paddingHorizontal: 16,
+    gap: 10,
+  },
+  artifactCard: {
+    width: 172,
+    minHeight: 126,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e6eaf2',
+    padding: 12,
+    shadowColor: '#1f2329',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  artifactCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  artifactIconBox: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    backgroundColor: '#edf4ff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#d6e5ff',
+  },
+  artifactCardTitle: {
+    minHeight: 38,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '800',
+    color: '#1f2329',
+  },
+  artifactCardMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 8,
+  },
+  artifactTypeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#3370ff',
+  },
+  artifactMetaDot: {
+    fontSize: 10,
+    color: '#b8bbbf',
+  },
+  artifactRunText: {
+    marginTop: 6,
+    fontSize: 10,
+    color: '#8f959e',
+    backgroundColor: '#f5f7fb',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  emptyArtifactText: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 12,
+    color: '#8f959e',
+    textAlign: 'center',
   },
   memoryPanel: {
     backgroundColor: '#fffbeb',

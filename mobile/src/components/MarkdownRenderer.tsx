@@ -63,7 +63,7 @@ function NativeWebView({ content, language, isCodeBlock, maxHeight }: MarkdownRe
   const onMessage = useCallback((e: any) => {
     try {
       const h = parseInt(e.nativeEvent.data, 10);
-      if (h > 0) setHeight(h);
+      if (h > 0) setHeight((current) => (Math.abs(current - h) > 2 ? h : current));
     } catch {}
   }, []);
 
@@ -71,7 +71,7 @@ function NativeWebView({ content, language, isCodeBlock, maxHeight }: MarkdownRe
 
   return (
     <WebView
-      source={{ html }}
+      source={{ html, baseUrl: 'https://test2.yeolde.fun' }}
       style={[
         styles.webview,
         { height: Math.min(height, maxHeight || 99999) },
@@ -139,27 +139,72 @@ pre{background:#0d1117;border-radius:8px;padding:14px;margin:10px 0;overflow-x:a
 pre code{all:unset;font-family:'SF Mono','Monaco','Menlo','Courier New',monospace;font-size:13px;line-height:1.6;color:#e6edf3;background:transparent}
 a{color:#3370ff;text-decoration:none}
 table{border-collapse:collapse;margin:10px 0;width:100%;font-size:13px}
-th,td{border:1px solid #dee0e3;padding:6px 10px;text-align:left}
+table{min-width:420px}
+.table-wrap{width:100%;overflow-x:auto;margin:10px 0}
+th,td{border:1px solid #dee0e3;padding:8px 10px;text-align:left;vertical-align:top;white-space:nowrap}
 th{background:#f5f6f7;font-weight:600}
 hr{border:none;border-top:1px solid #dee0e3;margin:14px 0}
 img{max-width:100%;border-radius:6px;margin:8px 0}
+.mermaid{display:flex;justify-content:center;align-items:center;background:#fff;border:1px solid #e6eaf2;border-radius:10px;padding:12px;margin:12px 0;overflow:auto}
+.mermaid svg{max-width:100%;height:auto}
+.mermaid-error{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px;color:#991b1b;font-size:12px;white-space:pre-wrap}
 </style></head><body>
 <div id="content"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.4/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.4/purify.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.4.1/mermaid.min.js"></script>
 <script>
-marked.setOptions({gfm:true,breaks:true,highlight:function(c,l){if(l&&hljs.getLanguage(l))try{return hljs.highlight(c,{language:l}).value}catch(e){}return c}});
+marked.setOptions({gfm:true,breaks:true});
+var renderer = new marked.Renderer();
+renderer.code = function(token) {
+  var text = typeof token === 'string' ? token : (token.text || '');
+  var lang = typeof token === 'string' ? '' : (token.lang || '');
+  if ((lang || '').trim().toLowerCase() === 'mermaid') {
+    return '<div class="mermaid">' + text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>';
+  }
+  var highlighted = text;
+  if (lang && hljs.getLanguage(lang)) {
+    try { highlighted = hljs.highlight(text,{language:lang}).value; } catch(e) {}
+  } else {
+    highlighted = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  return '<pre><code class="language-' + String(lang || 'plaintext').replace(/[^a-z0-9_-]/gi,'') + '">' + highlighted + '</code></pre>';
+};
 var raw=${JSON.stringify(md)};
-var safe=DOMPurify.sanitize(marked.parse(raw));
+var safe=DOMPurify.sanitize(marked.parse(raw,{renderer:renderer}), {ADD_TAGS:['svg','g','path','rect','circle','ellipse','line','polyline','polygon','text','tspan','defs','marker','foreignObject'], ADD_ATTR:['viewBox','d','x','y','x1','x2','y1','y2','cx','cy','r','rx','ry','points','transform','marker-end','marker-start','text-anchor','dominant-baseline','font-size','font-family','class','id','style']});
 document.getElementById('content').innerHTML=safe;
+document.querySelectorAll('table').forEach(function(table){
+  if (table.parentElement && table.parentElement.className === 'table-wrap') return;
+  var wrapper = document.createElement('div');
+  wrapper.className = 'table-wrap';
+  table.parentNode.insertBefore(wrapper, table);
+  wrapper.appendChild(table);
+});
 
 function sendHeight() {
   var h = Math.ceil(document.documentElement.scrollHeight || document.body.scrollHeight);
   window.ReactNativeWebView.postMessage(String(h + 8));
 }
-sendHeight();
-window.addEventListener('load', sendHeight);
+function renderMermaid(){
+  if (!window.mermaid) {
+    sendHeight();
+    return;
+  }
+  try {
+    mermaid.initialize({startOnLoad:false,theme:'default',securityLevel:'loose',fontSize:14});
+    mermaid.run({nodes:document.querySelectorAll('.mermaid')}).then(sendHeight).catch(function(e){
+      document.querySelectorAll('.mermaid').forEach(function(node){
+        node.innerHTML='<div class="mermaid-error">图表渲染失败\\n'+String(e && e.message || e)+'</div>';
+      });
+      sendHeight();
+    });
+  } catch(e) {
+    sendHeight();
+  }
+}
+renderMermaid();
+window.addEventListener('load', function(){ renderMermaid(); sendHeight(); });
 if (window.ResizeObserver) {
   var observer = new ResizeObserver(sendHeight);
   observer.observe(document.body);

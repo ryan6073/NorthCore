@@ -43,11 +43,16 @@ export default function AgentsScreen() {
     fetchAgents();
   }, []);
 
-  const filtered = (agents || []).filter(a => 
-    a.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const safeAgents = Array.isArray(agents) ? agents.filter(Boolean) : [];
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filtered = safeAgents.filter((a: any) => {
+    const name = String(a?.name || a?.displayName || '未命名智能体');
+    return name.toLowerCase().includes(normalizedQuery);
+  });
 
-  const sorted = [...filtered].sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+  const sorted = [...filtered].sort((a: any, b: any) =>
+    String(a?.name || a?.displayName || '').localeCompare(String(b?.name || b?.displayName || ''), 'zh')
+  );
 
   const sectionsMap: Record<string, any[]> = {};
   sorted.forEach(a => {
@@ -130,15 +135,15 @@ export default function AgentsScreen() {
         options={{
           headerTitle: '联系人',
           headerTitleAlign: 'center',
-          headerTitleStyle: { fontSize: 17, fontWeight: '700', color: '#1f2329' },
+          headerTitleStyle: { fontSize: 17, fontWeight: '800', color: '#111827' },
           headerStyle: { backgroundColor: '#ffffff' },
           headerShadowVisible: false,
           headerRight: () => (
             <TouchableOpacity
               onPress={() => router.push('/agents/create')}
-              style={{ marginRight: 16 }}
+              style={styles.headerAddButton}
             >
-              <Ionicons name="add" size={24} color="#3370ff" />
+              <Ionicons name="add" size={22} color="#3370ff" />
             </TouchableOpacity>
           ),
         }}
@@ -227,22 +232,28 @@ export default function AgentsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f6f8fb',
   },
   searchWrapper: {
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#eff0f1',
+    paddingTop: 12,
+    paddingBottom: 10,
+    backgroundColor: '#f6f8fb',
   },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f5f6f7',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    height: 36,
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    height: 42,
+    borderWidth: 1,
+    borderColor: '#e8ecf3',
+    shadowColor: '#1f2329',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    elevation: 1,
   },
   searchInput: {
     flex: 1,
@@ -251,14 +262,14 @@ const styles = StyleSheet.create({
     padding: 0,
   },
   listContent: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingBottom: 24,
   },
   sectionHeader: {
-    backgroundColor: '#f5f6f7',
-    paddingVertical: 4,
-    paddingHorizontal: 16,
-    marginHorizontal: -16,
+    backgroundColor: '#f6f8fb',
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+    marginHorizontal: 0,
     marginBottom: 8,
   },
   sectionHeaderText: {
@@ -273,7 +284,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f6f8fb',
   },
   emptyContainer: {
     padding: 48,
@@ -286,7 +297,7 @@ const styles = StyleSheet.create({
   },
   alphabetSidebar: {
     width: 24,
-    backgroundColor: '#ffffff',
+    backgroundColor: 'transparent',
     justifyContent: 'space-evenly',
     alignItems: 'center',
     paddingVertical: 12,
@@ -309,5 +320,14 @@ const styles = StyleSheet.create({
     borderRadius: 7,
     overflow: 'hidden',
     fontWeight: '700',
+  },
+  headerAddButton: {
+    marginRight: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#edf4ff',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
