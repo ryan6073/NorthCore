@@ -162,6 +162,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const justSwitchedRef = useRef<boolean>(true);
   const initialBottomTimersRef = useRef<number[]>([]);
   const ignoreHistoryLoadUntilRef = useRef<number>(0);
+  const isLoadingHistoryRef = useRef<boolean>(false);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     if (scrollContainerRef.current) {
@@ -253,6 +254,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     const prevLength = prevMessagesLengthRef.current;
     prevMessagesLengthRef.current = messages.length;
 
+    if (isLoadingHistoryRef.current) {
+      return;
+    }
+
     if (!isSameConv) {
       lastScrolledConversationId.current = conversationId;
       justSwitchedRef.current = true;
@@ -310,15 +315,23 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
       const prevScrollHeight = container.scrollHeight;
       const prevScrollTop = container.scrollTop;
 
-      await loadMoreMessages(conversationId);
+      isLoadingHistoryRef.current = true;
+      try {
+        await loadMoreMessages(conversationId);
 
-      // Keep scroll position anchored so it doesn't jump
-      requestAnimationFrame(() => {
-        if (scrollContainerRef.current) {
-          const newScrollHeight = scrollContainerRef.current.scrollHeight;
-          scrollContainerRef.current.scrollTop = newScrollHeight - prevScrollHeight + prevScrollTop;
-        }
-      });
+        // Keep scroll position anchored so it doesn't jump
+        requestAnimationFrame(() => {
+          if (scrollContainerRef.current) {
+            const newScrollHeight = scrollContainerRef.current.scrollHeight;
+            scrollContainerRef.current.scrollTop = newScrollHeight - prevScrollHeight + prevScrollTop;
+          }
+          window.setTimeout(() => {
+            isLoadingHistoryRef.current = false;
+          }, 80);
+        });
+      } catch {
+        isLoadingHistoryRef.current = false;
+      }
     }
   }, [conversationId, conversationHasMore, isLoadingMoreMessages, loadMoreMessages]);
 
