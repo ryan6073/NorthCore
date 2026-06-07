@@ -1,5 +1,5 @@
 import { request } from './httpClient';
-import { Conversation, PaginatedData } from '@/types';
+import { Conversation, PaginatedData, PinItem, MemoryItem, ContextUsage } from '@/types';
 
 export const conversationApi = {
   async getConversations(): Promise<Conversation[]> {
@@ -85,8 +85,17 @@ export const conversationApi = {
     return res.data;
   },
 
-  async getMemories(conversationId: string): Promise<any[]> {
-    const res = await request<any[]>(`/conversations/${conversationId}/memories`, {
+  /** 获取已 Pin 的消息列表 */
+  async getPins(conversationId: string): Promise<PinItem[]> {
+    const res = await request<PinItem[]>(`/conversations/${conversationId}/pins`, {
+      method: 'GET',
+    });
+    return res.data;
+  },
+
+  /** 获取长期记忆 */
+  async getMemories(conversationId: string): Promise<MemoryItem[]> {
+    const res = await request<MemoryItem[]>(`/conversations/${conversationId}/memories`, {
       method: 'GET',
     });
     return res.data;
@@ -95,6 +104,14 @@ export const conversationApi = {
   async deleteMemory(conversationId: string, memoryId: string): Promise<any> {
     const res = await request<any>(`/conversations/${conversationId}/memories/${memoryId}`, {
       method: 'DELETE',
+    });
+    return res.data;
+  },
+
+  /** 获取上下文使用情况 */
+  async getContextUsage(conversationId: string): Promise<ContextUsage> {
+    const res = await request<ContextUsage>(`/conversations/${conversationId}/context/usage`, {
+      method: 'GET',
     });
     return res.data;
   },

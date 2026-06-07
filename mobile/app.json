@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "northcore-mobile",
+    "name": "NorthCore",
     "slug": "northcore-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,9 +8,15 @@
     "scheme": "northcore",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "bundleIdentifier": "com.byte-dance.northcore",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
     },
     "android": {
+      "package": "com.bytedance.northcore",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -44,6 +50,14 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {
+        "root": "./src/app"
+      },
+      "eas": {
+        "projectId": "ffd7f984-df07-4744-9282-220417108682"
+      }
     }
   }
 }

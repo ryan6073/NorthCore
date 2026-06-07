@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, FlatList, View, ActivityIndicator, Text, TouchableOpacity, TextInput, ScrollView, Alert, Platform, Modal, Dimensions } from 'react-native';
+import { StyleSheet, FlatList, View, ActivityIndicator, Text, TouchableOpacity, TextInput, Alert, Platform, Modal, Dimensions } from 'react-native';
 import { router, Stack } from 'expo-router';
 import { useConversationStore } from '@/stores/useConversationStore';
 import { useAgentStore } from '@/stores/useAgentStore';
@@ -59,6 +59,55 @@ export default function ChatsScreen() {
     }
   };
 
+  const renderListHeader = () => (
+    <>
+      <View style={styles.searchWrapper}>
+        <View style={styles.searchBar}>
+          <Ionicons name="search-outline" size={16} color="#8f959e" style={{ marginRight: 8 }} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="搜索会话..."
+            placeholderTextColor="#8f959e"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Ionicons name="close-circle" size={16} color="#8f959e" />
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+
+      <View style={styles.tabsWrapper}>
+        <TouchableOpacity
+          style={[styles.tabBtn, activeTab === 'chat' && styles.tabBtnActive]}
+          onPress={() => setActiveTab('chat')}
+        >
+          <Text style={[styles.tabText, activeTab === 'chat' && styles.tabTextActive]}>
+            Chat ({chatList.length})
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tabBtn, activeTab === 'agent' && styles.tabBtnActive]}
+          onPress={() => setActiveTab('agent')}
+        >
+          <Text style={[styles.tabText, activeTab === 'agent' && styles.tabTextActive]}>
+            Agent chat ({agentChatList.length})
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tabBtn, activeTab === 'archived' && styles.tabBtnActive]}
+          onPress={() => setActiveTab('archived')}
+        >
+          <Text style={[styles.tabText, activeTab === 'archived' && styles.tabTextActive]}>
+            已归档 ({archivedList.length})
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </>
+  );
+
   if (loading && conversations.length === 0) {
     return (
       <View style={styles.loadingContainer}>
@@ -87,56 +136,11 @@ export default function ChatsScreen() {
         }}
       />
 
-      {/* Search Input Box */}
-      <View style={styles.searchWrapper}>
-        <View style={styles.searchBar}>
-          <Ionicons name="search-outline" size={16} color="#8f959e" style={{ marginRight: 8 }} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="搜索会话..."
-            placeholderTextColor="#8f959e"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={16} color="#8f959e" />
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
-
-      {/* Lark Segments / Category Switcher */}
-      <View style={styles.tabsWrapper}>
-        <TouchableOpacity
-          style={[styles.tabBtn, activeTab === 'chat' && styles.tabBtnActive]}
-          onPress={() => setActiveTab('chat')}
-        >
-          <Text style={[styles.tabText, activeTab === 'chat' && styles.tabTextActive]}>
-            Chat ({chatList.length})
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tabBtn, activeTab === 'agent' && styles.tabBtnActive]}
-          onPress={() => setActiveTab('agent')}
-        >
-          <Text style={[styles.tabText, activeTab === 'agent' && styles.tabTextActive]}>
-            Agent chat ({agentChatList.length})
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tabBtn, activeTab === 'archived' && styles.tabBtnActive]}
-          onPress={() => setActiveTab('archived')}
-        >
-          <Text style={[styles.tabText, activeTab === 'archived' && styles.tabTextActive]}>
-            已归档 ({archivedList.length})
-          </Text>
-        </TouchableOpacity>
-      </View>
-
       <FlatList
+        style={styles.list}
         data={getActiveData()}
         keyExtractor={(item) => item.id}
+        ListHeaderComponent={renderListHeader}
         renderItem={({ item }) => (
           <ConversationItem
             conversation={item}
@@ -153,7 +157,13 @@ export default function ChatsScreen() {
         )}
         onRefresh={fetchConversations}
         refreshing={loading}
-        contentContainerStyle={{ paddingBottom: 16 }}
+        contentContainerStyle={styles.listContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        bounces
+        alwaysBounceVertical
+        overScrollMode="always"
+        scrollEventThrottle={16}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="chatbubbles-outline" size={40} color="#c5c7cb" style={{ marginBottom: 12 }} />
@@ -276,6 +286,13 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#ffffff',
+  },
+  list: {
+    flex: 1,
+  },
+  listContent: {
+    flexGrow: 1,
+    paddingBottom: 24,
   },
   searchWrapper: {
     paddingHorizontal: 16,

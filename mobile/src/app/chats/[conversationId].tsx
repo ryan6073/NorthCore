@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -20,21 +20,34 @@ import { useMessageStore } from '@/stores/useMessageStore';
 import { useConversationStore } from '@/stores/useConversationStore';
 import { useAgentStore } from '@/stores/useAgentStore';
 import MessageBubble from '@/components/MessageBubble';
+import ArtifactFullScreenModal from '@/components/ArtifactFullScreenModal';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { conversationApi } from '@/api/conversationApi';
 import ContextRing from '@/components/ContextRing';
+import * as DocumentPicker from 'expo-document-picker';
+import type { Artifact, ArtifactVersion, MessageAttachment } from '@/types';
 
 export default function ConversationScreen() {
   const { conversationId } = useLocalSearchParams<{ conversationId: string }>();
-  const { messages, loading, fetchMessages, sendMessage, togglePinMessage } = useMessageStore();
+  const { messages, loading, loadingMore, hasMore, memories, contextUsage,
+    loadConversationData, loadMoreMessages, sendMessage, togglePinMessage, deleteMemory } = useMessageStore();
   const { conversations } = useConversationStore();
-  const { agents } = useAgentStore();
+  const { agents, fetchAgents } = useAgentStore();
+
+  // Artifact full-screen preview state
+  const [artifactPreview, setArtifactPreview] = useState<{
+    visible: boolean;
+    artifact: Artifact | null;
+    version?: ArtifactVersion;
+  }>({ visible: false, artifact: null });
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showMentionPopup, setShowMentionPopup] = useState(false);
   const [webSearchMode, setWebSearchMode] = useState(false);
   const flatListRef = useRef<FlatList>(null);
+
+  const [pendingAttachments, setPendingAttachments] = useState<MessageAttachment[]>([]);
 
   // Bubble context states
   const [selectedMessage, setSelectedMessage] = useState<any>(null);
@@ -45,10 +58,31 @@ export default function ConversationScreen() {
   const [showMemoryPanel, setShowMemoryPanel] = useState(false);
   const [showContextDialog, setShowContextDialog] = useState(false);
   const [compressing, setCompressing] = useState(false);
-  const [memories, setMemories] = useState<any[]>([]);
   const [memoryTab, setMemoryTab] = useState<'pins' | 'memories'>('pins');
+  // 用户是否在最新消息附近（用于控制新消息是否自动滚动）
+  const [isNearBottom, setIsNearBottom] = useState(true);
+  // 是否正在加载历史消息（避免在加载历史时滚动到底部）
+  const isLoadingHistory = useRef(false);
+
+  // ── WS subscribe / unsubscribe ──
+  const { subscribeConversation: subConv, unsubscribeConversation: unsubConv } = useMessageStore();
 
   const conversation = conversations.find((c) => c.id === conversationId);
+
+  useEffect(() => {
+    if (conversationId) {
+      subConv(conversationId);
+    }
+    return () => {
+      if (conversationId) {
+        unsubConv(conversationId);
+      }
+    };
+  }, [conversationId]);
+
+  useEffect(() => {
+    fetchAgents();
+  }, []);
 
   const handleCompressContext = async () => {
     if (!conversationId) return;
@@ -72,33 +106,69 @@ export default function ConversationScreen() {
 
   const handleDeleteMemory = async (memoryId: string) => {
     if (!conversationId) return;
-    try {
-      await conversationApi.deleteMemory(conversationId, memoryId);
-      setMemories(prev => prev.filter(m => m.id !== memoryId));
-    } catch {
-      setMemories(prev => prev.filter(m => m.id !== memoryId));
-    }
+    await deleteMemory(conversationId, memoryId);
   };
 
+  // 进入会话时统一加载：消息 / pin / 记忆 / 上下文使用
   useEffect(() => {
     if (conversationId) {
-      fetchMessages(conversationId);
-      conversationApi.getMemories(conversationId)
-        .then(data => setMemories(data || []))
-        .catch(() => {
-          setMemories([
-            { id: 'm1', content: '用户偏好使用 React Native 进行移动端开发', category: 'preference' },
-            { id: 'm2', content: '上下文压缩能够有效回收冗余上下文', category: 'project' }
-          ]);
-        });
+      loadConversationData(conversationId);
     }
   }, [conversationId]);
 
+  // 按 createdAt 升序排列（旧→新），短会话自然从顶部开始，长会话再滚到最新消息。
+  const sortedMessages = useMemo(
+    () => [...messages].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
+    [messages],
+  );
+
+  const pickDocuments = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: '*/*',
+        copyToCacheDirectory: true,
+        multiple: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const selectedAttachments: MessageAttachment[] = result.assets.map(asset => {
+          const isImage = asset.mimeType?.startsWith('image/') || asset.name.match(/\.(jpg|jpeg|png|gif|webp|svg|bmp)$/i);
+          const isPdf = asset.mimeType === 'application/pdf' || asset.name.endsWith('.pdf');
+          const isPpt = asset.name.endsWith('.ppt') || asset.name.endsWith('.pptx');
+
+          let type = 'other';
+          if (isImage) type = 'image';
+          else if (isPdf) type = 'pdf';
+          else if (isPpt) type = 'ppt';
+
+          const tempId = `temp-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+          return {
+            id: tempId,
+            name: asset.name,
+            type,
+            mimeType: asset.mimeType || 'application/octet-stream',
+            url: asset.uri,
+            size: asset.size || undefined,
+            file: asset as any,
+          };
+        });
+
+        setPendingAttachments(prev => [...prev, ...selectedAttachments]);
+      }
+    } catch (error) {
+      console.warn('Pick documents error:', error);
+      Alert.alert('错误', '无法选择文件');
+    }
+  };
+
   const handleSend = async () => {
-    if (!inputText.trim() || !conversationId) return;
+    if ((!inputText.trim() && pendingAttachments.length === 0) || !conversationId) return;
 
     const text = inputText;
+    const attachmentsToSend = pendingAttachments;
     setInputText('');
+    setPendingAttachments([]);
+    setReplyContext(null);
     setShowEmojiPicker(false);
     setShowMentionPopup(false);
     setSending(true);
@@ -113,7 +183,14 @@ export default function ConversationScreen() {
         if (found) targetAgentId = found.id;
       }
 
-      await sendMessage(conversationId, text);
+      await sendMessage(
+        conversationId,
+        text,
+        attachmentsToSend,
+        targetAgentId,
+        webSearchMode ? 'force' : 'off',
+        replyContext?.id || undefined
+      );
     } finally {
       setSending(false);
     }
@@ -166,17 +243,17 @@ export default function ConversationScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginRight: 8 }}>
               {conversation && (
                 <>
-                  {/* Context Indicator */}
+                  {/* Context Indicator — prefer store contextUsage (loaded via loadConversationData) */}
                   <TouchableOpacity
                     onPress={() => setShowContextDialog(true)}
                     style={styles.headerIndicatorBtn}
                   >
                     <ContextRing
-                      percent={conversation.contextUsage?.contextUsagePercent || 0}
-                      color={getContextColor(conversation.contextUsage?.contextUsagePercent || 0)}
+                      percent={contextUsage?.contextUsagePercent || conversation.contextUsage?.contextUsagePercent || 0}
+                      color={getContextColor(contextUsage?.contextUsagePercent || conversation.contextUsage?.contextUsagePercent || 0)}
                     />
                     <Text style={styles.headerIndicatorText}>
-                      {Math.round(conversation.contextUsage?.contextUsagePercent || 0)}%
+                      {Math.round(contextUsage?.contextUsagePercent || conversation.contextUsage?.contextUsagePercent || 0)}%
                     </Text>
                   </TouchableOpacity>
 
@@ -293,7 +370,7 @@ export default function ConversationScreen() {
 
       <FlatList
         ref={flatListRef}
-        data={messages}
+        data={sortedMessages}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
           <TouchableOpacity
@@ -307,12 +384,46 @@ export default function ConversationScreen() {
               setMsgMenuVisible(true);
             }}
           >
-            <MessageBubble message={item} agents={agents} />
+            <MessageBubble
+              message={item}
+              agents={agents}
+              onOpenArtifactFullScreen={(artifact, version) =>
+                setArtifactPreview({ visible: true, artifact, version })
+              }
+            />
           </TouchableOpacity>
         )}
         contentContainerStyle={styles.listContent}
-        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-        onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        // 新消息到来时，如果用户已经在底部附近，则保持滚动到最新。
+        onContentSizeChange={() => {
+          if (!loading && !isLoadingHistory.current && isNearBottom) {
+            flatListRef.current?.scrollToEnd({ animated: true });
+          }
+        }}
+        onLayout={() => {
+          if (!loading && sortedMessages.length > 1) {
+            flatListRef.current?.scrollToEnd({ animated: false });
+          }
+        }}
+        // 非 inverted 列表中，顶部接近 0 时加载更早的历史消息。
+        onScroll={(e) => {
+          const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
+          const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
+          setIsNearBottom(distanceFromBottom < 80);
+
+          if (hasMore && conversationId && !loadingMore) {
+            const isNearTop = contentOffset.y < 40;
+            if (isNearTop) {
+              isLoadingHistory.current = true;
+              loadMoreMessages(conversationId).finally(() => {
+                isLoadingHistory.current = false;
+              });
+            }
+          }
+        }}
+        scrollEventThrottle={100}
+        initialNumToRender={15}
+        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
         ListEmptyComponent={
           loading ? (
             <View style={styles.loadingContainer}>
@@ -323,6 +434,14 @@ export default function ConversationScreen() {
               <Text style={styles.emptyText}>没有消息，开始聊天吧！</Text>
             </View>
           )
+        }
+        ListHeaderComponent={
+          loadingMore ? (
+            <View style={styles.loadingMoreContainer}>
+              <ActivityIndicator size="small" color="#8f959e" />
+              <Text style={styles.loadingMoreText}>加载更多...</Text>
+            </View>
+          ) : null
         }
       />
 
@@ -395,6 +514,14 @@ export default function ConversationScreen() {
           <Text style={styles.toolbarBtnText}>表情</Text>
         </TouchableOpacity>
 
+        <TouchableOpacity
+          style={styles.toolbarBtn}
+          onPress={pickDocuments}
+        >
+          <Ionicons name="attach-outline" size={16} color="#646a73" />
+          <Text style={styles.toolbarBtnText}>上传文件</Text>
+        </TouchableOpacity>
+
         {conversation?.mode === 'group' && (
           <TouchableOpacity
             style={styles.toolbarBtn}
@@ -406,6 +533,41 @@ export default function ConversationScreen() {
         )}
       </View>
 
+      {/* Pending Attachments list */}
+      {pendingAttachments.length > 0 && (
+        <View style={styles.pendingAttachmentsContainer}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pendingAttachmentsScroll}>
+            {pendingAttachments.map((attach) => (
+              <View key={attach.id} style={styles.pendingAttachmentBadge}>
+                <Ionicons
+                  name={
+                    attach.type === 'image'
+                      ? 'image-outline'
+                      : attach.type === 'pdf'
+                      ? 'document-text-outline'
+                      : attach.type === 'ppt'
+                      ? 'easel-outline'
+                      : 'document-outline'
+                  }
+                  size={12}
+                  color="#646a73"
+                  style={{ marginRight: 4 }}
+                />
+                <Text style={styles.pendingAttachmentText} numberOfLines={1}>
+                  {attach.name}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setPendingAttachments(prev => prev.filter(a => a.id !== attach.id))}
+                  style={styles.pendingAttachmentClose}
+                >
+                  <Ionicons name="close-circle" size={14} color="#8f959e" />
+                </TouchableOpacity>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
       <View style={styles.inputContainer}>
         <TextInput
           style={styles.input}
@@ -415,12 +577,15 @@ export default function ConversationScreen() {
           multiline
         />
         <TouchableOpacity
-          style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
+          style={[
+            styles.sendButton,
+            (!inputText.trim() && pendingAttachments.length === 0) && styles.sendButtonDisabled
+          ]}
           onPress={() => {
             handleSend();
             if (replyContext) setReplyContext(null);
           }}
-          disabled={!inputText.trim() || sending}
+          disabled={(!inputText.trim() && pendingAttachments.length === 0) || sending}
         >
           {sending ? (
             <ActivityIndicator size="small" color="#fff" />
@@ -430,15 +595,27 @@ export default function ConversationScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Artifact Full-Screen Preview Modal */}
+      <ArtifactFullScreenModal
+        visible={artifactPreview.visible}
+        artifact={artifactPreview.artifact}
+        initialVersion={artifactPreview.version}
+        onClose={() => setArtifactPreview({ visible: false, artifact: null })}
+      />
+
       {/* Context usage info modal */}
-      {showContextDialog && conversation && (
+      {showContextDialog && conversation && (() => {
+        const ctxUsage = contextUsage || conversation.contextUsage || { contextUsagePercent: 0, contextUsageChars: 0, contextLimitChars: 200000 };
+        const percent = ctxUsage.contextUsagePercent || 0;
+        const color = getContextColor(percent);
+        return (
         <Modal
           transparent
           visible={showContextDialog}
           animationType="fade"
           onRequestClose={() => setShowContextDialog(false)}
         >
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.modalOverlay}
             activeOpacity={1}
             onPress={() => setShowContextDialog(false)}
@@ -454,25 +631,25 @@ export default function ConversationScreen() {
               <View style={styles.contextUsageRow}>
                 <Text style={styles.contextLabel}>当前已使用</Text>
                 <Text style={styles.contextValue}>
-                  {conversation.contextUsage?.contextUsageChars || 0} / {conversation.contextUsage?.contextLimitChars || 200000} 字符
+                  {ctxUsage.contextUsageChars || 0} / {ctxUsage.contextLimitChars || 200000} 字符
                 </Text>
               </View>
 
               <View style={styles.progressBarBg}>
-                <View 
+                <View
                   style={[
-                    styles.progressBarFill, 
-                    { 
-                      width: `${Math.min(100, conversation.contextUsage?.contextUsagePercent || 0)}%`,
-                      backgroundColor: getContextColor(conversation.contextUsage?.contextUsagePercent || 0)
+                    styles.progressBarFill,
+                    {
+                      width: `${Math.min(100, percent)}%`,
+                      backgroundColor: color
                     }
-                  ]} 
+                  ]}
                 />
               </View>
 
               <View style={{ marginVertical: 12, alignItems: 'center' }}>
-                <Text style={{ fontSize: 24, fontWeight: 'bold', color: getContextColor(conversation.contextUsage?.contextUsagePercent || 0) }}>
-                  {Math.round(conversation.contextUsage?.contextUsagePercent || 0)}%
+                <Text style={{ fontSize: 24, fontWeight: 'bold', color }}>
+                  {Math.round(percent)}%
                 </Text>
               </View>
 
@@ -493,7 +670,8 @@ export default function ConversationScreen() {
             </View>
           </TouchableOpacity>
         </Modal>
-      )}
+        );
+      })()}
 
       {/* Message Long-Press Context Menu */}
       {selectedMessage && (() => {
@@ -599,7 +777,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f6f7',
   },
   listContent: {
-    padding: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     paddingBottom: 24,
   },
   loadingContainer: {
@@ -612,6 +791,17 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
+    color: '#8f959e',
+  },
+  loadingMoreContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 16,
+    gap: 6,
+  },
+  loadingMoreText: {
+    fontSize: 12,
     color: '#8f959e',
   },
   inputContainer: {
@@ -838,10 +1028,7 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
+    backgroundColor: 'transparent',
   },
   contextModalBox: {
     backgroundColor: '#ffffff',
@@ -1018,5 +1205,38 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontWeight: '700',
     color: '#3370ff',
+  },
+  pendingAttachmentsContainer: {
+    backgroundColor: '#ffffff',
+    borderTopWidth: 1,
+    borderTopColor: '#f5f6f7',
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+  },
+  pendingAttachmentsScroll: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  pendingAttachmentBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f5f6f7',
+    borderWidth: 1,
+    borderColor: '#dee0e3',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    maxWidth: 160,
+  },
+  pendingAttachmentText: {
+    fontSize: 11,
+    color: '#1f2329',
+    maxWidth: 100,
+  },
+  pendingAttachmentClose: {
+    marginLeft: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

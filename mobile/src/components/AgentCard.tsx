@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Agent } from '@/types';
 import { Ionicons } from '@expo/vector-icons';
+import AuthImage from './AuthImage';
 
 interface AgentCardProps {
   agent: Agent;
@@ -16,9 +17,9 @@ export default function AgentCard({ agent, onPress }: AgentCardProps) {
       <View style={styles.header}>
         <View style={styles.avatar}>
           {agent.avatar ? (
-            <Image
-              source={{ uri: agent.avatar }}
-              style={{ width: '100%', height: '100%', borderRadius: 14 }}
+            <AuthImage
+              uri={agent.avatar}
+              style={{ flex: 1, borderRadius: 14 }}
               resizeMode="cover"
             />
           ) : (

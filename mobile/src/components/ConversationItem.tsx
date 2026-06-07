@@ -1,13 +1,14 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, type GestureResponderEvent } from 'react-native';
 import { Conversation } from '@/types';
 import { Ionicons } from '@expo/vector-icons';
 import { useAgentStore } from '@/stores/useAgentStore';
+import AuthImage from './AuthImage';
 
 interface ConversationItemProps {
   conversation: Conversation;
   onPress: () => void;
-  onLongPress?: () => void;
+  onLongPress?: (event: GestureResponderEvent) => void;
 }
 
 export default function ConversationItem({ conversation, onPress, onLongPress }: ConversationItemProps) {
@@ -40,8 +41,8 @@ export default function ConversationItem({ conversation, onPress, onLongPress }:
       const avatarUrl = getAgentAvatar(agentIds[0] || '');
       if (avatarUrl) {
         return (
-          <Image
-            source={{ uri: avatarUrl }}
+          <AuthImage
+            uri={avatarUrl}
             style={styles.avatarImage}
             resizeMode="cover"
           />
@@ -54,8 +55,8 @@ export default function ConversationItem({ conversation, onPress, onLongPress }:
             {agentIds.slice(0, 2).map((id, index) => {
               const avatarUrl = getAgentAvatar(id);
               return (
-                <View key={index} style={{ flex: 1, height: '100%', overflow: 'hidden' }}>
-                  <Image source={{ uri: avatarUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                <View key={index} style={{ flex: 1, overflow: 'hidden' }}>
+                  <AuthImage uri={avatarUrl} style={{ flex: 1 }} resizeMode="cover" />
                 </View>
               );
             })}
@@ -66,15 +67,15 @@ export default function ConversationItem({ conversation, onPress, onLongPress }:
       if (agentIds.length === 3) {
         return (
           <View style={[styles.avatarGrid, { flexDirection: 'row', padding: 1 }]}>
-            <View style={{ flex: 1, height: '100%', overflow: 'hidden', marginRight: 1 }}>
-              <Image source={{ uri: getAgentAvatar(agentIds[0]) }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+            <View style={{ flex: 1, overflow: 'hidden', marginRight: 1 }}>
+              <AuthImage uri={getAgentAvatar(agentIds[0])} style={{ flex: 1 }} resizeMode="cover" />
             </View>
-            <View style={{ flex: 1, height: '100%' }}>
+            <View style={{ flex: 1 }}>
               <View style={{ flex: 1, overflow: 'hidden', marginBottom: 1 }}>
-                <Image source={{ uri: getAgentAvatar(agentIds[1]) }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                <AuthImage uri={getAgentAvatar(agentIds[1])} style={{ flex: 1 }} resizeMode="cover" />
               </View>
               <View style={{ flex: 1, overflow: 'hidden' }}>
-                <Image source={{ uri: getAgentAvatar(agentIds[2]) }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                <AuthImage uri={getAgentAvatar(agentIds[2])} style={{ flex: 1 }} resizeMode="cover" />
               </View>
             </View>
           </View>
@@ -168,8 +169,7 @@ const styles = StyleSheet.create({
     borderColor: '#eff0f1',
   },
   avatarImage: {
-    width: '100%',
-    height: '100%',
+    flex: 1,
   },
   avatarGrid: {
     width: '100%',

@@ -8,6 +8,7 @@ interface AgentState {
   fetchAgents: () => Promise<void>;
   createAgent: (agent: Omit<Agent, 'id'>) => Promise<Agent>;
   updateAgent: (agentId: string, agent: Partial<Agent>) => Promise<Agent>;
+  updateAgentStatus: (agentId: string, status: AgentStatus) => void;
 }
 
 const mockAgents: Agent[] = [
@@ -151,5 +152,13 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       });
       return updatedAgent || (agent as Agent);
     }
+  },
+
+  updateAgentStatus: (agentId: string, status: AgentStatus) => {
+    set((state) => ({
+      agents: state.agents.map((a) =>
+        a.id === agentId ? { ...a, status } : a
+      ),
+    }));
   },
 }));

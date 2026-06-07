@@ -1,42 +1,87 @@
-import React from 'react';
-import { View, Text, StyleSheet, Platform, Image } from 'react-native';
-import { Message, Agent } from '@/types';
+import React, { useMemo } from 'react';
+import { View, Text, StyleSheet, Platform, TouchableOpacity } from 'react-native';
+import { Message, Agent, Artifact, ArtifactVersion } from '@/types';
 import { Ionicons } from '@expo/vector-icons';
+import MarkdownRenderer from './MarkdownRenderer';
+import ArtifactMessage from './ArtifactMessage';
+import AttachmentCard from './AttachmentCard';
+import AuthImage from './AuthImage';
 
 interface MessageBubbleProps {
   message: Message;
   agents?: Agent[];
+  onOpenArtifactFullScreen?: (artifact: Artifact, version?: ArtifactVersion) => void;
 }
 
-export default function MessageBubble({ message, agents = [] }: MessageBubbleProps) {
+export default function MessageBubble({ message, agents = [], onOpenArtifactFullScreen }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
+  const isThinking = message.type === 'status' && message.content === '正在思考...';
 
+  const isRichContent = useMemo(() => {
+    if (message.type === 'code' || message.type === 'task-plan' || message.type === 'artifact') {
+      return true;
+    }
+    const markdownRegex = /(^\s*#+\s)|(^\s*[-*+]\s)|(^\s*\d+\.\s)|([*_`~])|(\[.+\]\(.+\))|(\!\[.+\]\(.+\))|(^\s*>\s)|(\|)/m;
+    return message.content ? markdownRegex.test(message.content) : false;
+  }, [message.content, message.type]);
+
+  // System messages (status banners)
   if (isSystem) {
     return (
       <View style={styles.systemContainer}>
         <View style={styles.systemBubble}>
+          <Ionicons
+            name={message.content?.includes('完成') ? 'checkmark-circle' : 'information-circle'}
+            size={14}
+            color="#646a73"
+            style={{ marginRight: 4 }}
+          />
           <Text style={styles.systemText}>{message.content}</Text>
         </View>
       </View>
     );
   }
 
+  // Thinking indicator
+  if (isThinking) {
+    return (
+      <View style={[styles.container, styles.agentContainer]}>
+        <View style={styles.avatar}>
+          <View style={styles.thinkingIndicator}>
+            <View style={[styles.thinkingDot, { animationDelay: '0ms' }] as any} />
+            <View style={[styles.thinkingDot, { animationDelay: '150ms' }] as any} />
+            <View style={[styles.thinkingDot, { animationDelay: '300ms' }] as any} />
+          </View>
+        </View>
+        <View style={[styles.bubbleWrapper, styles.richBubbleWrapper, styles.agentBubbleWrapper]}>
+          <Text style={styles.senderNameOutside}>
+            {message.senderName || 'AI助手'}
+          </Text>
+          <View style={[styles.bubble, styles.thinkingBubble]}>
+            <Text style={styles.thinkingText}>正在思考...</Text>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
   const renderMessageContent = () => {
-    // 1. Code Block Message
+    // 1. Code block message
     if (message.type === 'code') {
       return (
-        <View style={styles.codeBlockContainer}>
-          <View style={styles.blockHeader}>
-            <Ionicons name="code-slash" size={14} color="#646a73" />
-            <Text style={styles.blockHeaderTitle}>代码片段</Text>
-          </View>
-          <Text style={styles.codeText}>{message.content}</Text>
+        <View style={styles.codeBlockWrapper}>
+          <MarkdownRenderer
+            content={message.content}
+            language={message.language}
+            isCodeBlock={true}
+            maxHeight={300}
+          />
         </View>
       );
     }
 
-    // 2. Task Plan / Run Message
+    // 2. Task plan message
     if (message.type === 'task-plan') {
       return (
         <View style={styles.taskPlanContainer}>
@@ -44,53 +89,60 @@ export default function MessageBubble({ message, agents = [] }: MessageBubblePro
             <Ionicons name="git-network-outline" size={14} color="#3370ff" />
             <Text style={[styles.blockHeaderTitle, { color: '#3370ff' }]}>执行规划</Text>
           </View>
-          <Text style={styles.taskPlanText}>{message.content}</Text>
+          <MarkdownRenderer content={message.content} maxHeight={250} />
         </View>
       );
     }
 
-    // 3. Artifact (产物预览)
+    // 3. Artifact message — use interactive ArtifactMessage component
     if (message.type === 'artifact') {
-      const filename = message.content.replace(/^生成产物\s*/, '') || '产物文档';
       return (
-        <View style={styles.artifactContainer}>
-          <View style={styles.artifactHeader}>
-            <Ionicons name="document-text" size={20} color="#3370ff" />
-            <View style={styles.artifactHeaderMeta}>
-              <Text style={styles.artifactTitle} numberOfLines={1}>{filename}</Text>
-              <Text style={styles.artifactSubtitle}>智能产物 (移动端预览)</Text>
-            </View>
-          </View>
-          <View style={styles.artifactPreviewBox}>
-            <Text style={styles.artifactPreviewText} numberOfLines={4}>
-              {message.metadata?.summary || '该产物已在工作区生成，可通过电脑端查看完整版交互式视图或代码。'}
-            </Text>
-          </View>
+        <ArtifactMessage
+          message={message}
+          onOpenFullScreen={onOpenArtifactFullScreen}
+        />
+      );
+    }
+
+    // 4. Status messages (other than thinking)
+    if (message.type === 'status') {
+      return (
+        <View style={styles.statusContainer}>
+          <Text style={styles.statusText}>{message.content}</Text>
         </View>
       );
     }
 
-    // Default: Regular Text Message
+    // 5. Default: render as markdown (fallback to native text if it's plain text)
+    if (!isRichContent) {
+      return (
+        <Text style={isUser ? styles.userText : styles.agentText} selectable>
+          {message.content}
+        </Text>
+      );
+    }
+
     return (
-      <Text style={[styles.content, isUser ? styles.userContent : styles.agentContent]}>
-        {message.content}
-      </Text>
+      <MarkdownRenderer content={message.content} />
     );
   };
 
-  const senderAgent = !isUser && message.senderName
-    ? agents.find(a => a.name === message.senderName)
+  // 优先用 senderId 精确查找，找不到再降级用 senderName 模糊匹配
+  const senderAgent = !isUser
+    ? agents.find(a => a.id === message.senderId) || 
+      (message.senderName ? agents.find(a => a.name === message.senderName) : null)
     : null;
+  const senderAvatar = senderAgent?.avatar || (message.metadata?.avatar as string | undefined) || '';
 
   return (
     <View style={[styles.container, isUser ? styles.userContainer : styles.agentContainer]}>
       {/* Agent Avatar */}
       {!isUser && (
         <View style={styles.avatar}>
-          {senderAgent?.avatar ? (
-            <Image
-              source={{ uri: senderAgent.avatar }}
-              style={{ width: '100%', height: '100%', borderRadius: 10 }}
+          {senderAvatar ? (
+            <AuthImage
+              uri={senderAvatar}
+              style={{ flex: 1, borderRadius: 10 }}
               resizeMode="cover"
             />
           ) : (
@@ -102,26 +154,45 @@ export default function MessageBubble({ message, agents = [] }: MessageBubblePro
       )}
 
       {/* Message & Name Container */}
-      <View style={[styles.bubbleWrapper, isUser ? styles.userBubbleWrapper : styles.agentBubbleWrapper]}>
+      <View style={[
+        styles.bubbleWrapper,
+        isRichContent ? styles.richBubbleWrapper : styles.plainBubbleWrapper,
+        isUser ? styles.userBubbleWrapper : styles.agentBubbleWrapper
+      ]}>
         {!isUser && (
           <Text style={styles.senderNameOutside}>
             {message.senderName || '智能助手'}
           </Text>
         )}
         {isUser && (
-          <Text style={styles.senderNameOutsideUser}>
-            我
-          </Text>
+          <Text style={styles.senderNameOutsideUser}>我</Text>
         )}
-        <View style={[styles.bubble, isUser ? styles.userBubble : styles.agentBubble]}>
-          {renderMessageContent()}
-          {message.isPinned && (
-            <View style={styles.pinnedIndicator}>
-              <Ionicons name="pin" size={10} color="#d97706" style={{ transform: [{ rotate: '45deg' }] }} />
-              <Text style={styles.pinnedIndicatorText}>长期记忆</Text>
-            </View>
-          )}
-        </View>
+        
+        {/* Only show bubble if has message content or is rich content */}
+        {(isRichContent || (message.content && message.content.trim().length > 0)) && (
+          <View style={[
+            styles.bubble,
+            isUser ? styles.userBubble : styles.agentBubble,
+            isRichContent ? styles.richBubble : styles.plainBubble
+          ]}>
+            {renderMessageContent()}
+            {message.isPinned && (
+              <View style={styles.pinnedIndicator}>
+                <Ionicons name="pin" size={10} color="#d97706" style={{ transform: [{ rotate: '45deg' }] }} />
+                <Text style={styles.pinnedIndicatorText}>长期记忆</Text>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Attachment Cards list */}
+        {message.attachments && message.attachments.length > 0 && (
+          <View style={[styles.attachmentsContainer, isUser ? styles.userAttachments : styles.agentAttachments]}>
+            {message.attachments.map((attach) => (
+              <AttachmentCard key={attach.id} attachment={attach} isUser={isUser} />
+            ))}
+          </View>
+        )}
       </View>
 
       {/* User Avatar */}
@@ -137,7 +208,7 @@ export default function MessageBubble({ message, agents = [] }: MessageBubblePro
 const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
-    marginVertical: 8,
+    marginVertical: 6,
     width: '100%',
   },
   userContainer: {
@@ -150,8 +221,10 @@ const styles = StyleSheet.create({
   },
   systemContainer: {
     alignSelf: 'center',
-    marginVertical: 12,
-    maxWidth: '90%',
+    marginVertical: 8,
+    maxWidth: '80%',
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   avatar: {
     width: 34,
@@ -171,8 +244,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 16,
-    flexShrink: 1,
+    overflow: 'hidden',
   },
+  richBubble: {
+    width: '100%',
+  },
+  plainBubble: {},
   userBubble: {
     backgroundColor: '#deebff',
     borderTopRightRadius: 4,
@@ -183,6 +260,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#dee0e3',
   },
+  thinkingBubble: {
+    backgroundColor: '#f5f6f7',
+    borderTopLeftRadius: 4,
+    borderWidth: 1,
+    borderColor: '#dee0e3',
+    minWidth: 100,
+    paddingVertical: 10,
+  },
   systemBubble: {
     backgroundColor: '#f5f6f7',
     paddingHorizontal: 12,
@@ -190,16 +275,34 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#dee0e3',
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   bubbleWrapper: {
-    flex: 1,
     flexDirection: 'column',
+    maxWidth: '78%',
+  },
+  richBubbleWrapper: {
+    flex: 1,
+  },
+  plainBubbleWrapper: {
+    flexShrink: 1,
   },
   userBubbleWrapper: {
     alignItems: 'flex-end',
   },
   agentBubbleWrapper: {
     alignItems: 'flex-start',
+  },
+  userText: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#1f2329',
+  },
+  agentText: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#1f2329',
   },
   userAvatar: {
     backgroundColor: '#3370ff',
@@ -216,23 +319,51 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     marginRight: 4,
   },
-  content: {
-    fontSize: 15,
-    lineHeight: 22,
+
+  // ── Thinking indicator ──
+  thinkingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
   },
-  userContent: {
-    color: '#1f2329',
+  thinkingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#ffffff',
   },
-  agentContent: {
-    color: '#1f2329',
+  thinkingText: {
+    fontSize: 13,
+    color: '#8f959e',
+    fontStyle: 'italic',
   },
+
+  // ── System / Status ──
   systemText: {
     fontSize: 12,
     color: '#646a73',
     textAlign: 'center',
     lineHeight: 18,
+    flexShrink: 1,
   },
-  // New Block Render Styles
+  statusContainer: {
+    paddingVertical: 4,
+  },
+  statusText: {
+    fontSize: 13,
+    color: '#646a73',
+    fontStyle: 'italic',
+  },
+
+  // ── Code block ──
+  codeBlockWrapper: {
+    marginTop: 2,
+    marginBottom: 2,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+
+  // ── Task plan ──
   blockHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -247,20 +378,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#646a73',
   },
-  codeBlockContainer: {
-    backgroundColor: '#1e1e1e',
-    borderRadius: 8,
-    padding: 10,
-    marginTop: 4,
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  codeText: {
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-    color: '#34d399',
-    fontSize: 12,
-    lineHeight: 16,
-  },
   taskPlanContainer: {
     backgroundColor: '#f0f5ff',
     borderColor: '#adc6ff',
@@ -269,51 +386,7 @@ const styles = StyleSheet.create({
     padding: 10,
     marginTop: 4,
   },
-  taskPlanText: {
-    fontSize: 13,
-    color: '#1f2329',
-    lineHeight: 18,
-  },
-  artifactContainer: {
-    backgroundColor: '#ffffff',
-    borderColor: '#dee0e3',
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 10,
-    marginTop: 4,
-    width: '100%',
-  },
-  artifactHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 8,
-  },
-  artifactHeaderMeta: {
-    flex: 1,
-  },
-  artifactTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1f2329',
-  },
-  artifactSubtitle: {
-    fontSize: 10,
-    color: '#8f959e',
-    marginTop: 1,
-  },
-  artifactPreviewBox: {
-    backgroundColor: '#f5f6f7',
-    borderRadius: 6,
-    padding: 8,
-    borderWidth: 1,
-    borderColor: '#dee0e3',
-  },
-  artifactPreviewText: {
-    fontSize: 11,
-    color: '#646a73',
-    lineHeight: 15,
-  },
+
   pinnedIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -327,5 +400,16 @@ const styles = StyleSheet.create({
     fontSize: 9,
     color: '#d97706',
     fontWeight: '600',
+  },
+  attachmentsContainer: {
+    marginTop: 6,
+    flexDirection: 'column',
+    gap: 6,
+  },
+  userAttachments: {
+    alignItems: 'flex-end',
+  },
+  agentAttachments: {
+    alignItems: 'flex-start',
   },
 });
