@@ -21,12 +21,12 @@ export const mockAgents: Agent[] = [
       maxTokens: 8192
     },
     tools: [
-      { id: 'file_read', name: '读文件', description: '读取文件内容', enabled: true },
-      { id: 'file_write', name: '写文件', description: '写入或修改文件', enabled: true },
-      { id: 'code_review', name: '代码审查', description: '审查代码质量', enabled: true },
-      { id: 'run_command', name: '运行命令', description: '执行Shell命令', enabled: true },
-      { id: 'web_preview', name: '网页预览', description: '生成网页预览', enabled: true },
-      { id: 'deploy', name: '部署', description: '部署产物', enabled: true }
+      { id: 'workspace.read', name: '读取工作区', description: '读取工作区文件树、文件内容及扫描元数据', enabled: true },
+      { id: 'workspace.write', name: '修改工作区', description: '在工作区直接创建或重写修改源代码文件', enabled: true },
+      { id: 'platform.runtime_write', name: '平台运行期写入', description: '允许运行期框架自由修改工作区文件', enabled: true },
+      { id: 'command.run', name: '执行系统命令', description: '在安全沙箱的本地终端内执行任意 Shell 命令行指令', enabled: true },
+      { id: 'artifact.generate', name: '生成交互产物', description: '生成独立前端交互产物（Artifact）并在右侧面板实时渲染预览', enabled: true },
+      { id: 'deploy.run', name: '发布部署应用', description: '将当前项目编译并一键发布部署为独立容器，可供公网访问', enabled: true }
     ],
     permissions: {
       canReadFiles: true,
@@ -57,9 +57,9 @@ export const mockAgents: Agent[] = [
       maxTokens: 200000
     },
     tools: [
-      { id: 'file_read', name: '读文件', description: '读取文件内容', enabled: true },
-      { id: 'file_write', name: '写文件', description: '写入或修改文件', enabled: true },
-      { id: 'run_command', name: '运行命令', description: '执行Shell命令', enabled: false }
+      { id: 'workspace.read', name: '读取工作区', description: '读取工作区文件树、文件内容及扫描元数据', enabled: true },
+      { id: 'workspace.write', name: '修改工作区', description: '在工作区直接创建或重写修改源代码文件', enabled: true },
+      { id: 'command.run', name: '执行系统命令', description: '在安全沙箱的本地终端内执行任意 Shell 命令行指令', enabled: false }
     ],
     permissions: {
       canReadFiles: true,
@@ -90,8 +90,8 @@ export const mockAgents: Agent[] = [
       maxTokens: 128000
     },
     tools: [
-      { id: 'file_read', name: '读文件', description: '读取文件内容', enabled: true },
-      { id: 'file_write', name: '写文件', description: '写入或修改文件', enabled: true }
+      { id: 'workspace.read', name: '读取工作区', description: '读取工作区 file tree 和文件内容', enabled: true },
+      { id: 'workspace.write', name: '修改工作区', description: '在工作区直接创建或重写修改源代码文件', enabled: true }
     ],
     permissions: {
       canReadFiles: true,
@@ -120,9 +120,9 @@ export const mockAgents: Agent[] = [
       maxTokens: 32768
     },
     tools: [
-      { id: 'file_read', name: '读文件', description: '读取文件内容', enabled: true },
-      { id: 'file_write', name: '写文件', description: '写入或修改文件', enabled: true },
-      { id: 'run_command', name: '运行命令', description: '执行Shell命令', enabled: true }
+      { id: 'workspace.read', name: '读取工作区', description: '读取工作区文件树、文件内容及扫描元数据', enabled: true },
+      { id: 'workspace.write', name: '修改工作区', description: '在工作区直接创建或重写修改源代码文件', enabled: true },
+      { id: 'command.run', name: '执行系统命令', description: '在安全沙箱的本地终端内执行任意 Shell 命令行指令', enabled: true }
     ],
     permissions: {
       canReadFiles: true,
@@ -151,7 +151,7 @@ export const mockAgents: Agent[] = [
       maxTokens: 4096
     },
     tools: [
-      { id: 'code_review', name: '代码审查', description: '审查代码质量', enabled: true }
+      { id: 'workspace.read', name: '读取工作区', description: '读取工作区文件树、文件内容及扫描元数据', enabled: true }
     ],
     permissions: {
       canReadFiles: true,
@@ -180,7 +180,7 @@ export const mockAgents: Agent[] = [
       maxTokens: 8192
     },
     tools: [
-      { id: 'file_write', name: '写文件', description: '写入或修改文件', enabled: true }
+      { id: 'workspace.write', name: '修改工作区', description: '在工作区直接创建或重写修改源代码文件', enabled: true }
     ],
     permissions: {
       canReadFiles: false,

@@ -391,7 +391,7 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
               </div>
             ) : (
               <>
-                <div className="p-4 border-b border-slate-800/60 bg-slate-950/20">
+                <div className="p-4 border-b border-slate-800/60 bg-slate-950/20 max-h-[260px] overflow-y-auto flex-shrink-0 select-none">
               <div className="text-[11px] uppercase text-slate-500 font-bold tracking-wider mb-2">
                 {activeRun.dag?.strategy === 'platform_single_step'
                   ? '平台任务执行 (单步)'

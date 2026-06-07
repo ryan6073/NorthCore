@@ -1,10 +1,11 @@
 import React from 'react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 import { platform } from '@/utils/platform';
-import { Minus, Square, X, Wifi, WifiOff, Cpu, Folder } from 'lucide-react';
+import { Minus, Square, X, Wifi, WifiOff, Cpu, Laptop } from 'lucide-react';
 
 export const TitleBar: React.FC = () => {
   const currentWorkspace = useAgentHubStore(state => state.currentWorkspace);
+  const selectWorkspace = useAgentHubStore(state => state.selectWorkspace);
   const wsStatus = useAgentHubStore(state => state.wsStatus);
   const localAgentProcesses = useAgentHubStore(state => state.localAgentProcesses);
 
@@ -36,18 +37,20 @@ export const TitleBar: React.FC = () => {
         <span className="h-3 w-px bg-slate-300 dark:bg-slate-800" />
         
         {/* Workspace Indicator */}
-        {currentWorkspace ? (
-          <div className="flex items-center gap-1 text-[10px] text-slate-600 dark:text-slate-400 font-medium">
-            <Folder className="w-3 h-3 text-lark-primary dark:text-indigo-400" />
-            <span className="max-w-[150px] truncate" title={currentWorkspace.path}>
-              {currentWorkspace.name}
-            </span>
-          </div>
-        ) : (
-          <span className="text-[10px] text-slate-450 dark:text-slate-500 italic">
-            No Workspace
+        <div 
+          onClick={platform.isDesktop() ? selectWorkspace : undefined}
+          className={`flex items-center gap-1.5 text-[10px] font-medium transition-colors ${
+            platform.isDesktop() 
+              ? 'cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-800 px-1.5 py-0.5 rounded text-slate-600 dark:text-slate-400 hover:text-slate-850 dark:hover:text-white' 
+              : 'text-slate-600 dark:text-slate-400'
+          }`}
+          title={platform.isDesktop() ? "点击选择本地工作区" : undefined}
+        >
+          <Laptop className="w-3.5 h-3.5 text-lark-primary dark:text-indigo-400" />
+          <span className="max-w-[150px] truncate" title={currentWorkspace ? currentWorkspace.path : '未加载工作区'}>
+            {currentWorkspace ? currentWorkspace.name : '未选择本地工作区'}
           </span>
-        )}
+        </div>
       </div>
 
       {/* Center: Window Title / Drag Area Indicator */}

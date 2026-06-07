@@ -98,39 +98,6 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
     }
   }, [toolCatalog]);
 
-  // Synchronize derived permissions when tools change
-  useEffect(() => {
-    const derivedPermissions: AgentPermission = {
-      canReadFiles: false,
-      canWriteFiles: false,
-      canRunCommands: false,
-      canGenerateArtifacts: false,
-      canDeploy: false
-    };
-
-    form.tools.forEach(tool => {
-      if (tool.enabled) {
-        const catItem = toolCatalog.find(c => c.id === tool.id);
-        const permissionKeys = catItem?.permissionKeys || [];
-        permissionKeys.forEach(key => {
-          if (key in derivedPermissions) {
-            derivedPermissions[key as keyof AgentPermission] = true;
-          }
-        });
-      }
-    });
-
-    const hasChanged = Object.keys(derivedPermissions).some(
-      key => derivedPermissions[key as keyof AgentPermission] !== form.permissions[key as keyof AgentPermission]
-    );
-
-    if (hasChanged) {
-      setForm(prev => ({
-        ...prev,
-        permissions: derivedPermissions
-      }));
-    }
-  }, [form.tools, toolCatalog, form.permissions]);
 
   const providers: AgentProvider[] = ['mock', 'claude-code', 'codex', 'opencode', 'local-qwen', 'custom'];
 
@@ -820,6 +787,8 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                             riskBadge = <span className="text-[9px] px-1.5 py-0.2 rounded bg-red-500/10 text-red-500 font-semibold border border-red-500/20 ml-2">高风险</span>;
                           }
 
+                          const isHighRisk = riskLevel === 'high' || riskLevel === 'critical';
+
                           return (
                             <div
                               key={tool.id}
@@ -828,7 +797,9 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                                 !isCompatible
                                   ? 'border-slate-100 dark:border-slate-900 bg-slate-50/50 dark:bg-slate-955/10 opacity-50 cursor-not-allowed'
                                   : tool.enabled
-                                    ? 'border-emerald-500 bg-emerald-50/15 dark:bg-emerald-500/5 shadow-sm cursor-pointer'
+                                    ? isHighRisk
+                                      ? 'border-amber-500 bg-amber-500/5 dark:bg-amber-500/5 shadow-sm cursor-pointer'
+                                      : 'border-emerald-500 bg-emerald-50/15 dark:bg-emerald-500/5 shadow-sm cursor-pointer'
                                     : 'border-slate-200 dark:border-slate-800 bg-slate-50/20 dark:bg-slate-955/20 hover:bg-slate-100/50 dark:hover:bg-slate-800/40 cursor-pointer'
                               }`}
                             >
@@ -836,7 +807,9 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                                 !isCompatible
                                   ? 'border-slate-200 dark:border-slate-800 bg-slate-105 dark:bg-slate-900'
                                   : tool.enabled
-                                    ? 'bg-emerald-500 border-emerald-500 text-white shadow-sm shadow-emerald-500/20'
+                                    ? isHighRisk
+                                      ? 'bg-amber-500 border-amber-500 text-white shadow-sm shadow-amber-500/20'
+                                      : 'bg-emerald-500 border-emerald-500 text-white shadow-sm shadow-emerald-500/20'
                                     : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950'
                               }`}>
                                 {tool.enabled && <Check className="w-3.5 h-3.5 stroke-[3]" />}
@@ -846,7 +819,9 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                                   !isCompatible
                                     ? 'text-slate-450 dark:text-slate-600'
                                     : tool.enabled
-                                      ? 'text-emerald-700 dark:text-emerald-450'
+                                      ? isHighRisk
+                                        ? 'text-amber-700 dark:text-amber-450'
+                                        : 'text-emerald-700 dark:text-emerald-450'
                                       : 'text-slate-700 dark:text-slate-350'
                                 }`}>
                                   {tool.name || catItem?.name || tool.id}
@@ -855,6 +830,12 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                                 <span className="text-[10px] text-slate-400 dark:text-slate-555 mt-1 block leading-normal">
                                   {tool.description || catItem?.description}
                                 </span>
+                                {isCompatible && tool.enabled && isHighRisk && (
+                                  <span className="text-[9px] text-amber-600 dark:text-amber-400 mt-1.5 font-semibold flex items-center gap-1 bg-amber-500/10 dark:bg-amber-500/5 px-2 py-0.5 rounded border border-amber-500/20 w-fit">
+                                    <AlertCircle className="w-3 h-3 text-amber-500 flex-shrink-0" />
+                                    高风险工具：请谨慎授予，确保智能体来源可信。
+                                  </span>
+                                )}
                                 {!isCompatible && (
                                   <span className="text-[9px] text-red-500/80 dark:text-red-400/80 mt-1 block font-medium">
                                     当前模式 ({form.runtime}) 不支持该工具

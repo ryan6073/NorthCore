@@ -4,7 +4,7 @@ import { useAgentHubStore } from '@/store/useAgentHubStore';
 import { 
   Globe, Server, Play, Square, Settings, RefreshCw, 
   ExternalLink, Terminal, ChevronRight, AlertTriangle, 
-  CheckCircle2, Loader2, Copy, Check, ChevronDown, ChevronUp, History
+  CheckCircle2, Loader2, Copy, Check, ChevronDown, ChevronUp, History, X
 } from 'lucide-react';
 import { CreateDeploymentPayload, DeploymentConfig, WorkspaceDeployment } from '@/services/http/deploymentService';
 
@@ -42,6 +42,7 @@ export const DeploymentView: React.FC<DeploymentViewProps> = ({ workspaceId, con
   const [showConfigForm, setShowConfigForm] = useState(false);
   const [showLogsPanel, setShowLogsPanel] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [deployError, setDeployError] = useState<string | null>(null);
 
   // Configuration states
   const [publicBaseUrl, setPublicBaseUrl] = useState('');
@@ -97,6 +98,7 @@ export const DeploymentView: React.FC<DeploymentViewProps> = ({ workspaceId, con
   };
 
   const handleDeploy = async (overrideConfig?: DeploymentConfig) => {
+    setDeployError(null);
     const config: DeploymentConfig = overrideConfig || {};
 
     if (!overrideConfig) {
@@ -134,8 +136,12 @@ export const DeploymentView: React.FC<DeploymentViewProps> = ({ workspaceId, con
       targetAgentId: inferredAgentId
     };
 
-    await startDeploy(workspaceId, payload);
-    setShowConfigForm(false);
+    try {
+      await startDeploy(workspaceId, payload);
+      setShowConfigForm(false);
+    } catch (err: any) {
+      setDeployError(err.message || "部署失败，请检查配置");
+    }
   };
 
   const getStatusBadge = (status: string) => {
@@ -195,6 +201,20 @@ export const DeploymentView: React.FC<DeploymentViewProps> = ({ workspaceId, con
 
   return (
     <div className="flex flex-col h-full bg-slate-900 text-slate-200 overflow-y-auto select-text">
+      {deployError && (
+        <div className="p-3 bg-rose-500/10 border-b border-rose-500/20 text-rose-450 text-xs flex items-start justify-between gap-2 animate-fade-in">
+          <div className="flex gap-1.5 items-center">
+            <AlertTriangle className="w-3.5 h-3.5 text-rose-500 flex-shrink-0" />
+            <span>{deployError}</span>
+          </div>
+          <button 
+            onClick={() => setDeployError(null)}
+            className="text-rose-400 hover:text-rose-350 p-0.5 rounded transition-colors"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
       {/* Active Deployment Display */}
       {activeDeployment ? (
         <div className="p-4 space-y-4">

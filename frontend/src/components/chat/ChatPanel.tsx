@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Conversation, Message, Agent, Artifact, MessageAttachment, AgentMentionItem } from '@/types';
 import MessageBubble from './MessageBubble';
 import ContextUsageRing from '@/components/common/ContextUsageRing';
-import { Send, Paperclip, Smile, AtSign, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight, Settings, Pencil, Check, Terminal, Cpu, FileText, Folder, Save, Globe, Loader2 } from 'lucide-react';
+import { Send, Paperclip, Smile, AtSign, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight, Settings, Pencil, Check, Terminal, Cpu, FileText, Folder, Save, Globe, Loader2, ChevronDown, Plus, Search, AlertTriangle, Cloud, Laptop } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface ChatPanelProps {
@@ -112,13 +112,40 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const removeFileFromContext = useAgentHubStore(state => state.removeFileFromContext);
   const currentWorkspace = useAgentHubStore(state => state.currentWorkspace);
   const isDesktop = useAgentHubStore(state => state.isDesktop);
-  const workspaces = useAgentHubStore(state => state.workspaces);
-  const loadWorkspaces = useAgentHubStore(state => state.loadWorkspaces);
+  const workspaces = useAgentHubStore(state => state.serverWorkspaces);
   const bindConversationWorkspace = useAgentHubStore(state => state.bindConversationWorkspace);
+  const createWorkspace = useAgentHubStore(state => state.createServerWorkspace);
+  const fetchServerWorkspaces = useAgentHubStore(state => state.fetchServerWorkspaces);
+
+  const conversationHasMore = useAgentHubStore(state => state.conversationHasMore);
+  const isLoadingMoreMessages = useAgentHubStore(state => state.isLoadingMoreMessages);
+  const loadMoreMessages = useAgentHubStore(state => state.loadMoreMessages);
+
+  // Custom Workspace Switcher states
+  const [showWorkspaceDropdown, setShowWorkspaceDropdown] = useState(false);
+  const [workspaceSearch, setWorkspaceSearch] = useState('');
+  const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
+  const [newWorkspaceName, setNewWorkspaceName] = useState('');
+  const [isWorkspaceSubmitting, setIsWorkspaceSubmitting] = useState(false);
+  const workspaceDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (workspaceDropdownRef.current && !workspaceDropdownRef.current.contains(event.target as Node)) {
+        setShowWorkspaceDropdown(false);
+        setIsCreatingWorkspace(false);
+        setNewWorkspaceName('');
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
 
   useEffect(() => {
     if (conversation && conversation.mode !== 'agent') {
-      loadWorkspaces();
+      fetchServerWorkspaces('active');
     }
   }, [conversation?.id]);
   const [isApplyToLocal, setIsApplyToLocal] = useState(false);
@@ -134,9 +161,16 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const prevMessagesLengthRef = useRef<number>(0);
   const justSwitchedRef = useRef<boolean>(true);
 
-  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
-    messagesEndRef.current?.scrollIntoView({ behavior });
-  };
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({
+        top: scrollContainerRef.current.scrollHeight,
+        behavior
+      });
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior });
+    }
+  }, []);
 
   const isNearBottom = () => {
     const container = scrollContainerRef.current;
@@ -197,18 +231,26 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     prevMessagesLengthRef.current = messages.length;
 
     if (!isSameConv) {
-      scrollToBottom('instant');
+      // Ensure scrolling happens after DOM renders the messages
+      const timerId = setTimeout(() => {
+        scrollToBottom('instant');
+      }, 50);
       lastScrolledConversationId.current = conversationId;
       justSwitchedRef.current = true;
       const timer = setTimeout(() => {
         justSwitchedRef.current = false;
       }, 800);
-      return () => clearTimeout(timer);
+      return () => {
+        clearTimeout(timerId);
+        clearTimeout(timer);
+      };
     }
 
     if (justSwitchedRef.current) {
-      scrollToBottom('instant');
-      return;
+      const timerId = setTimeout(() => {
+        scrollToBottom('instant');
+      }, 50);
+      return () => clearTimeout(timerId);
     }
 
     const lastMsg = messages[messages.length - 1];
@@ -227,7 +269,41 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         scrollToBottom('instant');
       }
     }
-  }, [conversationId, messagesLength, lastMessageId, lastMessageContent]);
+  }, [conversationId, messagesLength, lastMessageId, lastMessageContent, scrollToBottom]);
+
+  // Handle scrolling to load more history messages
+  const handleScroll = useCallback(async () => {
+    const container = scrollContainerRef.current;
+    if (!container || !conversationId) return;
+
+    const hasMore = conversationHasMore[conversationId] ?? false;
+    if (container.scrollTop <= 15 && hasMore && !isLoadingMoreMessages) {
+      const prevScrollHeight = container.scrollHeight;
+      const prevScrollTop = container.scrollTop;
+
+      await loadMoreMessages(conversationId);
+
+      // Keep scroll position anchored so it doesn't jump
+      requestAnimationFrame(() => {
+        if (scrollContainerRef.current) {
+          const newScrollHeight = scrollContainerRef.current.scrollHeight;
+          scrollContainerRef.current.scrollTop = newScrollHeight - prevScrollHeight + prevScrollTop;
+        }
+      });
+    }
+  }, [conversationId, conversationHasMore, isLoadingMoreMessages, loadMoreMessages]);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (container) {
+      container.addEventListener('scroll', handleScroll);
+    }
+    return () => {
+      if (container) {
+        container.removeEventListener('scroll', handleScroll);
+      }
+    };
+  }, [handleScroll]);
 
   const renameConversation = useAgentHubStore(state => state.renameConversation);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -380,6 +456,12 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const handleSend = () => {
     const trimmed = inputValue.trim();
     if (!trimmed && pendingAttachments.length === 0 && (!workspaceContextFiles || workspaceContextFiles.length === 0)) return;
+
+    if (conversation && !conversation.workspaceId) {
+      alert('请先选择或新建工作区以绑定此会话！');
+      setShowWorkspaceDropdown(true);
+      return;
+    }
 
     const targetAgentId = parseTargetAgentId(trimmed);
     onSendMessage(trimmed, pendingAttachments, targetAgentId || undefined, undefined, webSearchMode);
@@ -660,20 +742,186 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
           )}
 
           {conversation && conversation.mode !== 'agent' && (
-            <div className="flex items-center flex-shrink-0">
-              <select
-                value={conversation.workspaceId || ''}
-                onChange={(e) => bindConversationWorkspace(conversation.id, e.target.value || null)}
-                className="text-[10px] bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded focus:outline-none hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer font-sans font-medium max-w-[140px]"
-                title="选择或切换绑定的 Sandbox 工作区"
+            <div className="relative flex items-center flex-shrink-0" ref={workspaceDropdownRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowWorkspaceDropdown(!showWorkspaceDropdown);
+                  setIsCreatingWorkspace(false);
+                  setNewWorkspaceName('');
+                  setWorkspaceSearch('');
+                }}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer select-none
+                  ${showWorkspaceDropdown
+                    ? 'bg-violet-500/10 border-violet-500/50 text-violet-600 dark:text-violet-400 shadow-sm shadow-violet-500/10'
+                    : 'bg-slate-50 hover:bg-slate-100/80 border-slate-200 text-slate-700 dark:bg-slate-800/60 dark:border-slate-700/80 dark:hover:bg-slate-800 dark:hover:border-slate-650 dark:text-slate-200'
+                  }`}
+                title="选择或切换绑定的 Sandbox 沙箱工作区"
               >
-                <option value="">📁 未绑定工作区</option>
-                {workspaces.map(w => (
-                  <option key={w.id} value={w.id}>
-                    📁 {w.name}
-                  </option>
-                ))}
-              </select>
+                <Cloud className="w-3.5 h-3.5 text-slate-400 dark:text-slate-450" />
+                <span className="max-w-[100px] truncate">
+                  {workspaces.find(w => w.id === conversation.workspaceId)?.name || '未绑定沙箱'}
+                </span>
+                <ChevronDown className={`w-3 h-3 text-slate-400 dark:text-slate-500 transition-transform duration-200 ${showWorkspaceDropdown ? 'rotate-180 text-violet-500 dark:text-violet-400' : ''}`} />
+              </button>
+
+              {showWorkspaceDropdown && (
+                <div className="absolute top-full left-0 mt-1.5 w-64 bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800/80 rounded-xl shadow-xl backdrop-blur-md p-2 z-[99] flex flex-col min-w-0 max-h-80 select-none animate-fade-in">
+                  
+                  {/* Search box */}
+                  <div className="relative mb-2 flex-shrink-0">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                    <input
+                      type="text"
+                      value={workspaceSearch}
+                      onChange={(e) => setWorkspaceSearch(e.target.value)}
+                      placeholder="搜索沙箱工作区..."
+                      className="w-full text-xs pl-8 pr-3 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-none focus:border-violet-500/80 dark:focus:border-violet-500/50 text-slate-800 dark:text-slate-100"
+                    />
+                  </div>
+
+                  {/* Workspace List Container */}
+                  <div className="flex-grow overflow-y-auto max-h-48 pr-0.5 space-y-1">
+                    {/* Unbind option */}
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await bindConversationWorkspace(conversation.id, null);
+                        setShowWorkspaceDropdown(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-xs font-medium transition-all
+                        ${!conversation.workspaceId
+                          ? 'bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400 font-bold'
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-500 dark:text-slate-455 hover:text-slate-800 dark:hover:text-slate-200'
+                        }`}
+                      >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Cloud className="w-3.5 h-3.5 flex-shrink-0 opacity-60 text-slate-400" />
+                        <span className="truncate">未绑定沙箱</span>
+                      </div>
+                      {!conversation.workspaceId && <Check className="w-3.5 h-3.5 flex-shrink-0 text-violet-500" />}
+                    </button>
+
+                    {/* Filtered workspace list */}
+                    {(() => {
+                      const filtered = workspaces.filter(w =>
+                        w.name.toLowerCase().includes(workspaceSearch.toLowerCase())
+                      );
+                      if (filtered.length === 0 && workspaceSearch) {
+                        return <div className="text-[11px] text-slate-400 italic text-center py-4">无匹配工作区</div>;
+                      }
+
+                      return filtered.map(w => {
+                        const isSelected = conversation.workspaceId === w.id;
+                        return (
+                          <button
+                            key={w.id}
+                            type="button"
+                            onClick={async () => {
+                              await bindConversationWorkspace(conversation.id, w.id);
+                              setShowWorkspaceDropdown(false);
+                            }}
+                            className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-xs font-medium transition-all group
+                              ${isSelected
+                                ? 'bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400 font-bold border border-violet-500/20'
+                                : 'hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-700 dark:text-slate-350 hover:text-slate-900 dark:hover:text-slate-100 border border-transparent'
+                              }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0 flex-1 pr-1.5">
+                              <Cloud className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-violet-500' : 'text-slate-400 group-hover:text-violet-500/80 transition-colors'}`} />
+                              <span className="truncate">{w.name}</span>
+                            </div>
+                            {isSelected && <Check className="w-3.5 h-3.5 flex-shrink-0 text-violet-500" />}
+                          </button>
+                        );
+                      });
+                    })()}
+                  </div>
+
+                  {/* Separator */}
+                  <div className="h-px bg-slate-100 dark:bg-slate-850/80 my-1.5 flex-shrink-0" />
+
+                  {/* Create input or action button */}
+                  <div className="flex-shrink-0">
+                    {isCreatingWorkspace ? (
+                      <div className="flex flex-col gap-1.5 p-1 animate-scale-in">
+                        <input
+                          type="text"
+                          value={newWorkspaceName}
+                          onChange={(e) => setNewWorkspaceName(e.target.value)}
+                          placeholder="沙箱名称..."
+                          autoFocus
+                          onKeyDown={async (e) => {
+                            if (e.key === 'Enter' && newWorkspaceName.trim()) {
+                              setIsWorkspaceSubmitting(true);
+                              try {
+                                const newWS = await createWorkspace(newWorkspaceName.trim());
+                                if (newWS) {
+                                  await bindConversationWorkspace(conversation.id, newWS.id);
+                                }
+                                setShowWorkspaceDropdown(false);
+                              } catch (err) {
+                                console.error('Failed to create workspace:', err);
+                              } finally {
+                                setIsWorkspaceSubmitting(false);
+                                setIsCreatingWorkspace(false);
+                                setNewWorkspaceName('');
+                              }
+                            }
+                          }}
+                          className="w-full text-xs px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-none focus:border-violet-500 text-slate-800 dark:text-slate-100"
+                        />
+                        <div className="flex justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsCreatingWorkspace(false);
+                              setNewWorkspaceName('');
+                            }}
+                            className="px-2 py-1 text-[10px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-medium"
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!newWorkspaceName.trim() || isWorkspaceSubmitting}
+                            onClick={async () => {
+                              setIsWorkspaceSubmitting(true);
+                              try {
+                                const newWS = await createWorkspace(newWorkspaceName.trim());
+                                if (newWS) {
+                                  await bindConversationWorkspace(conversation.id, newWS.id);
+                                }
+                                setShowWorkspaceDropdown(false);
+                              } catch (err) {
+                                console.error('Failed to create workspace:', err);
+                              } finally {
+                                setIsWorkspaceSubmitting(false);
+                                setIsCreatingWorkspace(false);
+                                setNewWorkspaceName('');
+                              }
+                            }}
+                            className="px-2.5 py-1 bg-violet-600 hover:bg-violet-500 active:scale-95 disabled:bg-slate-300 dark:disabled:bg-slate-800 disabled:text-slate-400 dark:disabled:text-slate-600 text-[10px] text-white rounded font-bold transition-all flex items-center gap-1"
+                          >
+                            {isWorkspaceSubmitting && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
+                            确定
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setIsCreatingWorkspace(true)}
+                        className="w-full flex items-center justify-center gap-1.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-900/60 text-[11px] text-slate-550 dark:text-slate-450 hover:text-violet-600 dark:hover:text-violet-400 rounded-lg transition-all font-semibold border border-dashed border-slate-200 dark:border-slate-800/80 hover:border-violet-500/30"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>新建沙箱工作区</span>
+                      </button>
+                    )}
+                  </div>
+
+                </div>
+              )}
             </div>
           )}
 
@@ -744,9 +992,30 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         </div>
       </div>
       
+      {conversation && conversation.mode !== 'agent' && !conversation.workspaceId && (
+        <div className="bg-amber-500/10 border-b border-amber-500/25 px-5 py-2.5 flex items-center justify-between text-xs text-amber-600 dark:text-amber-400 select-none animate-slide-down">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+            <span>当前会话未关联沙箱工作区。请先选择或新建一个沙箱工作区，否则智能体协同和沙箱运行将无法正常启动。</span>
+          </div>
+          <button
+            onClick={() => setShowWorkspaceDropdown(true)}
+            className="px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 rounded font-semibold transition-all active:scale-95"
+          >
+            绑定沙箱
+          </button>
+        </div>
+      )}
+
       <div className="flex-grow flex min-h-0 relative bg-[#fafbfb] dark:bg-slate-950/40 z-10 transition-colors">
         {/* Messages List Area */}
         <div ref={scrollContainerRef} className="flex-grow overflow-y-auto px-6 py-5 min-h-0 space-y-4 transition-all duration-300">
+          {isLoadingMoreMessages && (
+            <div className="flex items-center justify-center py-2 text-xs text-slate-500 dark:text-slate-400 gap-1.5 select-none animate-fade-in">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-500" />
+              <span>正在加载历史消息...</span>
+            </div>
+          )}
           {messages.length === 0 ? (
             conversation?.mode === 'agent' ? (
               <div className="h-full flex flex-col items-center justify-center text-center p-8 max-w-sm mx-auto select-none">
@@ -1253,8 +1522,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
 
               {currentWorkspace && (
                 <div className="flex items-center gap-1 text-[10px] text-slate-400 dark:text-slate-550 font-mono ml-auto select-none" title={currentWorkspace.path}>
-                  <Folder className="w-3 h-3 text-slate-350 dark:text-slate-700" />
-                  <span>{currentWorkspace.name}</span>
+                  <Laptop className="w-3 h-3 text-slate-350 dark:text-slate-700" />
+                  <span>本地: {currentWorkspace.name}</span>
                 </div>
               )}
             </div>

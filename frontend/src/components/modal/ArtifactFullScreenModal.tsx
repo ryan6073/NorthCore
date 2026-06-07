@@ -11,6 +11,7 @@ import PptPreview from '../artifact/PptPreview';
 import { PptxPreview } from '@/components/file/PptxPreview';
 import { getSandboxHtmlPreview } from '@/services/http/sandboxService';
 import mermaid from 'mermaid';
+import { ZoomableContainer } from '../common/ZoomableContainer';
 
 interface ArtifactFullScreenModalProps {
   open: boolean;
@@ -842,10 +843,12 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
                 </pre>
               </div>
             ) : mermaidSvg ? (
-              <div 
-                className="w-full h-full flex items-center justify-center"
-                dangerouslySetInnerHTML={{ __html: mermaidSvg }}
-              />
+              <ZoomableContainer className="w-full h-full">
+                <div 
+                  className="flex items-center justify-center"
+                  dangerouslySetInnerHTML={{ __html: mermaidSvg }}
+                />
+              </ZoomableContainer>
             ) : (
               <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
                 <RefreshCw className="w-4 h-4 animate-spin" /> 渲染中...
