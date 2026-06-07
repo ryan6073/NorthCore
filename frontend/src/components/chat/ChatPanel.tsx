@@ -27,51 +27,69 @@ const COMMON_EMOJIS = [
   '🔥', '🎉', '💡', '🚀', '💻', '❤️', '✨', '🌟', '👀', '💯'
 ];
 
-const getFriendlyDateLabel = (timeStr: string) => {
-  if (!timeStr) return '';
+const parseMessageTime = (timeStr?: string) => {
+  if (!timeStr) return null;
   try {
-    const datePart = timeStr.split(' ')[0].replace(/\//g, '-');
-    const parts = datePart.split('-');
-    
-    const d = new Date(
-      parseInt(parts[0], 10),
-      parseInt(parts[1], 10) - 1,
-      parseInt(parts[2], 10)
+    const normalized = timeStr.trim().replace(/\//g, '-').replace(' ', 'T');
+    const parsed = new Date(normalized);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+
+    const match = timeStr.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:\s+|T)?(\d{1,2})?:?(\d{1,2})?/);
+    if (!match) return null;
+
+    const date = new Date(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3]),
+      Number(match[4] || 0),
+      Number(match[5] || 0)
     );
-    
-    if (isNaN(d.getTime())) return datePart;
-    
+    return Number.isNaN(date.getTime()) ? null : date;
+  } catch {
+    return null;
+  }
+};
+
+const isSameMessageDay = (a: Date, b: Date) =>
+  a.getFullYear() === b.getFullYear() &&
+  a.getMonth() === b.getMonth() &&
+  a.getDate() === b.getDate();
+
+const formatMessageTimeDivider = (timeStr?: string) => {
+  const date = parseMessageTime(timeStr);
+  if (!date) return '';
+
+  try {
     const today = new Date();
     const yesterday = new Date();
     yesterday.setDate(today.getDate() - 1);
 
-    const isSameDay = (d1: Date, d2: Date) =>
-      d1.getFullYear() === d2.getFullYear() &&
-      d1.getMonth() === d2.getMonth() &&
-      d1.getDate() === d2.getDate();
+    const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 
-    if (isSameDay(d, today)) {
-      return '今天';
-    } else if (isSameDay(d, yesterday)) {
-      return '昨天';
-    } else {
-      return `${parts[0]}年${parts[1]}月${parts[2]}日`;
+    if (isSameMessageDay(date, today)) {
+      return `今天 ${time}`;
     }
-  } catch (e) {
-    return timeStr.split(' ')[0] || timeStr;
+
+    if (isSameMessageDay(date, yesterday)) {
+      return `昨天 ${time}`;
+    }
+
+    return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+  } catch {
+    return timeStr || '';
   }
 };
 
-const normalizeDatePart = (timeStr: string) => {
-  if (!timeStr) return '';
-  try {
-    const datePart = timeStr.split(' ')[0].replace(/\//g, '-');
-    const parts = datePart.split('-');
-    if (parts.length < 3) return datePart;
-    return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
-  } catch (e) {
-    return timeStr.split(' ')[0] || timeStr;
-  }
+const shouldShowTimeDivider = (current?: string, previous?: string) => {
+  const currentTime = parseMessageTime(current);
+  if (!currentTime) return false;
+  if (!previous) return true;
+
+  const previousTime = parseMessageTime(previous);
+  if (!previousTime) return true;
+  if (!isSameMessageDay(currentTime, previousTime)) return true;
+
+  return currentTime.getTime() - previousTime.getTime() > 5 * 60 * 1000;
 };
 
 const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, artifacts: _artifacts, onSendMessage }) => {
@@ -604,8 +622,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const canSend = (inputValue.trim() || pendingAttachments.length > 0 || (workspaceContextFiles && workspaceContextFiles.length > 0)) && !isUploadingAny;
 
   const renderMessageList = () => {
-    let lastDateLabel = '';
-    
     // Group artifact messages by senderId (starts with run-)
     const groupedMessagesList: Message[] = [];
     const runGroups: Record<string, Message[]> = {};
@@ -643,18 +659,14 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
       }
     });
 
-    return groupedMessagesList.map((msg) => {
-      const msgDateLabel = msg.createdAt ? normalizeDatePart(msg.createdAt) : '';
-      const showDivider = msgDateLabel && msgDateLabel !== lastDateLabel;
-      if (showDivider) {
-        lastDateLabel = msgDateLabel;
-      }
-      
-      const friendlyLabel = showDivider ? getFriendlyDateLabel(msg.createdAt) : '';
+    return groupedMessagesList.map((msg, index) => {
+      const previousMsg = index > 0 ? groupedMessagesList[index - 1] : undefined;
+      const showDivider = shouldShowTimeDivider(msg.createdAt, previousMsg?.createdAt);
+      const friendlyLabel = showDivider ? formatMessageTimeDivider(msg.createdAt) : '';
 
       return (
         <React.Fragment key={msg.id}>
-          {showDivider && (
+          {showDivider && friendlyLabel && (
             <div className="flex items-center justify-center my-6 select-none animate-fade-in w-full">
               <div className="h-[1px] bg-slate-200/80 dark:bg-slate-800/80 flex-grow" />
               <span className="bg-slate-100 dark:bg-slate-800 text-lark-text-secondary dark:text-slate-400 text-[10px] font-semibold px-3 py-1 rounded-full border border-lark-border/60 dark:border-slate-800/80 mx-4 shadow-sm">
