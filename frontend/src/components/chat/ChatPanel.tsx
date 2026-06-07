@@ -160,6 +160,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const overlayRef = useRef<HTMLDivElement>(null);
   const prevMessagesLengthRef = useRef<number>(0);
   const justSwitchedRef = useRef<boolean>(true);
+  const initialBottomTimersRef = useRef<number[]>([]);
+  const ignoreHistoryLoadUntilRef = useRef<number>(0);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     if (scrollContainerRef.current) {
@@ -171,6 +173,27 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
       messagesEndRef.current?.scrollIntoView({ behavior });
     }
   }, []);
+
+  const clearInitialBottomTimers = useCallback(() => {
+    initialBottomTimersRef.current.forEach((timerId) => {
+      window.clearTimeout(timerId);
+    });
+    initialBottomTimersRef.current = [];
+  }, []);
+
+  const pinToLatestMessage = useCallback(() => {
+    scrollToBottom('instant');
+    requestAnimationFrame(() => scrollToBottom('instant'));
+  }, [scrollToBottom]);
+
+  const scheduleInitialBottomPin = useCallback(() => {
+    clearInitialBottomTimers();
+    pinToLatestMessage();
+
+    initialBottomTimersRef.current = [30, 80, 160, 320, 640].map((delay) =>
+      window.setTimeout(pinToLatestMessage, delay)
+    );
+  }, [clearInitialBottomTimers, pinToLatestMessage]);
 
   const isNearBottom = () => {
     const container = scrollContainerRef.current;
@@ -231,26 +254,23 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     prevMessagesLengthRef.current = messages.length;
 
     if (!isSameConv) {
-      // Ensure scrolling happens after DOM renders the messages
-      const timerId = setTimeout(() => {
-        scrollToBottom('instant');
-      }, 50);
       lastScrolledConversationId.current = conversationId;
       justSwitchedRef.current = true;
+      ignoreHistoryLoadUntilRef.current = Date.now() + 900;
+      scheduleInitialBottomPin();
       const timer = setTimeout(() => {
         justSwitchedRef.current = false;
+        clearInitialBottomTimers();
       }, 800);
       return () => {
-        clearTimeout(timerId);
         clearTimeout(timer);
+        clearInitialBottomTimers();
       };
     }
 
     if (justSwitchedRef.current) {
-      const timerId = setTimeout(() => {
-        scrollToBottom('instant');
-      }, 50);
-      return () => clearTimeout(timerId);
+      scheduleInitialBottomPin();
+      return clearInitialBottomTimers;
     }
 
     const lastMsg = messages[messages.length - 1];
@@ -269,12 +289,21 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         scrollToBottom('instant');
       }
     }
-  }, [conversationId, messagesLength, lastMessageId, lastMessageContent, scrollToBottom]);
+  }, [
+    conversationId,
+    messagesLength,
+    lastMessageId,
+    lastMessageContent,
+    scrollToBottom,
+    scheduleInitialBottomPin,
+    clearInitialBottomTimers,
+  ]);
 
   // Handle scrolling to load more history messages
   const handleScroll = useCallback(async () => {
     const container = scrollContainerRef.current;
     if (!container || !conversationId) return;
+    if (Date.now() < ignoreHistoryLoadUntilRef.current) return;
 
     const hasMore = conversationHasMore[conversationId] ?? false;
     if (container.scrollTop <= 15 && hasMore && !isLoadingMoreMessages) {
