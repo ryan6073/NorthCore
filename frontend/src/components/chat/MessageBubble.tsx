@@ -260,7 +260,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     }
     return (
       <div className={`prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed break-words overflow-x-auto select-text ${
-        isUser ? 'prose-white text-white' : 'text-slate-800 dark:text-slate-100'
+        isUser && !message.isPinned ? 'prose-white text-white' : 'text-slate-800 dark:text-slate-100'
       }`}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}

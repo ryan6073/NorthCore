@@ -1633,11 +1633,17 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
 
   setSelectedArtifactVersion: (version) => set({ selectedArtifactVersion: version }),
-  setIsNewConversationOpen: (open) => set({ isNewConversationOpen: open }),
+  setIsNewConversationOpen: (open) => set({
+    isNewConversationOpen: open,
+    ...(open ? { configuringAgentId: null, configuringAgentIsSessionLevel: false } : {})
+  }),
   setPreselectedAgentId: (id) => set({ preselectedAgentId: id }),
   setIsFullScreenOpen: (open) => set({ isFullScreenOpen: open }),
   setSelectedAgentId: (id) => set({ selectedAgentId: id }),
-  setConfiguringAgentId: (id, isSessionLevel = false) => set({ configuringAgentId: id, configuringAgentIsSessionLevel: isSessionLevel }),
+  setConfiguringAgentId: (id, isSessionLevel = false) => set({
+    configuringAgentId: id,
+    configuringAgentIsSessionLevel: id ? isSessionLevel : false
+  }),
   setLeftSidebarViewMode: (mode) => set({ leftSidebarViewMode: mode }),
 
   loadConversationData: async (convId) => {
@@ -4684,7 +4690,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           const user = { ...res.data.user, isLoggedIn: true };
           localStorage.setItem('auth_token', res.data.token);
           localStorage.setItem('ag_user', JSON.stringify(user));
-          set({ currentUser: user as any });
+          set({
+            currentUser: user as any,
+            configuringAgentId: null,
+            configuringAgentIsSessionLevel: false,
+            isNewConversationOpen: false,
+            preselectedAgentId: null,
+          });
           
           await get().loadBusinessData();
           return { success: true, message: '登录成功' };
@@ -4711,7 +4723,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       }
 
       const user = { name: found.name, email: found.email, avatar: found.avatar, isLoggedIn: true };
-      set({ currentUser: user });
+      set({
+        currentUser: user,
+        configuringAgentId: null,
+        configuringAgentIsSessionLevel: false,
+        isNewConversationOpen: false,
+        preselectedAgentId: null,
+      });
       localStorage.setItem('ag_user', JSON.stringify(user));
       return { success: true, message: '登录成功' };
     } catch (e) {
@@ -4729,7 +4747,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           const user = { ...res.data.user, isLoggedIn: true };
           localStorage.setItem('auth_token', res.data.token);
           localStorage.setItem('ag_user', JSON.stringify(user));
-          set({ currentUser: user as any });
+          set({
+            currentUser: user as any,
+            configuringAgentId: null,
+            configuringAgentIsSessionLevel: false,
+            isNewConversationOpen: false,
+            preselectedAgentId: null,
+          });
           
           await get().loadBusinessData();
           return { success: true, message: '注册成功' };
@@ -4787,7 +4811,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     }
 
     const user = { name, email, avatar, isLoggedIn: true };
-    set({ currentUser: user });
+    set({
+      currentUser: user,
+      configuringAgentId: null,
+      configuringAgentIsSessionLevel: false,
+      isNewConversationOpen: false,
+      preselectedAgentId: null,
+    });
     localStorage.setItem('ag_user', JSON.stringify(user));
   },
 
@@ -4803,7 +4833,19 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     localStorage.removeItem('auth_token');
     localStorage.removeItem('ag_user');
     get().disconnectWS();
-    set({ currentUser: null, activeConversationId: null, messages: [], pins: [], memories: [] });
+    set({
+      currentUser: null,
+      activeConversationId: null,
+      messages: [],
+      pins: [],
+      memories: [],
+      configuringAgentId: null,
+      configuringAgentIsSessionLevel: false,
+      isNewConversationOpen: false,
+      preselectedAgentId: null,
+      replyContext: null,
+      quoteArtifactRef: null,
+    });
   },
 
   updateProfile: async (name, email, avatar) => {
