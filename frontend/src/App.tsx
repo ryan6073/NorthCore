@@ -282,9 +282,6 @@ function App() {
                     }
                     setConfiguringAgentId(null);
                   }}
-                  onSyncToGlobal={async (updated: Agent) => {
-                    await handleSaveAgent(updated);
-                  }}
                   onDelete={async (id) => {
                     await handleDeleteAgent(id);
                     setConfiguringAgentId(null);

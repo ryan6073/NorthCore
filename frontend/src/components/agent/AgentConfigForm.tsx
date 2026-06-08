@@ -10,10 +10,9 @@ interface AgentConfigFormProps {
   onSave: (updated: Agent) => void;
   onClose: () => void;
   isSessionLevel?: boolean;
-  onSyncToGlobal?: (updated: Agent) => void;
 }
 
-const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, onSave, onClose, isSessionLevel = false, onSyncToGlobal }) => {
+const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, onSave, onClose, isSessionLevel = false }) => {
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced] = useState(false);
 

@@ -12,10 +12,9 @@ interface AgentDetailPanelProps {
   isNew?: boolean;
   onDelete?: (id: string) => void;
   isSessionLevel?: boolean;
-  onSyncToGlobal?: (updated: Agent) => void;
 }
 
-const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, globalAgent, onSave, onBack, isNew = false, onDelete, isSessionLevel = false, onSyncToGlobal }) => {
+const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, globalAgent, onSave, onBack, isNew = false, onDelete, isSessionLevel = false }) => {
   const [isEditing, setIsEditing] = useState(isNew);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
@@ -53,7 +52,6 @@ const AgentDetailPanel: React.FC<AgentDetailPanelProps> = ({ agent, globalAgent,
         agent={agent}
         globalAgent={globalAgent}
         isSessionLevel={isSessionLevel}
-        onSyncToGlobal={onSyncToGlobal}
         onSave={(updated) => {
           onSave(updated);
           setIsEditing(false);
