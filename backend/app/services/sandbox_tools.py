@@ -948,6 +948,9 @@ class SandboxToolExecutor:
         return enriched
 
     def _read_file(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        missing = self._missing_tool_arguments(arguments, {"path"})
+        if missing:
+            return self._invalid_tool_arguments("read_file", missing, {"path": "index.html"})
         path = safe_relative_path(str(arguments.get("path") or ""))
         scope_error = self._read_scope_error(path)
         if scope_error:
@@ -966,6 +969,9 @@ class SandboxToolExecutor:
         return {"ok": True, "workspaceScan": scan}
 
     def _read_workspace_file(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        missing = self._missing_tool_arguments(arguments, {"path"})
+        if missing:
+            return self._invalid_tool_arguments("read_workspace_file", missing, {"path": "index.html"})
         path = safe_relative_path(str(arguments.get("path") or ""))
         scope_error = self._read_scope_error(path)
         if scope_error:
@@ -990,6 +996,9 @@ class SandboxToolExecutor:
         }
 
     def _import_workspace_file(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        missing = self._missing_tool_arguments(arguments, {"path"})
+        if missing:
+            return self._invalid_tool_arguments("import_workspace_file", missing, {"path": "index.html"})
         path = safe_relative_path(str(arguments.get("path") or ""))
         office_block_reason = office_write_block_reason(path)
         if office_block_reason:
@@ -1028,6 +1037,17 @@ class SandboxToolExecutor:
         }
 
     def _write_file(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        missing = self._missing_tool_arguments(arguments, {"path", "content", "baseVersion"})
+        if missing:
+            return self._invalid_tool_arguments(
+                "write_file",
+                missing,
+                {
+                    "path": "index.html",
+                    "content": "<!DOCTYPE html>...完整文件内容...",
+                    "baseVersion": 0,
+                },
+            )
         path = safe_relative_path(str(arguments.get("path") or ""))
         office_block_reason = office_write_block_reason(path)
         if office_block_reason:
@@ -1063,6 +1083,32 @@ class SandboxToolExecutor:
             step_id=self.step_id,
         )
         return {"ok": result.get("status") == "saved", **result}
+
+    def _missing_tool_arguments(self, arguments: Dict[str, Any], required_keys: set[str]) -> List[str]:
+        if not isinstance(arguments, dict):
+            return sorted(required_keys)
+        missing = [key for key in sorted(required_keys) if key not in arguments]
+        if "path" in required_keys and not str(arguments.get("path") or "").strip():
+            missing.append("path")
+        return sorted(set(missing))
+
+    def _invalid_tool_arguments(
+        self,
+        tool_name: str,
+        missing_arguments: List[str],
+        expected_arguments: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return {
+            "ok": False,
+            "status": "invalid_tool_arguments",
+            "error": f"{tool_name} 缺少必填参数：{', '.join(missing_arguments)}",
+            "missingArguments": missing_arguments,
+            "expectedArguments": expected_arguments,
+            "retryInstruction": (
+                f"请重新调用 {tool_name}，arguments 必须是包含上述字段的 JSON 对象；"
+                "不要传空对象 {}。修改已有文件时先 read_file 获取 currentVersion。"
+            ),
+        }
 
     async def _run_command(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         command = str(arguments.get("command") or "").strip()

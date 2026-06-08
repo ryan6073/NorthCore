@@ -7,7 +7,6 @@ from app.api.responses import fail, ok
 from app.database import (
     get_agent,
     get_conversation,
-    get_conversation_agent_config,
     get_workspace,
     get_workspace_deployment,
     list_workspace_deployments,
@@ -22,7 +21,11 @@ from app.services.deployment_service import (
     run_workspace_deployment,
     stop_workspace_deployment,
 )
-from app.services.message_service import send_message_completed
+from app.services.message_service import (
+    deployment_agent_metadata,
+    resolve_deploy_agent_for_conversation,
+    send_message_completed,
+)
 
 
 router = APIRouter(prefix="/api/v1")
@@ -41,16 +44,34 @@ async def api_create_workspace_deployment(
     if not workspace:
         return fail(40001, "Workspace 不存在")
     agent_id = str(payload.get("targetAgentId") or payload.get("agentId") or "").strip()
-    if agent_id:
-        conversation_id = str(payload.get("conversationId") or "").strip()
-        conversation = get_conversation(conversation_id, owner_user_id=current_user["id"]) if conversation_id else None
-        agent = (
-            get_conversation_agent_config(conversation_id, agent_id, owner_user_id=current_user["id"])
-            if conversation and agent_id in (conversation.get("agentIds") or [])
-            else get_agent(agent_id, owner_user_id=current_user["id"])
+    conversation_id = str(payload.get("conversationId") or "").strip()
+    conversation = get_conversation(conversation_id, owner_user_id=current_user["id"]) if conversation_id else None
+    if conversation_id and not conversation:
+        return fail(40001, "会话不存在")
+    if conversation and str(conversation.get("workspaceId") or "") not in {"", workspace_id}:
+        return fail(40000, "会话绑定的 Workspace 与部署目标不一致")
+    deploy_agent_selection: Dict[str, Any] = {}
+    if conversation:
+        deploy_agent_selection = resolve_deploy_agent_for_conversation(
+            conversation,
+            agent_id or None,
         )
+        if not deploy_agent_selection.get("ok"):
+            return fail(
+                40002,
+                deploy_agent_selection.get("error") or "当前 Agent 未启用 deploy.run，不能发起部署",
+            )
+    else:
+        if not agent_id:
+            return fail(40002, "请指定一个启用 deploy.run 的 Agent 后再发起部署")
+        agent = get_agent(agent_id, owner_user_id=current_user["id"])
         if not agent_has_tool(agent, "deploy.run"):
             return fail(40002, "当前 Agent 未启用 deploy.run，不能发起部署")
+        deploy_agent_selection = {
+            "ok": True,
+            "agent": agent,
+            "selectionMode": "explicit",
+        }
     config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
     public_base_url = str(payload.get("publicBaseUrl") or config.get("publicBaseUrl") or request_base_url_from_request(request)).rstrip("/")
     deployment = create_workspace_deployment_request(
@@ -58,7 +79,7 @@ async def api_create_workspace_deployment(
         owner_user_id=current_user["id"],
         conversation_id=str(payload.get("conversationId") or "").strip() or None,
         run_id=str(payload.get("runId") or "").strip() or None,
-        config=config,
+        config={**config, **deployment_agent_metadata(deploy_agent_selection)},
         public_base_url=public_base_url,
     )
     background_tasks.add_task(run_workspace_deployment, deployment["id"])

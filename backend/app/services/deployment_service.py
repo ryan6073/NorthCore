@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import threading
@@ -27,10 +28,11 @@ from app.database import (
     update_workspace_deployment,
     update_workspace_index_deployments,
 )
+from app.services.secret_path_service import is_sensitive_workspace_path
 from app.services.workspace_agents_service import read_workspace_agents_context
 
 
-SKIPPED_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", "dist", "build"}
+SKIPPED_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", "dist", "build", ".ssh"}
 CHAT_DEPLOYMENT_SOURCE = "chatDeployment"
 DEFAULT_DEPLOY_MAX_ATTEMPTS = 3
 DeployMessageCallback = Callable[[Dict[str, Any]], None]
@@ -48,6 +50,24 @@ build
 *.pyc
 *.pyo
 *.log
+.env
+.env.*
+.ssh
+.ssh/
+.ssh/*
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cert
+secrets.*
+credentials.*
+service-account*.json
 """
 
 DEPLOY_PLANNER_SYSTEM_PROMPT = """你是 AgentHub 的 Deploy Planner。
@@ -93,6 +113,40 @@ def _deployment_workdir(deployment_id: str) -> Path:
     path = root / deployment_id
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _safe_context_label(label: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", str(label or "context")).strip(".-") or "context"
+
+
+def _copy_safe_deploy_context(source_dir: Path, deployment_id: str, label: str) -> Path:
+    source = source_dir.resolve()
+    if not source.exists() or not source.is_dir():
+        raise FileNotFoundError(f"部署目录不存在: {source_dir}")
+    target = _deployment_workdir(deployment_id) / "contexts" / _safe_context_label(label)
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True, exist_ok=True)
+    for item in sorted(source.rglob("*")):
+        try:
+            relative = item.relative_to(source).as_posix()
+        except ValueError:
+            continue
+        if not relative or set(Path(relative).parts) & SKIPPED_DIRS:
+            continue
+        if is_sensitive_workspace_path(relative):
+            _append_log(deployment_id, f"[deploy] skip sensitive build context path: {relative}")
+            continue
+        if item.is_symlink():
+            _append_log(deployment_id, f"[deploy] skip symlink build context path: {relative}")
+            continue
+        destination = target / relative
+        if item.is_dir():
+            destination.mkdir(parents=True, exist_ok=True)
+        elif item.is_file():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, destination)
+    return target
 
 
 def _host_base_url(config: Dict[str, Any]) -> str:
@@ -220,6 +274,11 @@ def create_deployment_status_message(
             "serviceUrls": deployment.get("serviceUrls") or {},
             "ports": deployment.get("ports") or {},
             "errorSummary": error_summary,
+            "deploymentAgentId": config.get("deploymentAgentId"),
+            "deploymentAgentName": config.get("deploymentAgentName"),
+            "deploymentAgentSelection": config.get("deploymentAgentSelection"),
+            "requestedDeploymentAgentId": config.get("requestedDeploymentAgentId"),
+            "deploymentAgentFallbackReason": config.get("deploymentAgentFallbackReason"),
         },
     )
     update_conversation_activity(conversation_id, message["content"])
@@ -614,10 +673,12 @@ def _detect_deploy_plan(workspace_path: Path, deployment_id: str, config: Dict[s
     excluded_ports = _config_excluded_ports(config)
     compose_file = next((workspace_path / name for name in ("docker-compose.yml", "docker-compose.yaml", "compose.yml") if (workspace_path / name).exists()), None)
     if compose_file:
+        safe_context = _copy_safe_deploy_context(workspace_path, deployment_id, "compose-workspace")
+        safe_compose_file = safe_context / compose_file.name
         return {
             "kind": "compose",
             "projectType": "docker_compose",
-            "composeFile": str(compose_file),
+            "composeFile": str(safe_compose_file),
             "composeProject": f"agenthub_{deployment_id.replace('-', '_')}",
             "ports": config.get("ports") if isinstance(config.get("ports"), dict) else {},
         }
@@ -628,11 +689,12 @@ def _detect_deploy_plan(workspace_path: Path, deployment_id: str, config: Dict[s
         if not container_port:
             return _requires_config("已有 Dockerfile 但无法判断容器端口，请传 containerPort。")
         host_port = int(config.get("hostPort") or _find_free_port(excluded_ports))
+        safe_context = _copy_safe_deploy_context(workspace_path, deployment_id, "dockerfile-workspace")
         return {
             "kind": "dockerfile",
             "projectType": "dockerfile",
-            "contextDir": str(workspace_path),
-            "dockerfile": str(dockerfile),
+            "contextDir": str(safe_context),
+            "dockerfile": str(safe_context / "Dockerfile"),
             "containerPort": container_port,
             "hostPort": host_port,
             "service": "app",
@@ -657,17 +719,19 @@ def _detect_deploy_plan(workspace_path: Path, deployment_id: str, config: Dict[s
         backend_dockerfile = workdir / "backend.Dockerfile"
         _write_node_dockerfile(frontend_dockerfile, frontend_cmd, frontend_port)
         _write_python_dockerfile(backend_dockerfile, backend_cmd, backend_port)
+        frontend_context = _copy_safe_deploy_context(frontend_dir, deployment_id, "frontend")
+        backend_context = _copy_safe_deploy_context(backend_dir, deployment_id, "backend")
         host_frontend_port = int(config.get("hostFrontendPort") or _find_free_port(excluded_ports))
         host_backend_port = int(config.get("hostBackendPort") or _find_free_port({*excluded_ports, host_frontend_port}))
         compose_path = workdir / "docker-compose.yml"
         compose_path.write_text(
             "services:\n"
             "  frontend:\n"
-            f"    build:\n      context: {frontend_dir}\n      dockerfile: {frontend_dockerfile}\n"
+            f"    build:\n      context: {frontend_context}\n      dockerfile: {frontend_dockerfile}\n"
             f"    container_name: agenthub-deploy-{deployment_id}-frontend\n"
             f"    ports:\n      - \"{host_frontend_port}:{frontend_port}\"\n"
             "  backend:\n"
-            f"    build:\n      context: {backend_dir}\n      dockerfile: {backend_dockerfile}\n"
+            f"    build:\n      context: {backend_context}\n      dockerfile: {backend_dockerfile}\n"
             f"    container_name: agenthub-deploy-{deployment_id}-backend\n"
             f"    ports:\n      - \"{host_backend_port}:{backend_port}\"\n",
             encoding="utf-8",
@@ -695,10 +759,11 @@ def _detect_deploy_plan(workspace_path: Path, deployment_id: str, config: Dict[s
             return _requires_config("Node 项目缺少可识别 start/dev/preview 脚本，请传 startCommand。")
         dockerfile = workdir / "node.Dockerfile"
         _write_node_dockerfile(dockerfile, command, container_port)
+        safe_context = _copy_safe_deploy_context(project_dir, deployment_id, "node")
         return {
             "kind": "dockerfile",
             "projectType": "node_frontend",
-            "contextDir": str(project_dir),
+            "contextDir": str(safe_context),
             "dockerfile": str(dockerfile),
             "containerPort": container_port,
             "hostPort": int(config.get("hostPort") or _find_free_port(excluded_ports)),
@@ -716,10 +781,11 @@ def _detect_deploy_plan(workspace_path: Path, deployment_id: str, config: Dict[s
             return _requires_config("Python 项目缺少明确 Web 服务启动方式，请传 startCommand 和 containerPort。")
         dockerfile = workdir / "python.Dockerfile"
         _write_python_dockerfile(dockerfile, command, container_port)
+        safe_context = _copy_safe_deploy_context(project_dir, deployment_id, "python")
         return {
             "kind": "dockerfile",
             "projectType": "python_backend",
-            "contextDir": str(project_dir),
+            "contextDir": str(safe_context),
             "dockerfile": str(dockerfile),
             "containerPort": container_port,
             "hostPort": int(config.get("hostPort") or _find_free_port(excluded_ports)),
@@ -732,10 +798,11 @@ def _detect_deploy_plan(workspace_path: Path, deployment_id: str, config: Dict[s
         static_dir, static_file = static_entry
         dockerfile = workdir / "static.Dockerfile"
         _write_static_dockerfile(dockerfile, static_file.name)
+        safe_context = _copy_safe_deploy_context(static_dir, deployment_id, "static")
         return {
             "kind": "dockerfile",
             "projectType": "static_html",
-            "contextDir": str(static_dir),
+            "contextDir": str(safe_context),
             "dockerfile": str(dockerfile),
             "containerPort": 80,
             "hostPort": int(config.get("hostPort") or _find_free_port(excluded_ports)),

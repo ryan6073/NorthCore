@@ -31,6 +31,27 @@ def mark_agent_config_scope(agent: Dict[str, Any], conversation_id: str, scope: 
         "overrideSource": agent.get("overrideSource") or ("conversation" if scope == "conversation" else "global"),
     }
 
+
+def agent_config_sync_payload(agent: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "name": agent.get("name", ""),
+        "avatar": agent.get("avatar", ""),
+        "description": agent.get("description", ""),
+        "tags": agent.get("tags", []),
+        "status": agent.get("status", "offline"),
+        "category": agent.get("category", "custom"),
+        "provider": agent.get("provider", "mock"),
+        "runtime": agent.get("runtime", "native"),
+        "modelConfigId": agent.get("modelConfigId"),
+        "runtimeConfig": agent.get("runtimeConfig", {}),
+        "enabled": bool(agent.get("enabled", True)),
+        "lastUsedAt": agent.get("lastUsedAt"),
+        "systemPrompt": agent.get("systemPrompt", ""),
+        "modelConfig": agent.get("modelConfig", {}),
+        "tools": agent.get("tools", []),
+    }
+
+
 @router.get("/conversations")
 async def api_list_conversations(
     page: int = Query(1, ge=1),
@@ -118,11 +139,6 @@ async def api_get_conversation_agent_config(
         return fail(40001, "会话不存在")
     if not conversation_contains_agent(conversation, agent_id):
         return fail(40002, "Agent 不属于当前会话")
-    if conversation.get("mode") != "group":
-        agent = get_agent(agent_id, owner_user_id=current_user["id"])
-        if not agent:
-            return fail(40001, "Agent 不存在")
-        return ok(mark_agent_config_scope(agent, conversation_id, "user"))
     if agent_id == ORCHESTRATOR_AGENT_ID:
         agent = get_agent(agent_id, owner_user_id=current_user["id"])
         if not agent:
@@ -155,21 +171,6 @@ async def api_update_conversation_agent_config(
     if agent_id == ORCHESTRATOR_AGENT_ID:
         return fail(40002, "Orchestrator 是群聊调度器，不支持配置")
 
-    if conversation.get("mode") != "group":
-        existing_agent = get_agent(agent_id, owner_user_id=current_user["id"])
-        if not existing_agent:
-            return fail(40001, "Agent 不存在")
-        security_error = validate_agent_payload_security(payload, owner_user_id=current_user["id"], existing_agent=existing_agent)
-        if security_error:
-            return fail(40000, security_error)
-        if existing_agent.get("ownerUserId") is None and current_user.get("role") != "admin":
-            agent = upsert_agent_user_override(current_user["id"], agent_id, payload)
-        else:
-            agent = update_agent(agent_id, payload, owner_user_id=current_user["id"])
-        if not agent:
-            return fail(40001, "Agent 不存在")
-        return ok(mark_agent_config_scope(agent, conversation_id, "user"), message="Agent 配置更新成功")
-
     existing_agent = get_conversation_agent_config(
         conversation_id,
         agent_id,
@@ -190,7 +191,55 @@ async def api_update_conversation_agent_config(
     )
     if not agent:
         return fail(40001, "Agent 不存在")
-    return ok(mark_agent_config_scope(agent, conversation_id, "conversation"), message="群聊 Agent 配置更新成功")
+    return ok(mark_agent_config_scope(agent, conversation_id, "conversation"), message="会话 Agent 配置更新成功")
+
+
+@router.post("/conversations/{conversation_id}/agents/{agent_id}/config/sync-to-agent")
+async def api_sync_conversation_agent_config_to_agent(
+    conversation_id: str,
+    agent_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    current_user = current_user_or_default(authorization)
+    conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
+    if not conversation:
+        return fail(40001, "会话不存在")
+    if not conversation_contains_agent(conversation, agent_id):
+        return fail(40002, "Agent 不属于当前会话")
+    if agent_id == ORCHESTRATOR_AGENT_ID:
+        return fail(40002, "Orchestrator 是群聊调度器，不支持同步到 Agent 级配置")
+
+    conversation_agent = get_conversation_agent_config(
+        conversation_id,
+        agent_id,
+        owner_user_id=current_user["id"],
+    )
+    if not conversation_agent:
+        return fail(40001, "Agent 不存在")
+    payload = agent_config_sync_payload(conversation_agent)
+    existing_agent = get_agent(agent_id, owner_user_id=current_user["id"])
+    security_error = validate_agent_payload_security(
+        payload,
+        owner_user_id=current_user["id"],
+        existing_agent=existing_agent,
+    )
+    if security_error:
+        return fail(40000, security_error)
+
+    if existing_agent and existing_agent.get("ownerUserId") is None and current_user.get("role") != "admin":
+        agent = upsert_agent_user_override(current_user["id"], agent_id, payload)
+    else:
+        agent = update_agent(agent_id, payload, owner_user_id=current_user["id"])
+    if not agent:
+        return fail(40001, "Agent 不存在")
+    return ok(
+        {
+            **agent,
+            "syncedFromConversationId": conversation_id,
+            "syncedFromAgentId": agent_id,
+        },
+        message="已同步到 Agent 级配置",
+    )
 
 
 @router.post("/conversations/{conversation_id}/agents")
@@ -412,10 +461,31 @@ async def api_compress_context(conversation_id: str, authorization: Optional[str
             "reason": "暂无可压缩的有效消息",
             "contextUsage": build_context_usage(conversation),
         }, message="暂无可压缩内容")
+    compressed = not before or before.get("version") != summary.get("version")
+    context_usage = build_context_usage(conversation)
+    status_content = "上下文压缩完成"
+    status_message = create_message(
+        conversation_id=conversation_id,
+        sender_id="system",
+        sender_name="系统",
+        role="system",
+        msg_type="status",
+        content=status_content,
+        metadata={
+            "source": "contextCompression",
+            "summaryId": summary.get("id"),
+            "compressed": compressed,
+            "coveredUntilMessageId": summary.get("coveredUntilMessageId"),
+            "coveredMessageCount": summary.get("coveredMessageCount"),
+            "version": summary.get("version"),
+            "contextUsage": context_usage,
+        },
+    )
+    update_conversation_activity(conversation_id, status_message["content"])
     return ok({
         "summary": summary,
-        "compressed": not before or before.get("version") != summary.get("version"),
-        "contextUsage": build_context_usage(conversation),
+        "compressed": compressed,
+        "contextUsage": context_usage,
     }, message="上下文压缩完成")
 
 

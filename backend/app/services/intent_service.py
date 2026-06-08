@@ -4,10 +4,9 @@ from typing import Any, Dict, Optional
 from app.core import orchestrator as legacy_orchestrator
 from app.database import (
     ORCHESTRATOR_AGENT_ID,
-    get_agent,
-    get_conversation_agent_config,
 )
 from app.runtimes.native import NativeRuntimeAdapter
+from app.services.conversation_agent_config_service import get_effective_agent_for_conversation
 
 
 def _agent_is_callable(agent: Optional[Dict[str, Any]]) -> bool:
@@ -18,18 +17,7 @@ def _effective_agent_for_conversation(
     conversation: Dict[str, Any],
     agent_id: str,
 ) -> Optional[Dict[str, Any]]:
-    owner_user_id = conversation.get("ownerUserId")
-    if (
-        conversation.get("mode") == "group"
-        and agent_id != ORCHESTRATOR_AGENT_ID
-        and agent_id in conversation.get("agentIds", [])
-    ):
-        return get_conversation_agent_config(
-            conversation["id"],
-            agent_id,
-            owner_user_id=owner_user_id,
-        )
-    return get_agent(agent_id, owner_user_id=owner_user_id)
+    return get_effective_agent_for_conversation(conversation, agent_id)
 
 
 def planner_agent_for_conversation(

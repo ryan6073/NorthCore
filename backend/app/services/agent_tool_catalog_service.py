@@ -260,30 +260,23 @@ def normalize_agent_tools(
                 if runtime_id not in catalog_tool["runtimes"]:
                     continue
     enabled_ids = default_tool_ids_for_agent(agent_id, runtime_id, category) if raw_tools is None else _enabled_ids_from_tools(raw_tools)
+    if agent_id == "agent-orchestrator":
+        return [], None
     normalized: List[Dict[str, Any]] = []
-    seen: set[str] = set()
-    for tool_id in enabled_ids:
-        catalog_tool = TOOL_BY_ID.get(tool_id)
-        if not catalog_tool:
-            if strict:
-                return [], f"未知工具: {tool_id}"
-            continue
+    enabled_set = set(enabled_ids)
+    for catalog_tool in TOOL_CATALOG:
+        tool_id = catalog_tool["id"]
         if runtime_id not in catalog_tool["runtimes"]:
-            if strict:
-                continue
-            continue
-        if tool_id in seen:
             continue
         normalized.append({
             "id": catalog_tool["id"],
             "name": catalog_tool["name"],
             "description": catalog_tool["description"],
-            "enabled": True,
+            "enabled": tool_id in enabled_set,
             "displayGroup": catalog_tool["displayGroup"],
             "riskGroup": catalog_tool["riskGroup"],
             "riskLevel": catalog_tool["riskLevel"],
         })
-        seen.add(tool_id)
     return normalized, None
 
 
@@ -304,6 +297,8 @@ def agent_enabled_tool_ids(agent: Optional[Dict[str, Any]]) -> set[str]:
 
 
 def agent_has_tool(agent: Optional[Dict[str, Any]], tool_id: str) -> bool:
+    if (agent or {}).get("overrideSource") == "fallback" and tool_mutates_workspace(tool_id):
+        return False
     return tool_id in agent_enabled_tool_ids(agent)
 
 

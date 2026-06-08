@@ -29,6 +29,8 @@ from app.database import (
     is_workspace_mutation_lock_current,
     now_text,
     release_workspace_mutation_lock,
+    retry_chain_cancelled,
+    retry_root_run_id_for_run,
     rollback_sandbox_files_for_run,
     set_sandbox_file_artifact,
     update_artifact,
@@ -52,6 +54,7 @@ from app.services.dag_step_policy import (
 )
 from app.services.sandbox_service import SandboxService
 from app.services.sandbox_tools import SANDBOX_TOOL_SPECS, SandboxToolExecutor
+from app.services.secret_path_service import is_sensitive_workspace_path
 from app.services.workspace_sync_service import sync_workspace_files
 from app.services.workspace_agents_service import read_workspace_agents_context, write_workspace_agents_file
 from app.services.workspace_index_service import rebuild_workspace_index_for_run
@@ -139,6 +142,14 @@ SANDBOX_EXECUTOR_SYSTEM_PROMPT = """你是 AgentHub 的沙箱执行模式。
 - 耗时命令不要直接通过管道接 head/tail/grep 截断；需要筛选日志时先写入文件，再读取文件。
 - 文件路径必须是相对路径，不能以 / 开头，不能包含 ..
 - 覆盖 README.md、配置、源码等已存在文件时，必须根据 read_file 读到的原内容进行增量更新，不要用 baseVersion=0 直接重写。
+- 写文件强制流程：
+  1. 新建文件：可以直接 write_file(path, content, baseVersion=0)。
+  2. 修改已有文件：必须先 read_file(path)，读取 currentVersion 和原始 content；然后基于原始 content 生成完整新内容；最后 write_file(path, fullContent, baseVersion=currentVersion)。
+  3. write_file 必须写入完整文件内容，不允许只写 diff、片段、说明文字或补丁。
+  4. write_file 返回 ok=false 时，必须读取 error/status 并修正后重试；不能在 write_file 失败后 finish(success=true)。
+  5. 如果 write_file 返回 requires_read，必须立刻 read_file 对应 path，并用返回的 currentVersion 重新 write_file。
+  6. 如果 write_file 返回权限、路径、targetPaths 或 mutation lock 错误，不要反复盲目重试，应 finish(success=false) 并说明失败原因。
+  7. finish(success=true) 前必须确认至少一次目标文件 write_file/import_workspace_file 成功，并且 changedFiles 包含实际写入路径。
 - 失败后根据日志修复，不能盲目 finish success。
 - 完成时必须调用 finish。finish.summary 只写 1-2 句中文结果，控制在 120 字以内；只说明改了什么、是否验证通过，不要输出 Markdown 标题、分章节报告、逐项清单或大段功能介绍。
 
@@ -444,7 +455,7 @@ class RunScheduler:
         if required_keys and any(key not in arguments for key in required_keys):
             return True
         status = str(tool_result.get("status") or "")
-        if status in {"blocked_office_text_write", "blocked_office_text_import", "requires_read"}:
+        if status in {"blocked_office_text_write", "blocked_office_text_import", "requires_read", "invalid_tool_arguments"}:
             return True
         error = str(tool_result.get("error") or "")
         return "非法文件路径" in error
@@ -686,8 +697,15 @@ class RunScheduler:
             ):
                 raise RuntimeError("workspace mutation lock lost during run")
             current_run = get_agent_run(run_id)
-            if current_run and current_run["status"] == "cancelled":
+            if current_run and (current_run["status"] == "cancelled" or self._retry_chain_cancelled(run_id)):
                 update_sandbox(sandbox["id"], status="cancelled")
+                payload = _run_snapshot_payload(
+                    run_id,
+                    {"status": "cancelled", "summary": "用户已取消", "autoRetryCancelled": True},
+                )
+                await send("run.cancelled", payload)
+                await send("run.updated", payload)
+                await send("conversation.all_tasks.completed", payload)
                 return
             steps = list_agent_run_steps(run_id)
             failed_steps = [step for step in steps if step["status"] in {"failed", "blocked"}]
@@ -719,6 +737,17 @@ class RunScheduler:
                 if not await self._continue_failed_run(run_id, "blocked" if summary == "任务需要补充信息" else "failed", summary, emit):
                     await send("conversation.all_tasks.completed", payload)
             else:
+                if self._retry_chain_cancelled(run_id):
+                    update_agent_run(run_id, status="cancelled", summary="用户已取消", mark_finished=True)
+                    update_sandbox(sandbox["id"], status="cancelled")
+                    payload = _run_snapshot_payload(
+                        run_id,
+                        {"status": "cancelled", "summary": "用户已取消", "autoRetryCancelled": True},
+                    )
+                    await send("run.cancelled", payload)
+                    await send("run.updated", payload)
+                    await send("conversation.all_tasks.completed", payload)
+                    return
                 if run.get("runMode") in {"write", "deploy"} and not is_workspace_mutation_lock_current(
                     str(run.get("workspaceId") or ""),
                     "run",
@@ -739,6 +768,17 @@ class RunScheduler:
                 except Exception as sync_exc:
                     print(f"❌ [WorkspaceSync] failed run={run_id} error={sync_exc}", flush=True)
                 artifact_changes = await self._sync_artifacts(run_id, sandbox, send)
+                if self._retry_chain_cancelled(run_id):
+                    update_agent_run(run_id, status="cancelled", summary="用户已取消", mark_finished=True)
+                    update_sandbox(sandbox["id"], status="cancelled")
+                    payload = _run_snapshot_payload(
+                        run_id,
+                        {"status": "cancelled", "summary": "用户已取消", "autoRetryCancelled": True},
+                    )
+                    await send("run.cancelled", payload)
+                    await send("run.updated", payload)
+                    await send("conversation.all_tasks.completed", payload)
+                    return
                 await rebuild_workspace_index_for_run(run_id, artifact_changes)
                 agents_file = write_workspace_agents_file(run.get("workspaceId") or "")
                 if agents_file:
@@ -762,6 +802,18 @@ class RunScheduler:
                 await send("run.updated", payload)
                 await send("conversation.all_tasks.completed", payload)
         except Exception as exc:
+            if self._retry_chain_cancelled(run_id):
+                update_agent_run(run_id, status="cancelled", summary="用户已取消", mark_finished=True)
+                await self.sandbox_service.stop_container(sandbox["id"], sandbox.get("containerId"), final_status="cancelled")
+                update_sandbox(sandbox["id"], status="cancelled")
+                payload = _run_snapshot_payload(
+                    run_id,
+                    {"status": "cancelled", "summary": "用户已取消", "autoRetryCancelled": True},
+                )
+                await send("run.cancelled", payload)
+                await send("run.updated", payload)
+                await send("conversation.all_tasks.completed", payload)
+                return
             rollback_changes = self._rollback_run_changes(run_id, sandbox) if sandbox else []
             update_agent_run(run_id, status="failed", error=str(exc), mark_finished=True)
             await self.sandbox_service.stop_container(sandbox["id"], sandbox.get("containerId"), final_status="failed")
@@ -815,6 +867,8 @@ class RunScheduler:
         run = get_agent_run_detail(run_id)
         if not run:
             return False
+        if self._retry_chain_cancelled(run_id):
+            return False
         owner_user_id = str(run.get("ownerUserId") or "").strip()
         if not owner_user_id:
             return False
@@ -845,6 +899,8 @@ class RunScheduler:
                     "message": f"系统正在自动重试 {next_attempt}/{max_attempts}...",
                 },
             )
+            if self._retry_chain_cancelled(run_id):
+                return False
             try:
                 from app.services.run_service import retry_agent_run
 
@@ -880,6 +936,8 @@ class RunScheduler:
             if exhausted_by_attempts
             else "自动重试无法继续创建，正在生成兜底结果..."
         )
+        if self._retry_chain_cancelled(run_id):
+            return False
         await broadcast(
             "run.retry.exhausted",
             {
@@ -895,6 +953,8 @@ class RunScheduler:
                 "message": exhausted_message,
             },
         )
+        if self._retry_chain_cancelled(run_id):
+            return False
         await broadcast(
             "run.retry.fallback.started",
             {
@@ -905,6 +965,8 @@ class RunScheduler:
                 "maxRetryAttempts": max_attempts,
             },
         )
+        if self._retry_chain_cancelled(run_id):
+            return False
         try:
             from app.services.run_service import create_retry_fallback_message
 
@@ -934,11 +996,22 @@ class RunScheduler:
         except (TypeError, ValueError):
             return 0
 
+    def _retry_chain_cancelled(self, run_id: str) -> bool:
+        run = get_agent_run(run_id)
+        if not run:
+            return False
+        if run.get("status") == "cancelled":
+            return True
+        return retry_chain_cancelled(
+            retry_root_run_id_for_run(run),
+            owner_user_id=run.get("ownerUserId"),
+        )
+
     async def _run_dag(self, run_id: str, sandbox: Dict[str, Any], container_id: str, send: EventEmitter) -> None:
         running: Dict[str, Dict[str, Any]] = {}
         while True:
             run = get_agent_run(run_id)
-            if run and run["status"] == "cancelled":
+            if run and (run["status"] == "cancelled" or self._retry_chain_cancelled(run_id)):
                 return
             steps = list_agent_run_steps(run_id)
             pending = [step for step in steps if step["status"] == "pending"]
@@ -1276,7 +1349,33 @@ class RunScheduler:
         messages = self._build_tool_loop_messages(run_id, step, agent)
 
         for iteration in range(settings.SANDBOX_MAX_TOOL_ITERATIONS):
+            if self._retry_chain_cancelled(run_id):
+                return self._tool_loop_result(
+                    "cancelled",
+                    tool_calls,
+                    command_results,
+                    changed_files,
+                    finish_data,
+                    logs,
+                    "用户已取消",
+                    environment_state,
+                    validations,
+                    workspace_scan,
+                )
             call = await self._next_tool_call(messages)
+            if self._retry_chain_cancelled(run_id):
+                return self._tool_loop_result(
+                    "cancelled",
+                    tool_calls,
+                    command_results,
+                    changed_files,
+                    finish_data,
+                    logs,
+                    "用户已取消",
+                    environment_state,
+                    validations,
+                    workspace_scan,
+                )
             if not call:
                 return self._tool_loop_result(
                     "failed",
@@ -1329,6 +1428,19 @@ class RunScheduler:
                     "path": str(call["arguments"].get("path") or "").strip(),
                 },
             )
+            if self._retry_chain_cancelled(run_id):
+                return self._tool_loop_result(
+                    "cancelled",
+                    tool_calls,
+                    command_results,
+                    changed_files,
+                    finish_data,
+                    logs,
+                    "用户已取消",
+                    environment_state,
+                    validations,
+                    workspace_scan,
+                )
             try:
                 active_tool_name["name"] = call["name"]
                 tool_result = await executor.execute(call["name"], call["arguments"])
@@ -1336,6 +1448,19 @@ class RunScheduler:
                 tool_result = {"ok": False, "error": str(exc)}
             finally:
                 active_tool_name["name"] = ""
+            if self._retry_chain_cancelled(run_id):
+                return self._tool_loop_result(
+                    "cancelled",
+                    tool_calls,
+                    command_results,
+                    changed_files,
+                    finish_data,
+                    logs,
+                    "用户已取消",
+                    environment_state,
+                    validations,
+                    workspace_scan,
+                )
             finished_at = now_text()
             record["status"] = "success" if tool_result.get("ok") else "failed"
             record["finishedAt"] = finished_at
@@ -1612,6 +1737,9 @@ class RunScheduler:
                             "content": (
                                 "finish 被后端拒绝：finish(success=true) 前没有实际写入任何 targetFiles。"
                                 "请继续使用 read_file/write_file 修改 requiredTargetFiles 中的目标文件；"
+                                "如果目标文件已存在，必须先 read_file 获取 currentVersion，再 write_file 使用该 currentVersion；"
+                                "不能用 baseVersion=0 覆盖已有文件；"
+                                "changedFiles 必须包含实际成功写入的路径；"
                                 "完成后运行验证命令或填写合理的 validationSkippedReason，再重新调用 finish。"
                             ),
                         })
@@ -1942,6 +2070,7 @@ class RunScheduler:
         result: Dict[str, Any],
     ) -> None:
         content = _json_text(self._prompt_safe_tool_result(result))
+        correction = self._tool_argument_correction_message(call, result)
         if call.get("native"):
             messages.append({
                 "role": "tool",
@@ -1949,11 +2078,30 @@ class RunScheduler:
                 "name": call["name"],
                 "content": content,
             })
+            if correction:
+                messages.append({"role": "user", "content": correction})
         else:
             messages.append({
                 "role": "user",
-                "content": f"工具 {call['name']} 返回：\n{content}\n请继续选择下一个工具，完成时调用 finish。",
+                "content": f"工具 {call['name']} 返回：\n{content}\n{correction or '请继续选择下一个工具，完成时调用 finish。'}",
             })
+
+    def _tool_argument_correction_message(self, call: Dict[str, Any], result: Dict[str, Any]) -> str:
+        if result.get("status") != "invalid_tool_arguments":
+            return ""
+        tool_name = str(call.get("name") or "")
+        expected = result.get("expectedArguments") if isinstance(result.get("expectedArguments"), dict) else {}
+        if tool_name == "write_file":
+            return (
+                "刚才 write_file 的 arguments 是空对象或缺少必填字段，必须重新调用 write_file，"
+                "不要调用 finish。正确格式："
+                '{"tool":"write_file","arguments":{"path":"index.html","content":"完整文件内容","baseVersion":0}}。'
+                "如果是修改已有文件，先调用 read_file(path)，再用 read_file 返回的 currentVersion 作为 baseVersion。"
+            )
+        return (
+            f"刚才 {tool_name} 的 arguments 缺少必填字段，必须重新调用该工具，arguments 示例："
+            f"{_json_text(expected)}。不要传空对象 {{}}。"
+        )
 
     def _prompt_safe_tool_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
         def compact_command(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -2039,17 +2187,28 @@ class RunScheduler:
 
     def _artifact_candidate_paths_for_run(self, run_id: str) -> set[str]:
         paths: set[str] = set()
+
+        def add_path(value: Any) -> None:
+            raw_path = ""
+            if isinstance(value, dict):
+                raw_path = str(value.get("path") or value.get("filePath") or "").strip()
+            elif isinstance(value, str):
+                raw_path = value.strip()
+            if not raw_path:
+                return
+            clean_path = _safe_output_path(raw_path)
+            if clean_path:
+                paths.add(clean_path)
+
         for step in list_agent_run_steps(run_id):
             output = step.get("output") if isinstance(step.get("output"), dict) else {}
             for path in output.get("changedFiles") or []:
-                clean_path = _safe_output_path(str(path))
-                if clean_path:
-                    paths.add(clean_path)
+                add_path(path)
+            for file_item in output.get("files") or []:
+                add_path(file_item)
             finish = output.get("finish") if isinstance(output.get("finish"), dict) else {}
             for path in finish.get("changedFiles") or []:
-                clean_path = _safe_output_path(str(path))
-                if clean_path:
-                    paths.add(clean_path)
+                add_path(path)
         return paths
 
     async def _sync_artifacts(self, run_id: str, sandbox: Dict[str, Any], send: EventEmitter) -> List[Dict[str, Any]]:
@@ -2059,6 +2218,7 @@ class RunScheduler:
         print(f"[SandboxArtifact] sync start run={run_id}", flush=True)
         synced = 0
         artifact_changes: List[Dict[str, Any]] = []
+        artifact_messages: List[Dict[str, Any]] = []
         action_context = (run.get("dag") or {}).get("workspaceActionContext") or {}
         is_modify_existing = action_context.get("action") == "modify_existing"
         target_paths = _artifact_publish_paths_for_action_context(action_context)
@@ -2072,6 +2232,12 @@ class RunScheduler:
             target_artifact_by_path.setdefault(next(iter(target_paths)), next(iter(target_artifacts)))
         candidate_paths = self._artifact_candidate_paths_for_run(run_id)
         for file_meta in list_sandbox_files_changed_by_run(run_id):
+            if is_sensitive_workspace_path(file_meta.get("path")):
+                print(
+                    f"[SandboxArtifact] skip sensitive path run={run_id} path={file_meta.get('path')}",
+                    flush=True,
+                )
+                continue
             version = get_sandbox_file_version(file_meta["id"], file_meta["currentVersion"])
             is_declared_output = str(file_meta.get("path") or "") in candidate_paths
             if not version and not is_declared_output:
@@ -2213,6 +2379,7 @@ class RunScheduler:
                     "action": action,
                 },
             )
+            artifact_messages.append(artifact_message)
             update_conversation_activity(run["conversationId"], artifact_message_content)
             await send(
                 "conversation.message.completed",
@@ -2234,6 +2401,45 @@ class RunScheduler:
                         "action": action,
                     },
                 ),
+            )
+        if artifact_messages:
+            created_count = sum(1 for item in artifact_changes if item.get("action") == "created")
+            updated_count = sum(1 for item in artifact_changes if item.get("action") == "updated")
+            summary_parts = []
+            if created_count:
+                summary_parts.append(f"新生成 {created_count} 个")
+            if updated_count:
+                summary_parts.append(f"更新 {updated_count} 个")
+            summary_text = "，".join(summary_parts) or f"{len(artifact_messages)} 个产物"
+            aggregate_content = f"本次产物变更：{summary_text}"
+            aggregate_message = create_message(
+                conversation_id=run["conversationId"],
+                sender_id=run_id,
+                sender_name="Sandbox",
+                role="agent",
+                msg_type="artifacts",
+                content=aggregate_content,
+                metadata={
+                    "source": "sandbox",
+                    "sourceRunId": run_id,
+                    "sourceConversationId": run.get("conversationId"),
+                    "sourceWorkspaceId": run.get("workspaceId") or sandbox.get("workspaceId"),
+                    "artifactCount": len(artifact_messages),
+                    "createdCount": created_count,
+                    "updatedCount": updated_count,
+                    "items": artifact_messages,
+                    "artifactChanges": artifact_changes,
+                },
+            )
+            update_conversation_activity(run["conversationId"], aggregate_content)
+            await send(
+                "conversation.message.completed",
+                {
+                    "conversationId": run["conversationId"],
+                    "messageId": aggregate_message["id"],
+                    "finishReason": "stop",
+                    "fullMessage": aggregate_message,
+                },
             )
         print(f"[SandboxArtifact] sync done run={run_id} count={synced}", flush=True)
         return artifact_changes

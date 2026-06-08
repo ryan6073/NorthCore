@@ -733,6 +733,10 @@ def init_db() -> None:
                 tags_json TEXT NOT NULL DEFAULT '[]',
                 current_version_id TEXT,
                 latest_version INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'active',
+                revoked_at TEXT,
+                revoked_by_run_id TEXT,
+                revoked_reason TEXT,
                 size INTEGER,
                 content TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
@@ -1163,6 +1167,10 @@ def init_db() -> None:
         ensure_column(conn, "web_search_cache", "results_json", "TEXT NOT NULL DEFAULT '[]'")
         ensure_column(conn, "web_search_cache", "created_at", "TEXT")
         ensure_column(conn, "web_search_cache", "updated_at", "TEXT")
+        ensure_column(conn, "artifacts", "status", "TEXT NOT NULL DEFAULT 'active'")
+        ensure_column(conn, "artifacts", "revoked_at", "TEXT")
+        ensure_column(conn, "artifacts", "revoked_by_run_id", "TEXT")
+        ensure_column(conn, "artifacts", "revoked_reason", "TEXT")
         migrate_artifact_workspace_scope(conn)
         migrate_artifact_versions(conn)
         seed_agents(conn)
@@ -1170,6 +1178,7 @@ def init_db() -> None:
         migrate_agent_workspace_runtime_config(conn)
         ensure_group_orchestrator_memberships(conn)
         ensure_all_user_contact_conversations(conn)
+        ensure_all_conversation_agent_config_snapshots(conn)
 
 
 def ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, ddl: str) -> None:
@@ -1583,6 +1592,7 @@ def ensure_contact_conversation_conn(
                 "SELECT * FROM conversations WHERE id = ?",
                 (existing["id"],),
             ).fetchone()
+        ensure_conversation_agent_config_snapshot_conn(conn, existing["id"], agent_id, owner_user_id)
         return conversation_from_row(existing, get_conversation_agent_ids(conn, existing["id"]))
 
     agent = conn.execute(
@@ -1619,6 +1629,7 @@ def ensure_contact_conversation_conn(
         "INSERT OR IGNORE INTO conversation_agents (conversation_id, agent_id) VALUES (?, ?)",
         (conversation_id, agent_id),
     )
+    ensure_conversation_agent_config_snapshot_conn(conn, conversation_id, agent_id, owner_user_id)
     row = conn.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
     return conversation_from_row(row, get_conversation_agent_ids(conn, conversation_id))
 
@@ -2264,7 +2275,127 @@ def get_conversation_agent_config(
     if not agent:
         return None
     agent = {**agent, "conversationId": conversation_id}
+    with get_connection() as conn:
+        has_override = conn.execute(
+            """
+            SELECT 1
+            FROM conversation_agent_overrides
+            WHERE conversation_id = ? AND agent_id = ?
+            """,
+            (conversation_id, agent_id),
+        ).fetchone()
+    if not has_override:
+        return annotate_agent_runtime_capabilities({
+            **agent,
+            "overrideSource": "fallback",
+            "fallbackBaseOverrideSource": agent.get("overrideSource") or "global",
+        })
     return apply_conversation_agent_override(agent, conversation_id)
+
+
+def ensure_conversation_agent_config_snapshot_conn(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    agent_id: str,
+    owner_user_id: Optional[str],
+) -> bool:
+    if agent_id == ORCHESTRATOR_AGENT_ID:
+        return False
+    existing = conn.execute(
+        """
+        SELECT 1
+        FROM conversation_agent_overrides
+        WHERE conversation_id = ? AND agent_id = ?
+        """,
+        (conversation_id, agent_id),
+    ).fetchone()
+    if existing:
+        return False
+    row = conn.execute(
+        """
+        SELECT *
+        FROM agents
+        WHERE id = ?
+          AND (owner_user_id IS NULL OR owner_user_id = ?)
+        """,
+        (agent_id, owner_user_id),
+    ).fetchone()
+    if not row:
+        return False
+    agent = apply_agent_user_override(agent_from_row(row), owner_user_id, conn=conn)
+    tools, _ = normalize_agent_tools(
+        agent.get("tools"),
+        runtime=agent.get("runtime", "native"),
+        agent_id=agent_id,
+        category=agent.get("category"),
+        strict=False,
+    )
+    permissions = permissions_from_tools(tools)
+    timestamp = now_text()
+    conn.execute(
+        """
+        INSERT INTO conversation_agent_overrides (
+            id, conversation_id, agent_id, name, avatar, description,
+            tags_json, status, category, provider, runtime, model_config_id,
+            runtime_config_json, enabled, last_used_at,
+            system_prompt, model_config_json, tools_json, permissions_json,
+            created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            create_id("convAgentOverride"),
+            conversation_id,
+            agent_id,
+            agent.get("name", ""),
+            agent.get("avatar", ""),
+            agent.get("description", ""),
+            _json_dump(agent.get("tags", [])),
+            agent.get("status", "offline"),
+            agent.get("category", "custom"),
+            agent.get("provider", "mock"),
+            agent.get("runtime", "native"),
+            agent.get("modelConfigId"),
+            _json_dump(strip_agent_workspace_runtime_config(agent.get("runtimeConfig", {}))),
+            1 if agent.get("enabled", True) else 0,
+            agent.get("lastUsedAt"),
+            agent.get("systemPrompt", ""),
+            _json_dump(agent.get("modelConfig", {})),
+            _json_dump(tools),
+            _json_dump(permissions),
+            timestamp,
+            timestamp,
+        ),
+    )
+    return True
+
+
+def ensure_conversation_agent_config_snapshot(
+    conversation_id: str,
+    agent_id: str,
+    owner_user_id: Optional[str] = None,
+) -> bool:
+    with get_connection() as conn:
+        return ensure_conversation_agent_config_snapshot_conn(conn, conversation_id, agent_id, owner_user_id)
+
+
+def ensure_all_conversation_agent_config_snapshots(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """
+        SELECT c.id AS conversation_id, c.owner_user_id AS owner_user_id, ca.agent_id AS agent_id
+        FROM conversations c
+        JOIN conversation_agents ca ON ca.conversation_id = c.id
+        WHERE c.mode IN ('agent', 'single', 'group')
+        ORDER BY c.created_at ASC, ca.rowid ASC
+        """
+    ).fetchall()
+    for row in rows:
+        ensure_conversation_agent_config_snapshot_conn(
+            conn,
+            row["conversation_id"],
+            row["agent_id"],
+            row["owner_user_id"],
+        )
 
 
 def upsert_agent_user_override(
@@ -2714,6 +2845,7 @@ def attachment_from_row(row: sqlite3.Row, include_storage_path: bool = False) ->
 
 
 def artifact_meta_from_row(row: sqlite3.Row) -> Dict[str, Any]:
+    status = row["status"] if "status" in row.keys() and row["status"] else "active"
     artifact = {
         "id": row["id"],
         "artifactId": row["id"],
@@ -2723,6 +2855,10 @@ def artifact_meta_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "runId": row["run_id"],
         "title": row["title"],
         "type": row["type"],
+        "status": status,
+        "revokedAt": row["revoked_at"] if "revoked_at" in row.keys() else None,
+        "revokedByRunId": row["revoked_by_run_id"] if "revoked_by_run_id" in row.keys() else None,
+        "revokedReason": row["revoked_reason"] if "revoked_reason" in row.keys() else None,
         "tags": _json_load(row["tags_json"], []),
         "currentVersionId": row["current_version_id"],
         "latestVersion": row["latest_version"],
@@ -2793,6 +2929,14 @@ def artifact_version_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "metadata": metadata,
         "createdAt": row["created_at"],
     }
+    if metadata.get("status"):
+        version["status"] = metadata.get("status")
+    if metadata.get("revokedAt"):
+        version["revokedAt"] = metadata.get("revokedAt")
+    if metadata.get("revokedByRunId"):
+        version["revokedByRunId"] = metadata.get("revokedByRunId")
+    if metadata.get("revokedReason"):
+        version["revokedReason"] = metadata.get("revokedReason")
     if metadata.get("sourceConversationId"):
         version["sourceConversationId"] = metadata.get("sourceConversationId")
     if metadata.get("sourceWorkspaceId"):
@@ -4467,6 +4611,7 @@ def create_conversation(
                 "INSERT OR IGNORE INTO conversation_agents (conversation_id, agent_id) VALUES (?, ?)",
                 (conversation_id, agent_id),
             )
+            ensure_conversation_agent_config_snapshot_conn(conn, conversation_id, agent_id, owner_user_id)
         row = conn.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
         return conversation_from_row(row, get_conversation_agent_ids(conn, conversation_id))
 
@@ -4501,6 +4646,7 @@ def add_conversation_agent(
             "INSERT OR IGNORE INTO conversation_agents (conversation_id, agent_id) VALUES (?, ?)",
             (conversation_id, agent_id),
         )
+        ensure_conversation_agent_config_snapshot_conn(conn, conversation_id, agent_id, current.get("ownerUserId"))
         conn.execute(
             "UPDATE conversations SET updated_at = ? WHERE id = ?",
             (timestamp, conversation_id),
@@ -4946,7 +5092,12 @@ def list_artifacts(conversation_id: str) -> List[Dict[str, Any]]:
     artifact_ids: set[str] = set()
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT * FROM artifacts WHERE conversation_id = ? ORDER BY created_at DESC",
+            """
+            SELECT *
+            FROM artifacts
+            WHERE conversation_id = ? AND status = 'active'
+            ORDER BY created_at DESC
+            """,
             (conversation_id,),
         ).fetchall()
         for row in rows:
@@ -4963,6 +5114,8 @@ def list_artifacts(conversation_id: str) -> List[Dict[str, Any]]:
             version_artifacts = []
             for version_row in version_rows:
                 metadata = _json_load(version_row["metadata_json"], {})
+                if metadata.get("status") == "revoked" or metadata.get("revokedByRunId"):
+                    continue
                 if metadata.get("sourceRunId"):
                     version_artifacts.append(artifact_meta_from_version_row(row, version_row))
             if version_artifacts:
@@ -4990,7 +5143,7 @@ def list_artifacts(conversation_id: str) -> List[Dict[str, Any]]:
         if extra_artifact_ids:
             placeholders = ",".join("?" for _ in extra_artifact_ids)
             extra_rows = conn.execute(
-                f"SELECT * FROM artifacts WHERE id IN ({placeholders})",
+                f"SELECT * FROM artifacts WHERE id IN ({placeholders}) AND status = 'active'",
                 tuple(extra_artifact_ids),
             ).fetchall()
             for row in extra_rows:
@@ -5005,6 +5158,8 @@ def list_artifacts(conversation_id: str) -> List[Dict[str, Any]]:
                 ).fetchall()
                 for version_row in version_rows:
                     metadata = _json_load(version_row["metadata_json"], {})
+                    if metadata.get("status") == "revoked" or metadata.get("revokedByRunId"):
+                        continue
                     if metadata.get("sourceConversationId") == conversation_id:
                         artifacts.append(artifact_meta_from_version_row(row, version_row))
     return sorted(
@@ -5021,7 +5176,7 @@ def list_artifacts_for_workspace(workspace_id: str) -> List[Dict[str, Any]]:
             """
             SELECT *
             FROM artifacts
-            WHERE workspace_id = ?
+            WHERE workspace_id = ? AND status = 'active'
             ORDER BY updated_at DESC, created_at DESC
             """,
             (workspace_id,),
@@ -5039,7 +5194,7 @@ def list_artifacts_for_run(run_id: str) -> List[Dict[str, Any]]:
     artifact_ids = set()
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at DESC, rowid DESC",
+            "SELECT * FROM artifacts WHERE run_id = ? AND status = 'active' ORDER BY created_at DESC, rowid DESC",
             (run_id,),
         ).fetchall()
         artifact_ids.update(row["id"] for row in rows)
@@ -5064,7 +5219,7 @@ def list_artifacts_for_run(run_id: str) -> List[Dict[str, Any]]:
             f"""
             SELECT *
             FROM artifacts
-            WHERE id IN ({placeholders})
+            WHERE id IN ({placeholders}) AND status = 'active'
             ORDER BY updated_at DESC, created_at DESC
             """,
             tuple(artifact_ids),
@@ -5072,6 +5227,13 @@ def list_artifacts_for_run(run_id: str) -> List[Dict[str, Any]]:
         artifacts = []
         for row in artifact_rows:
             current_version = get_current_artifact_version(conn, row)
+            current_source_run_id = (
+                str((current_version.get("metadata") or {}).get("sourceRunId") or "").strip()
+                if current_version
+                else ""
+            )
+            if str(row["run_id"] or "") != run_id and current_source_run_id != run_id:
+                continue
             if current_version:
                 artifacts.append(artifact_detail_from_row(row, current_version))
             else:
@@ -5250,7 +5412,11 @@ def update_artifact(
             **({"sourceWorkspaceId": source_workspace_id} if source_workspace_id else {}),
             **(metadata or {}),
         }
-        next_version = int(artifact["latest_version"] or 0) + 1
+        max_version_row = conn.execute(
+            "SELECT COALESCE(MAX(version), 0) AS max_version FROM artifact_versions WHERE artifact_id = ?",
+            (artifact_id,),
+        ).fetchone()
+        next_version = int((max_version_row or {})["max_version"] or 0) + 1
         version_id = create_id("version")
         conn.execute(
             """
@@ -5286,6 +5452,181 @@ def update_artifact(
         row = conn.execute("SELECT * FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
         new_version = get_current_artifact_version(conn, row)
         return artifact_detail_from_row(row, new_version)
+
+
+def _artifact_version_source_run_id(version_row: sqlite3.Row) -> str:
+    metadata = _json_load(version_row["metadata_json"], {})
+    return str(metadata.get("sourceRunId") or "").strip()
+
+
+def _artifact_version_change(
+    action: str,
+    artifact_row: sqlite3.Row,
+    previous_version: Optional[int],
+    current_version: Optional[int],
+) -> Dict[str, Any]:
+    return {
+        "action": action,
+        "artifactId": artifact_row["id"],
+        "title": artifact_row["title"],
+        "previousVersion": previous_version,
+        "currentVersion": current_version,
+    }
+
+
+def _mark_artifact_versions_revoked(
+    conn: sqlite3.Connection,
+    versions: List[sqlite3.Row],
+    run_id: str,
+    timestamp: str,
+) -> set[str]:
+    revoked_ids: set[str] = set()
+    for version in versions:
+        if _artifact_version_source_run_id(version) != run_id:
+            continue
+        metadata = _json_load(version["metadata_json"], {})
+        revoked_metadata = {
+            **metadata,
+            "status": "revoked",
+            "revokedAt": metadata.get("revokedAt") or timestamp,
+            "revokedByRunId": metadata.get("revokedByRunId") or run_id,
+            "revokedReason": metadata.get("revokedReason") or "Run rollback revoked artifact version",
+        }
+        conn.execute(
+            "UPDATE artifact_versions SET metadata_json = ? WHERE id = ?",
+            (_json_dump(revoked_metadata), version["id"]),
+        )
+        revoked_ids.add(str(version["id"]))
+    return revoked_ids
+
+
+def rollback_artifacts_for_run(run_id: str) -> List[Dict[str, Any]]:
+    timestamp = now_text()
+    artifact_ids: set[str] = set()
+    changes: List[Dict[str, Any]] = []
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute("SELECT id FROM artifacts WHERE run_id = ?", (run_id,)).fetchall()
+        artifact_ids.update(str(row["id"]) for row in rows)
+        version_rows = conn.execute(
+            """
+            SELECT artifact_id, metadata_json
+            FROM artifact_versions
+            WHERE metadata_json LIKE ?
+            """,
+            (f"%{run_id}%",),
+        ).fetchall()
+        for version_row in version_rows:
+            metadata = _json_load(version_row["metadata_json"], {})
+            if metadata.get("sourceRunId") == run_id:
+                artifact_ids.add(str(version_row["artifact_id"]))
+        if not artifact_ids:
+            return []
+
+        for artifact_id in sorted(artifact_ids):
+            artifact_row = conn.execute("SELECT * FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
+            if not artifact_row:
+                continue
+            versions = conn.execute(
+                """
+                SELECT *
+                FROM artifact_versions
+                WHERE artifact_id = ?
+                ORDER BY version DESC
+                """,
+                (artifact_id,),
+            ).fetchall()
+            current_version = get_current_artifact_version(conn, artifact_row)
+            previous_version_number = int(current_version.get("version")) if current_version else None
+            created_by_run = str(artifact_row["run_id"] or "") == run_id
+            run_version_ids = _mark_artifact_versions_revoked(conn, versions, run_id, timestamp)
+            if created_by_run:
+                if (artifact_row["status"] if "status" in artifact_row.keys() else "active") != "revoked":
+                    conn.execute(
+                        """
+                        UPDATE artifacts
+                        SET status = 'revoked',
+                            revoked_at = ?,
+                            revoked_by_run_id = ?,
+                            revoked_reason = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            timestamp,
+                            run_id,
+                            "Run rollback revoked artifact created by this run",
+                            timestamp,
+                            artifact_id,
+                        ),
+                    )
+                changes.append(_artifact_version_change("revoked", artifact_row, previous_version_number, None))
+                continue
+
+            if not run_version_ids:
+                continue
+            restored_version = next(
+                (
+                    version for version in versions
+                    if str(version["id"]) not in run_version_ids
+                    and not (
+                        (_json_load(version["metadata_json"], {}) or {}).get("status") == "revoked"
+                        or (_json_load(version["metadata_json"], {}) or {}).get("revokedByRunId")
+                    )
+                ),
+                None,
+            )
+            if restored_version:
+                restored_version_number = int(restored_version["version"])
+                conn.execute(
+                    """
+                    UPDATE artifacts
+                    SET current_version_id = ?,
+                        latest_version = ?,
+                        content = ?,
+                        size = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        restored_version["id"],
+                        restored_version_number,
+                        restored_version["content"] or "",
+                        restored_version["size"],
+                        timestamp,
+                        artifact_id,
+                    ),
+                )
+                changes.append(
+                    _artifact_version_change(
+                        "version_reverted",
+                        artifact_row,
+                        previous_version_number,
+                        restored_version_number,
+                    )
+                )
+            else:
+                if (artifact_row["status"] if "status" in artifact_row.keys() else "active") != "revoked":
+                    conn.execute(
+                        """
+                        UPDATE artifacts
+                        SET status = 'revoked',
+                            revoked_at = ?,
+                            revoked_by_run_id = ?,
+                            revoked_reason = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            timestamp,
+                            run_id,
+                            "Run rollback revoked artifact with no previous version",
+                            timestamp,
+                            artifact_id,
+                        ),
+                    )
+                changes.append(_artifact_version_change("revoked", artifact_row, previous_version_number, None))
+    return changes
 
 
 def _content_hash(content: str) -> str:
@@ -5426,6 +5767,57 @@ def get_agent_run(run_id: str, owner_user_id: Optional[str] = None) -> Optional[
             params,
         ).fetchone()
     return agent_run_from_row(row) if row else None
+
+
+def retry_root_run_id_for_run(run: Dict[str, Any]) -> str:
+    metadata = run.get("runtimeMetadata") if isinstance(run.get("runtimeMetadata"), dict) else {}
+    return str(metadata.get("retryRootRunId") or run.get("id") or "").strip()
+
+
+def list_agent_runs_for_retry_chain(
+    root_run_id: str,
+    owner_user_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    clean_root = str(root_run_id or "").strip()
+    if not clean_root:
+        return []
+    owner_clause = ""
+    params: List[Any] = [clean_root, f"%{clean_root}%"]
+    if owner_user_id:
+        owner_clause = "AND owner_user_id = ?"
+        params.append(owner_user_id)
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM agent_runs
+            WHERE (id = ? OR runtime_metadata_json LIKE ?)
+              {owner_clause}
+            ORDER BY created_at ASC
+            """,
+            params,
+        ).fetchall()
+    runs = []
+    seen = set()
+    for row in rows:
+        run = agent_run_from_row(row)
+        metadata = run.get("runtimeMetadata") if isinstance(run.get("runtimeMetadata"), dict) else {}
+        if run.get("id") != clean_root and str(metadata.get("retryRootRunId") or "").strip() != clean_root:
+            continue
+        if run["id"] in seen:
+            continue
+        runs.append(run)
+        seen.add(run["id"])
+    return runs
+
+
+def retry_chain_cancelled(root_run_id: str, owner_user_id: Optional[str] = None) -> bool:
+    runs = list_agent_runs_for_retry_chain(root_run_id, owner_user_id=owner_user_id)
+    return any(
+        (run.get("runtimeMetadata") or {}).get("retryChainCancelled")
+        or (run.get("status") == "cancelled" and retry_root_run_id_for_run(run) == str(root_run_id or "").strip())
+        for run in runs
+    )
 
 
 def update_agent_run(
@@ -5680,10 +6072,50 @@ def get_sandbox_file_by_artifact(workspace_id: str, artifact_id: str) -> Optiona
 def list_sandbox_files_changed_by_run(run_id: str) -> List[Dict[str, Any]]:
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT * FROM sandbox_files WHERE run_id = ? ORDER BY path ASC",
-            (run_id,),
+            """
+            SELECT DISTINCT sf.*
+            FROM sandbox_files sf
+            JOIN sandbox_file_versions sfv ON sfv.file_id = sf.id
+            JOIN agent_run_steps step ON step.id = sfv.created_by_step_id
+            WHERE step.run_id = ?
+            UNION
+            SELECT sf.*
+            FROM sandbox_files sf
+            WHERE sf.run_id = ?
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM sandbox_file_versions sfv
+                  WHERE sfv.file_id = sf.id
+              )
+            ORDER BY path ASC
+            """,
+            (run_id, run_id),
         ).fetchall()
     return [sandbox_file_from_row(row) for row in rows]
+
+
+def _sandbox_file_rows_changed_by_run(conn: sqlite3.Connection, run_id: str) -> List[sqlite3.Row]:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT sf.*
+        FROM sandbox_files sf
+        JOIN sandbox_file_versions sfv ON sfv.file_id = sf.id
+        JOIN agent_run_steps step ON step.id = sfv.created_by_step_id
+        WHERE step.run_id = ?
+        UNION
+        SELECT sf.*
+        FROM sandbox_files sf
+        WHERE sf.run_id = ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM sandbox_file_versions sfv
+              WHERE sfv.file_id = sf.id
+          )
+        ORDER BY path ASC
+        """,
+        (run_id, run_id),
+    ).fetchall()
+    return rows
 
 
 def rollback_sandbox_files_for_run(run_id: str) -> List[Dict[str, Any]]:
@@ -5698,10 +6130,7 @@ def rollback_sandbox_files_for_run(run_id: str) -> List[Dict[str, Any]]:
                 (run_id,),
             ).fetchall()
         }
-        rows = conn.execute(
-            "SELECT * FROM sandbox_files WHERE run_id = ? ORDER BY path ASC",
-            (run_id,),
-        ).fetchall()
+        rows = _sandbox_file_rows_changed_by_run(conn, run_id)
         for file_row in rows:
             current_version = int(file_row["current_version"] or 0)
             restore_version = current_version

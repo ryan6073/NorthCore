@@ -14,13 +14,14 @@ from app.database import (
 )
 from app.services.dag_step_policy import path_matches_patterns, step_target_paths
 from app.services.sandbox_service import SandboxService
+from app.services.secret_path_service import is_sensitive_workspace_path
 
 
 TEXT_MIME_PREFIXES = ("text/",)
 TEXT_SUFFIXES = {
     ".py", ".js", ".ts", ".tsx", ".jsx", ".css", ".html", ".htm", ".md", ".markdown",
     ".txt", ".json", ".yaml", ".yml", ".toml", ".xml", ".svg", ".csv", ".ini", ".cfg",
-    ".env", ".sh", ".bat", ".ps1", ".sql", ".rs", ".go", ".java", ".c", ".cpp", ".h",
+    ".sh", ".bat", ".ps1", ".sql", ".rs", ".go", ".java", ".c", ".cpp", ".h",
 }
 GENERATED_CONTEXT_FILES = {"AGENTS.md"}
 
@@ -142,27 +143,49 @@ def _append_conflict(conflicts: List[Dict[str, Any]], result: Dict[str, Any]) ->
         conflicts.append(conflict)
 
 
+def _mutation_rejection(path: str, reason: str = "readonly_platform_runtime_mutation") -> Dict[str, Any]:
+    return {
+        "path": path,
+        "reason": reason,
+        "message": "只读 platform runtime 产生了 workspace 修改，已拒绝提交",
+    }
+
+
 def sync_platform_workspace_changes(
     sandbox: Dict[str, Any],
     run_id: str,
     snapshot: Dict[str, Any],
     created_by_step_id: Optional[str] = None,
     max_files: Optional[int] = None,
+    allow_write: bool = True,
 ) -> Dict[str, Any]:
     workspace = Path(sandbox["workspacePath"]).resolve()
     if not workspace.exists():
-        return {"files": [], "conflicts": [], "snapshotId": snapshot.get("id")}
+        return {"files": [], "conflicts": [], "skippedFiles": [], "rejectedFiles": [], "writeRejected": False, "snapshotId": snapshot.get("id")}
     snapshot_files = snapshot.get("files") if isinstance(snapshot.get("files"), dict) else {}
     step = get_agent_run_step(created_by_step_id) if created_by_step_id else None
     declared_targets = step_target_paths(step or {}) if step else []
     saved_files: List[Dict[str, Any]] = []
     conflicts: List[Dict[str, Any]] = []
+    skipped_files: List[Dict[str, Any]] = []
+    rejected_files: List[Dict[str, Any]] = []
     seen_paths: set[str] = set()
     for path in _iter_workspace_files(workspace, max_files=max_files):
         payload = _file_payload(path, workspace)
         seen_paths.add(payload["path"])
         before = snapshot_files.get(payload["path"]) if isinstance(snapshot_files.get(payload["path"]), dict) else None
         if before and before.get("sha256") == payload["sha256"]:
+            continue
+        if not allow_write:
+            rejected_files.append(_mutation_rejection(payload["path"]))
+            _restore_current_version_to_workspace(workspace, run_id, payload["path"])
+            continue
+        if is_sensitive_workspace_path(payload["path"]):
+            skipped_files.append({
+                "path": payload["path"],
+                "reason": "sensitive_path",
+                "message": "敏感文件已跳过 workspace 内容同步",
+            })
             continue
         if declared_targets and not path_matches_patterns(payload["path"], declared_targets):
             conflicts.append({
@@ -231,6 +254,17 @@ def sync_platform_workspace_changes(
         base_version = int((before or {}).get("currentVersion") or 0)
         if base_version <= 0:
             continue
+        if not allow_write:
+            rejected_files.append(_mutation_rejection(relative_path))
+            _restore_current_version_to_workspace(workspace, run_id, relative_path)
+            continue
+        if is_sensitive_workspace_path(relative_path):
+            skipped_files.append({
+                "path": relative_path,
+                "reason": "sensitive_path",
+                "message": "敏感文件删除已跳过 workspace 内容同步",
+            })
+            continue
         if declared_targets and not path_matches_patterns(relative_path, declared_targets):
             conflicts.append({
                 "path": relative_path,
@@ -277,7 +311,14 @@ def sync_platform_workspace_changes(
         file_meta = result.get("file")
         if isinstance(file_meta, dict):
             saved_files.append(file_meta)
-    return {"files": saved_files, "conflicts": conflicts, "snapshotId": snapshot.get("id")}
+    return {
+        "files": saved_files,
+        "conflicts": conflicts,
+        "skippedFiles": skipped_files,
+        "rejectedFiles": rejected_files,
+        "writeRejected": bool(rejected_files),
+        "snapshotId": snapshot.get("id"),
+    }
 
 
 def sync_workspace_files(
@@ -293,6 +334,12 @@ def sync_workspace_files(
     existing_paths = {item["path"] for item in list_sandbox_files(run_id)}
     for path in _iter_workspace_files(workspace, max_files=max_files):
         payload = _file_payload(path, workspace)
+        if is_sensitive_workspace_path(payload["path"]):
+            print(
+                f"[WorkspaceSync] skip sensitive path run={run_id} path={payload['path']}",
+                flush=True,
+            )
+            continue
         result = upsert_sandbox_file_metadata(
             sandbox_id=sandbox["id"],
             run_id=run_id,

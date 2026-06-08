@@ -155,6 +155,22 @@ async def execute_sandbox_step(
             return
 
         result = await scheduler._run_tool_loop(run_id, sandbox, container_id, step, agent, send)
+        if result["status"] == "cancelled":
+            update_agent_run_step(
+                step["id"],
+                status="cancelled",
+                output=result["output"],
+                append_log=result.get("logs", ""),
+                error=result.get("error") or "用户已取消",
+                mark_finished=True,
+            )
+            payload = _run_snapshot_payload(
+                run_id,
+                {"stepId": step["id"], "step": get_agent_run_step(step["id"]), "status": "cancelled"},
+            )
+            await send("run.step.cancelled", payload)
+            await send("run.updated", payload)
+            return
         if result["status"] == "conflict":
             update_agent_run_step(
                 step["id"],
