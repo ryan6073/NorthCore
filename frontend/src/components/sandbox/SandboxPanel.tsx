@@ -69,19 +69,22 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
 
     loadSandboxFiles(activeRunId);
     loadSandboxConflicts(activeRunId);
-
-    if (activeRun.steps && activeRun.steps.length > 0) {
-      const runningStep = activeRun.steps.find((s: AgentRunStep) => s.status === 'running');
-      const failedStep = activeRun.steps.find((s: AgentRunStep) => s.status === 'failed' || s.status === 'conflict');
-      if (runningStep) {
-        setSelectedStepId(runningStep.id);
-      } else if (failedStep) {
-        setSelectedStepId(failedStep.id);
-      } else if (!selectedStepId) {
-        setSelectedStepId(activeRun.steps[0].id);
-      }
-    }
   }, [activeRunId, activeRun?.id]);
+
+  // 自动聚焦到 running / failed / 首个 step（监听 steps 变化，step 转为 running 时自动切换）
+  useEffect(() => {
+    if (!activeRun?.steps || activeRun.steps.length === 0) return;
+
+    const runningStep = activeRun.steps.find((s: AgentRunStep) => s.status === 'running');
+    const failedStep = activeRun.steps.find((s: AgentRunStep) => s.status === 'failed' || s.status === 'conflict');
+    if (runningStep) {
+      setSelectedStepId(runningStep.id);
+    } else if (failedStep) {
+      setSelectedStepId(failedStep.id);
+    } else if (!selectedStepId) {
+      setSelectedStepId(activeRun.steps[0].id);
+    }
+  }, [activeRun?.steps]);
 
   useEffect(() => {
     if (logEndRef.current) {
