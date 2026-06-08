@@ -3850,11 +3850,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           // 当后端想把 agent 设为 online 时，检查该 agent 是否还有活跃的 run
           // 避免 tool call 失败等中间状态错误地让 agent 退出工作状态
           if (newStatus === 'online') {
-            // 检查该 agent 是否有活跃的 run（包括 DAG 中分配给该 agent 的节点）
+            // 检查该 agent 是否还有活跃的 run
+            // 覆盖场景：两个 step 同属一个 agent，第一个 step 完成后第二个 step 尚未转为 running
+            // 此时只要该 agent 在 run 的 steps 中且 run 仍在 running，就不应改为 online
             const hasActiveRun = Object.values(state.runDetailsById).some(
               (r: any) => (r.agentId === agentId ||
-                r.dag?.nodes?.some((n: any) => n.agentId === agentId) ||
-                r.steps?.some((s: any) => s.agentId === agentId && (s.status === 'running' || s.status === 'pending' || s.status === 'queued'))
+                r.steps?.some((s: any) => s.agentId === agentId) ||
+                r.dag?.nodes?.some((n: any) => n.agentId === agentId)
               ) && (r.status === 'running' || r.status === 'pending' || r.status === 'queued')
             );
             if (hasActiveRun) {
