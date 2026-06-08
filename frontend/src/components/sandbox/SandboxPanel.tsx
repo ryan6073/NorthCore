@@ -86,11 +86,23 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
     }
   }, [activeRun?.steps]);
 
+  // 日志区域自动滚动到底部
   useEffect(() => {
     if (logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [activeRun?.steps, selectedStepId]);
+
+  // 选中 step 时，滚动到该 step 在列表中的位置
+  const stepListRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!selectedStepId) return;
+    // 找到选中的 step DOM 元素并滚动到可见区域
+    const el = document.getElementById(`sandbox-step-${selectedStepId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [selectedStepId]);
 
   useEffect(() => {
     if (!activeRunId || !selectedSandboxFilePath) {
@@ -546,6 +558,7 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                   return (
                     <div
                       key={step.id}
+                      id={`sandbox-step-${step.id}`}
                       onClick={() => setSelectedStepId(step.id)}
                       className={`flex items-start space-x-3 p-3 rounded-xl border transition-all cursor-pointer ${isSelected
                           ? 'border-indigo-500/60 bg-indigo-500/10 text-indigo-200'
