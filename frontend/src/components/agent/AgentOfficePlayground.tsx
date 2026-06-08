@@ -283,7 +283,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
   };
 
   if (isCollapsed) {
-    // 收起态：显示 Agent emoji + 状态标签，一行紧凑排列
+    // 收起态：使用与展开态相同的 HorseAgent 组件，只是隐藏工位和休闲区
     return (
       <div className="w-full px-4 py-2 bg-white/90 dark:bg-slate-900/90 border-b border-slate-200/70 dark:border-slate-800/70 select-none overflow-hidden">
         <div className="flex items-center justify-between">
@@ -298,10 +298,11 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
               <ChevronRight className="w-3 h-3" />
             </button>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             {displayAgents.map((agent) => {
               const isWorking = agent.status === 'thinking';
               const leisureState = leisureStates[agent.id];
+              const activityType = isWorking ? 'work' : (leisureState?.type || 'game');
               const activityLabel = isWorking
                 ? '处理中'
                 : leisureState?.type === 'gym'
@@ -310,11 +311,17 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
                     ? '低功耗待机'
                     : '待命巡检';
               return (
-                <div key={agent.id} className="flex items-center gap-1.5 group relative">
-                  <div className={`flex items-center gap-1 text-[11px] ${isWorking ? 'text-indigo-600 dark:text-indigo-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                    <span>{agent.name}</span>
-                    <span className="text-base leading-none">🐴</span>
-                    <span className="text-[10px] opacity-80">{activityLabel}</span>
+                <div key={agent.id} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border bg-white/85 dark:bg-slate-950/45 border-slate-200/80 dark:border-slate-800/80 group relative hover:-translate-y-0.5 hover:shadow-md transition-all">
+                  <div className="relative scale-[0.6] origin-right">
+                    {styleMode === 'emoji' ? (
+                      <HorseAgent agent={agent} activityType={activityType} />
+                    ) : (
+                      <HorseAgentV2 agent={agent} activityType={activityType} />
+                    )}
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[9px] font-semibold text-slate-700 dark:text-slate-300 leading-tight">{agent.name}</span>
+                    <span className={`text-[8px] font-medium ${isWorking ? 'text-indigo-500' : 'text-emerald-500'}`}>{activityLabel}</span>
                   </div>
                   <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-30 bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
                     {agent.name}: {isWorking ? '正在处理当前任务' : `当前${activityLabel}`}
