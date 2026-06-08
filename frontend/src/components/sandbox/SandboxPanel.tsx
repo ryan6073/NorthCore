@@ -225,8 +225,8 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-900/40 backdrop-blur-xl border-l border-slate-700/40 text-slate-200 overflow-hidden font-sans">
-      <div className="p-4 border-b border-slate-700/20 bg-slate-800/10 backdrop-blur-xl">
+    <div className="flex flex-col h-full bg-slate-900/80 backdrop-blur-2xl rounded-2xl border border-slate-800/60 text-slate-200 overflow-hidden font-sans shadow-2xl mx-2 my-2">
+      <div className="p-4 border-b border-slate-800/50 bg-slate-950/40">
         <div className="flex items-start justify-between">
           <div>
             <div className="flex items-center space-x-2">
@@ -296,7 +296,7 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
           </div>
         </div>
 
-        <div className="flex space-x-1 mt-4 p-1 bg-slate-800/30 backdrop-blur-lg rounded-xl border border-slate-700/30">
+        <div className="flex space-x-1 mt-4 p-1 bg-slate-800/50 backdrop-blur-lg rounded-xl border border-slate-700/40">
           <button
             onClick={() => setActiveTab('workflow')}
             className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === 'workflow'
@@ -388,7 +388,7 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
               </div>
             ) : (
               <>
-                <div className="p-4 border-b border-slate-800/60 bg-slate-950/20 max-h-[260px] overflow-y-auto flex-shrink-0 select-none">
+                <div className="p-4 border-b border-slate-800/50 bg-slate-950/40 max-h-[260px] overflow-y-auto flex-shrink-0 select-none">
               <div className="text-[11px] uppercase text-slate-500 font-bold tracking-wider mb-2">
                 {activeRun.dag?.strategy === 'platform_single_step'
                   ? '平台任务执行 (单步)'
@@ -543,9 +543,9 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                     <div
                       key={step.id}
                       onClick={() => setSelectedStepId(step.id)}
-                      className={`flex items-start space-x-3 p-3 rounded-xl border backdrop-blur-sm transition-all cursor-pointer ${isSelected
-                          ? 'border-indigo-500 bg-indigo-500/5 text-indigo-200'
-                          : 'border-slate-800 bg-slate-900/50 hover:bg-slate-800/40 text-slate-300'
+                      className={`flex items-start space-x-3 p-3 rounded-xl border transition-all cursor-pointer ${isSelected
+                          ? 'border-indigo-500/60 bg-indigo-500/10 text-indigo-200'
+                          : 'border-slate-800/60 bg-slate-900/60 hover:bg-slate-800/50 text-slate-300'
                         }`}
                     >
                       <div className="mt-0.5">{icon}</div>
@@ -573,8 +573,8 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
               </div>
             </div>
 
-            <div className="flex-1 flex flex-col min-h-0 bg-slate-900/20 backdrop-blur-sm rounded-xl border border-slate-700/20 mx-2 mb-2 overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700/20 bg-slate-800/10">
+            <div className="flex-1 flex flex-col min-h-0 bg-slate-950/60 backdrop-blur-lg rounded-xl border border-slate-800/50 mx-2 mb-2 overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800/50 bg-slate-900/40">
                 <div className="flex items-center space-x-2 text-xs text-slate-400 font-mono">
                   <Terminal className="w-3.5 h-3.5 text-indigo-400" />
                   <span>step-log: {selectedStep ? `${selectedStep.agentName}` : 'none'}</span>
@@ -593,7 +593,7 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                   );
                 })()}
               </div>
-              <div className="flex-1 overflow-auto p-3 font-mono text-xs text-slate-300 space-y-0.5 select-text selection:bg-indigo-500/30">
+              <div className="flex-1 overflow-auto p-3 font-mono text-xs text-slate-300 space-y-0.5 select-text selection:bg-indigo-500/30 bg-slate-950/30">
                 {selectedStep && (() => {
                   const errorText = selectedStep.error || '';
                   const status = selectedStep.status;
