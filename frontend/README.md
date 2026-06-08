@@ -2,8 +2,6 @@
 
 AgentHub Frontend 是 NorthCore 项目的 Web 前端，负责承载多智能体协作、会话聊天、Agent 管理、产物预览、沙箱运行、文件预览和工作区浏览等核心交互。项目使用 Vite + React + TypeScript 开发，样式体系基于 Tailwind CSS，状态管理使用 Zustand。
 
-这个前端既支持连接真实后端，也支持 Mock 模式。Mock 模式适合在后端不可用时进行界面开发、交互验证和预览能力调试。
-
 ## 技术栈
 
 | 类型 | 技术 |
@@ -65,19 +63,16 @@ npm run preview
 
 ```env
 VITE_API_BASE_URL=/api/v1
-VITE_USE_MOCK=false
 ```
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `VITE_API_BASE_URL` | `/api/v1` | 后端 API 基础路径。真实环境可配置为完整后端地址。 |
-| `VITE_USE_MOCK` | `false` | 是否启用 Mock 模式。设为 `true` 时使用前端内置模拟数据。 |
+| `VITE_API_BASE_URL` | `/api/v1` | 后端 API 基础路径。生产或联调环境可配置为完整后端地址。 |
 
 示例：
 
 ```env
 VITE_API_BASE_URL=https://example.com/api/v1
-VITE_USE_MOCK=true
 ```
 
 修改环境变量后需要重启开发服务器。
@@ -100,7 +95,6 @@ frontend
 │   │   ├── layout               # 主布局、侧边栏、标题栏、右侧面板
 │   │   ├── modal                # 弹窗组件
 │   │   └── sandbox              # 沙箱运行、部署状态、部署预览
-│   ├── mock                     # Mock 数据和模拟场景
 │   ├── services                 # HTTP、WebSocket 和业务服务
 │   │   ├── http                 # REST API 封装
 │   │   └── ws                   # WebSocket 客户端和流式消息处理
@@ -235,7 +229,6 @@ src/components/modal/ArtifactFullScreenModal.tsx
 ```text
 src/components/artifact/ArtifactPreview.tsx
 src/components/chat/MarkdownRenderer.tsx
-src/mock
 src/services/http/artifactService.ts
 ```
 
@@ -278,7 +271,6 @@ src/services/http/sandboxService.ts
 - 部署日志展示。
 - 部署结果预览。
 - HTML 预览链接展示。
-- Mock 模式下的沙箱场景模拟。
 
 ### 工作区
 
@@ -313,7 +305,6 @@ src/store/useDeploymentStore.ts
 
 - 当前用户。
 - 登录与退出。
-- Mock 模式切换。
 - Agent 列表。
 - 会话列表。
 - 当前会话。
@@ -413,37 +404,6 @@ src/types/index.ts
 - HTTP service 返回类型。
 - Store 中的数据结构。
 - 组件渲染逻辑。
-- Mock 数据。
-
-## Mock 模式
-
-Mock 模式用于本地开发和 UI 调试，不依赖真实后端。
-
-开启方式：
-
-```env
-VITE_USE_MOCK=true
-```
-
-Mock 数据位于：
-
-```text
-src/mock
-```
-
-主要文件：
-
-- `index.ts`：Agent、会话、消息、产物等基础 Mock 数据。
-- `sandboxMockData.ts`：沙箱运行、部署和文件场景。
-- `webSearchMockData.ts`：联网搜索相关模拟数据。
-
-修改 Mock 数据时要注意：
-
-- 中文内容必须直接写中文，不要写成 Unicode 转义。
-- 消息、产物、版本之间的 ID 要能对应。
-- `artifactId` 要能在产物列表中找到。
-- `version.artifactId` 要能对应到正确产物。
-- HTML、Markdown、Mermaid 内容要保持格式完整。
 
 ## API 文档
 
@@ -459,7 +419,7 @@ docs/api-contract.md
 docs/feature-design.md
 ```
 
-真实接口联调时建议优先确认：
+接口联调时建议优先确认：
 
 - API 基础路径是否正确。
 - 登录后是否写入 token。
@@ -507,8 +467,8 @@ docs/feature-design.md
 1. 在 `src/services/http` 中新增或更新对应 service。
 2. 在 `src/types` 中补充类型。
 3. 在 Store 或组件中调用 service。
-4. 如果支持 Mock 模式，同步补充 `src/mock` 数据。
-5. 检查真实模式和 Mock 模式是否都能运行。
+4. 检查接口返回结构和前端类型是否一致。
+5. 验证正常请求、错误响应和登录失效等场景。
 
 ### 新增一种产物预览
 
@@ -516,7 +476,7 @@ docs/feature-design.md
 2. 在 `ArtifactPreview.tsx` 中补充分支。
 3. 如果需要全屏预览，同步检查 `ArtifactFullScreenModal.tsx`。
 4. 如果产物来自消息，同步检查 `ArtifactMessage.tsx`。
-5. 为 Mock 模式补充对应产物和版本数据。
+5. 检查产物、版本和消息之间的 ID 对应关系。
 
 ### 修改消息展示逻辑
 
@@ -550,8 +510,7 @@ npx tsc --noEmit
 
 同时建议人工验证：
 
-- 登录真实模式。
-- 登录 Mock 模式。
+- 登录并进入主界面。
 - 新建单 Agent 会话。
 - 新建多 Agent 会话。
 - 发送普通文本消息。
@@ -576,22 +535,11 @@ vite.config.ts
 
 Vite 只会在启动时读取环境变量。修改 `.env.local` 后需要重启开发服务器。
 
-### 如何切换 Mock 模式？
+### 如何连接后端？
 
 在 `frontend/.env.local` 中设置：
 
 ```env
-VITE_USE_MOCK=true
-```
-
-然后重启开发服务器。
-
-### 如何连接真实后端？
-
-在 `frontend/.env.local` 中设置：
-
-```env
-VITE_USE_MOCK=false
 VITE_API_BASE_URL=https://example.com/api/v1
 ```
 
@@ -601,7 +549,7 @@ VITE_API_BASE_URL=https://example.com/api/v1
 VITE_API_BASE_URL=/api/v1
 ```
 
-### 真实模式登录后接口 401 怎么排查？
+### 登录后接口 401 怎么排查？
 
 优先检查：
 
@@ -641,7 +589,7 @@ src/components/modal/ArtifactFullScreenModal.tsx
 - 产物类型是否被识别为 HTML。
 - 版本内容是否是完整 HTML。
 - 预览组件是否使用 HTML 渲染分支。
-- Mock 数据中的 `artifactId` 和版本是否对应。
+- `artifactId` 和版本数据是否对应。
 
 ### Mermaid 没有渲染成图怎么办？
 
