@@ -1,11 +1,13 @@
 import React from 'react';
 import { Agent } from '@/types';
-import { Laptop, Gamepad2, Dumbbell, BedDouble, Monitor, X } from 'lucide-react';
+import { Laptop, Gamepad2, Dumbbell, BedDouble, Monitor, X, ChevronRight, ChevronDown } from 'lucide-react';
 
 interface AgentOfficePlaygroundProps {
   agents: Agent[];
   agentIds?: string[]; // Allowed agent IDs for the current conversation
   onClose?: () => void;
+  onToggle?: (mode: 'expanded' | 'collapsed') => void;
+  mode?: 'expanded' | 'collapsed';
 }
 
 // Horse-headed Man (马头人) character component
@@ -175,8 +177,9 @@ const HorseAgentV2: React.FC<{ agent: Agent; activityType: 'work' | 'game' | 'gy
   );
 };
 
-export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ agents, agentIds, onClose }) => {
+export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ agents, agentIds, onClose, onToggle, mode = 'expanded' }) => {
   const styleMode: 'emoji' = 'emoji';
+  const isCollapsed = mode === 'collapsed';
 
   // Filter agents by the active conversation's assigned agents
   const displayAgents = agentIds && agentIds.length > 0
@@ -274,6 +277,54 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
     }
   });
 
+  const handleToggle = () => {
+    const next = isCollapsed ? 'expanded' : 'collapsed';
+    onToggle?.(next);
+  };
+
+  if (isCollapsed) {
+    // 收起态：只显示 Agent 状态圆点，一行排列
+    return (
+      <div className="w-full px-4 py-2 bg-white/90 dark:bg-slate-900/90 border-b border-slate-200/70 dark:border-slate-800/70 select-none overflow-hidden">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleToggle}
+              className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+              title="展开办公室"
+            >
+              <Monitor className="w-3.5 h-3.5" />
+              智能体办公室
+              <ChevronRight className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {displayAgents.map((agent) => (
+              <div
+                key={agent.id}
+                className="relative group"
+              >
+                <div
+                  className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white transition-all ${
+                    agent.status === 'thinking'
+                      ? 'bg-indigo-500 shadow-[0_0_6px_rgba(99,102,241,0.5)]'
+                      : 'bg-emerald-500/80'
+                  }`}
+                  title={`${agent.name}: ${agent.status === 'thinking' ? '工作中' : '待命中'}`}
+                >
+                  {agent.name.charAt(0)}
+                </div>
+                <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-white dark:border-slate-900"
+                  style={{ backgroundColor: agent.status === 'thinking' ? '#6366f1' : '#10b981' }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full p-4 bg-white/90 dark:bg-slate-900/90 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 shadow-[0_18px_45px_rgba(15,23,42,0.08)] dark:shadow-[0_18px_45px_rgba(0,0,0,0.22)] mb-3 select-none animate-slide-down overflow-hidden relative">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-gradient-to-b from-indigo-50/80 via-cyan-50/30 to-transparent dark:from-indigo-950/30 dark:via-cyan-950/10" />
@@ -327,7 +378,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
         .v2-character * {
           transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
         }
-        
+
         /* State Positions Default (Constant Attachments) */
         .v2-character .head-joint {
           left: 18px;
@@ -393,7 +444,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
         }
         .v2-character.work .torso-joint {
           transform: rotate(8deg);
-          background-color: #3b82f6; /* Corporate suit blue */
+          background-color: #3b82f6;
         }
         .v2-character.work .arm-left {
           transform: rotate(-60deg);
@@ -409,8 +460,6 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
         .v2-character.work .leg-right {
           transform: rotate(80deg) translate(2px, -3px);
         }
-
-        /* 2. Gym State Posture */
         .v2-character.gym {
           transform: translate(-4px, -1px);
         }
@@ -432,8 +481,6 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
         .v2-character.gym .leg-right {
           animation: v2-running-leg-alt 0.38s infinite linear;
         }
-
-        /* 3. Game State Posture */
         .v2-character.game {
           transform: translate(0px, 2px);
         }
@@ -457,8 +504,6 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
         .v2-character.game .leg-right {
           transform: rotate(75deg) translate(1px, -2px);
         }
-
-        /* 4. Sleep State Posture */
         .v2-character.sleep {
           transform: translate(4px, 10px) rotate(-90deg);
           animation: v2-breathing 2s infinite ease-in-out;
@@ -481,8 +526,6 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
         .v2-character.sleep .leg-right {
           transform: rotate(-2deg);
         }
-
-        /* V2 keyframes animations */
         @keyframes v2-typing {
           0% { transform: rotate(-55deg) translateY(-0.5px); }
           100% { transform: rotate(-65deg) translateY(0.5px); }
@@ -531,16 +574,25 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
 
       {/* Header Info */}
       <div className="relative flex items-center justify-between mb-4 pb-3 border-b border-slate-200/70 dark:border-slate-800/70">
-        <div className="min-w-0">
-          <h3 className="text-sm font-extrabold text-slate-850 dark:text-slate-100 flex items-center gap-2 font-sans tracking-tight">
-            <span className="w-7 h-7 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/20">
-              <Monitor className="w-3.5 h-3.5" />
-            </span>
-            智能体办公室
-          </h3>
-          <p className="text-[10px] text-slate-500 dark:text-slate-450 mt-1">
-            实时查看当前会话成员的工作、等待和休息状态
-          </p>
+        <div className="min-w-0 flex items-center gap-3">
+          <button
+            onClick={handleToggle}
+            className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-650 dark:hover:text-slate-200 transition-colors"
+            title="收起办公室"
+          >
+            <ChevronDown className="w-3.5 h-3.5" />
+          </button>
+          <div>
+            <h3 className="text-sm font-extrabold text-slate-850 dark:text-slate-100 flex items-center gap-2 font-sans tracking-tight">
+              <span className="w-7 h-7 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                <Monitor className="w-3.5 h-3.5" />
+              </span>
+              智能体办公室
+            </h3>
+            <p className="text-[10px] text-slate-500 dark:text-slate-450 mt-1">
+              实时查看当前会话成员的工作、等待和休息状态
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <div className="hidden sm:flex items-center gap-1.5 text-[10px] font-semibold">
@@ -552,7 +604,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
             </span>
           </div>
           {onClose && (
-            <button 
+            <button
               onClick={onClose}
               className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-650 dark:hover:text-slate-200 transition-colors"
               title="隐藏办公室"
@@ -573,35 +625,30 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
           </div>
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-2.5">
             {deskAssignments.map((assignedAgent, deskIndex) => (
-              <div 
+              <div
                 key={deskIndex}
                 className={`relative flex flex-col items-center justify-center p-2.5 rounded-xl border text-center transition-all ${
-                  assignedAgent 
-                    ? 'bg-indigo-50/40 dark:bg-indigo-950/10 border-indigo-200 dark:border-indigo-900/40 animate-office-glow' 
+                  assignedAgent
+                    ? 'bg-indigo-50/40 dark:bg-indigo-950/10 border-indigo-200 dark:border-indigo-900/40 animate-office-glow'
                     : 'bg-slate-100/30 dark:bg-slate-950/20 border-slate-200/50 dark:border-slate-800/30 border-dashed'
                 }`}
               >
-                {/* Desk Label */}
                 <span className="absolute top-1.5 left-2 text-[8px] font-semibold text-slate-400 select-none">
                   #{deskIndex + 1}
                 </span>
 
                 {assignedAgent ? (
                   <div className="flex flex-col items-center gap-1.5 mt-2">
-                    {/* Horse-headed Man with Dynamic/Emoji postures */}
                     <div className="relative group">
                       {styleMode === 'emoji' ? (
                         <HorseAgent agent={assignedAgent} activityType="work" />
                       ) : (
                         <HorseAgentV2 agent={assignedAgent} activityType="work" />
                       )}
-                      
-                      {/* Interactive hover tooltip */}
                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-30 bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
                         {assignedAgent.name}: 正在处理当前任务
                       </div>
                     </div>
-                    {/* Laptop Screen Indicator */}
                     <div className="flex items-center gap-1 text-[8px] font-semibold text-indigo-600 dark:text-indigo-400 font-sans px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/40">
                       <Laptop className="w-2.5 h-2.5 text-indigo-500 animate-pulse" />
                       处理中
@@ -624,7 +671,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
             待命与休息区
           </div>
-          
+
           {leisureAgents.length === 0 ? (
             <p className="text-[9px] text-slate-400 dark:text-slate-550 text-center py-2 italic font-medium">
               所有智能体都在工作区处理任务
@@ -642,11 +689,10 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
                 const ActivityIcon = activity.icon;
 
                 return (
-                  <div 
+                  <div
                     key={agent.id}
                     className="flex items-center gap-2 p-2 bg-white/85 dark:bg-slate-950/45 border border-slate-200/80 dark:border-slate-850 rounded-xl shadow-sm group relative hover:-translate-y-0.5 hover:shadow-md transition-all"
                   >
-                    {/* Horse-headed Man with specific leisure activity */}
                     <div className="relative">
                       {styleMode === 'emoji' ? (
                         <HorseAgent agent={agent} activityType={activity.type} />
@@ -663,7 +709,6 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
                       </span>
                     </div>
 
-                    {/* Interactive hover status balloon */}
                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-30 bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
                       {agent.name} 当前{activity.label}，已持续 {state.seconds} 秒
                     </div>
