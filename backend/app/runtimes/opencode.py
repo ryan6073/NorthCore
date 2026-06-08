@@ -22,6 +22,7 @@ from app.runtimes.cli_utils import (
 from app.services.platform_runtime_context_service import (
     build_platform_runtime_context,
     platform_output_requests_clarification,
+    platform_runtime_allows_workspace_write,
     platform_step_needs_write,
     validate_platform_runtime_permissions,
 )
@@ -365,14 +366,43 @@ class OpenCodeRuntimeAdapter(RuntimeAdapter):
             result = await self._run_opencode(agent, sandbox["workspacePath"], context_payload["prompt"])
             display_output = result["text"] or result["stdout"]
             logs = f"$ {' '.join(result['command'])}\n{display_output}\n{result['stderr']}".strip()
+            allow_write = platform_runtime_allows_workspace_write(agent, run, step)
             sync_result = sync_platform_workspace_changes(
                 sandbox,
                 run_id,
                 snapshot,
                 created_by_step_id=step["id"],
+                allow_write=allow_write,
             )
             synced_files = sync_result["files"]
             conflicts = sync_result["conflicts"]
+            rejected_files = sync_result.get("rejectedFiles") or []
+            skipped_files = sync_result.get("skippedFiles") or []
+            if sync_result.get("writeRejected"):
+                error = "只读 platform runtime 产生了 workspace 修改，已拒绝提交"
+                update_agent_run_step(
+                    step["id"],
+                    status="failed",
+                    output={
+                        "runtime": "opencode",
+                        "command": result["command"],
+                        "text": result["text"],
+                        "files": synced_files,
+                        "rejectedFiles": rejected_files,
+                        "skippedFiles": skipped_files,
+                        "agenthubContext": context_payload["metadata"],
+                    },
+                    append_log=f"{logs}\n{error}",
+                    error=error,
+                    mark_finished=True,
+                    runtime_metadata={
+                        "opencode": result,
+                        **context_payload["metadata"],
+                        "workspaceSnapshotId": sync_result.get("snapshotId"),
+                    },
+                )
+                await send("run.step.failed", {"runId": run_id, "stepId": step["id"], "error": error, "rejectedFiles": rejected_files})
+                return True
             if conflicts:
                 update_agent_run_step(
                     step["id"],
@@ -383,6 +413,7 @@ class OpenCodeRuntimeAdapter(RuntimeAdapter):
                         "text": result["text"],
                         "files": synced_files,
                         "conflicts": conflicts,
+                        "skippedFiles": skipped_files,
                         "agenthubContext": context_payload["metadata"],
                     },
                     append_log=logs,
@@ -415,6 +446,7 @@ class OpenCodeRuntimeAdapter(RuntimeAdapter):
                     "command": result["command"],
                     "text": result["text"],
                     "files": synced_files,
+                    "skippedFiles": skipped_files,
                     "agenthubContext": context_payload["metadata"],
                 },
                 append_log=logs,

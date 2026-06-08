@@ -266,8 +266,9 @@ async def api_send_message(
     execution_decision = maybe_force_attachment_chat(content, attachments, execution_decision)
     if execution_decision["executionMode"] == "deployment":
         deploy_agent_id = target_agent.get("id") if target_agent else target_agent_id
-        if not conversation_allows_agent_tool(conversation, "deploy.run", deploy_agent_id):
-            status_content = "当前 Agent 未启用 deploy.run，不能发起部署。"
+        deploy_agent_selection = resolve_deploy_agent_for_conversation(conversation, deploy_agent_id)
+        if not deploy_agent_selection.get("ok"):
+            status_content = deploy_agent_selection.get("error") or "当前 Agent 未启用 deploy.run，不能发起部署。"
             status_message = create_message(
                 conversation_id=conversation_id,
                 sender_id="system",
@@ -279,6 +280,7 @@ async def api_send_message(
                     "event": "agent.tool.rejected",
                     "requiredTool": "deploy.run",
                     "executionMode": "deployment",
+                    "reason": deploy_agent_selection.get("reason"),
                 },
             )
             agent_messages.append(status_message)
@@ -324,7 +326,10 @@ async def api_send_message(
             workspace_id=workspace["id"],
             owner_user_id=current_user["id"],
             conversation_id=conversation_id,
-            config=payload.get("deploymentConfig") if isinstance(payload.get("deploymentConfig"), dict) else {},
+            config={
+                **(payload.get("deploymentConfig") if isinstance(payload.get("deploymentConfig"), dict) else {}),
+                **deployment_agent_metadata(deploy_agent_selection),
+            },
             public_base_url=str(payload.get("publicBaseUrl") or request_base_url_from_request(request)).rstrip("/"),
             chat_deployment=True,
         )

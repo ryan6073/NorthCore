@@ -52,6 +52,35 @@ def run_allowed_agent_ids(conversation: Dict[str, Any]) -> List[str]:
     return [fallback["id"]] if fallback else ["agent-claude-code"]
 
 
+def _sandbox_workspace_read_error(
+    conversation: Dict[str, Any],
+    selected_runtime_agent: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    if conversation.get("mode") == "group":
+        selected_agent_id = str((selected_runtime_agent or {}).get("id") or "").strip()
+        if selected_agent_id and selected_agent_id != ORCHESTRATOR_AGENT_ID:
+            if agent_has_tool(selected_runtime_agent, "workspace.read"):
+                return None
+            selected_name = (selected_runtime_agent or {}).get("name") or selected_agent_id
+            return f"{selected_name} 未启用 workspace.read，不能创建工作区沙箱任务"
+
+        readable_members: List[Dict[str, Any]] = []
+        for agent_id in run_allowed_agent_ids(conversation):
+            if agent_id == ORCHESTRATOR_AGENT_ID:
+                continue
+            agent = get_effective_agent_for_conversation(conversation, agent_id)
+            if agent_is_callable(agent) and agent_has_tool(agent, "workspace.read"):
+                readable_members.append(agent)
+        if readable_members:
+            return None
+        return "群聊中没有启用 workspace.read 的可执行成员 Agent，不能创建工作区沙箱任务"
+
+    if agent_has_tool(selected_runtime_agent, "workspace.read"):
+        return None
+    selected_name = (selected_runtime_agent or {}).get("name") or "当前 Agent"
+    return f"{selected_name} 未启用 workspace.read，不能创建工作区沙箱任务"
+
+
 def _render_planning_message(message: Dict[str, Any]) -> str:
     role = "用户" if message.get("role") == "user" else str(message.get("senderName") or "Agent")
     content = str(message.get("content") or "").strip()
@@ -321,6 +350,74 @@ async def recover_orphaned_finished_run(
     return get_agent_run_detail(run_id, owner_user_id=owner_user_id)
 
 
+async def cancel_retry_chain_for_run(
+    current_user: Dict[str, Any],
+    run_id: str,
+) -> Dict[str, Any]:
+    detail = get_agent_run_detail(run_id, owner_user_id=current_user["id"])
+    if not detail:
+        raise ValueError("Run 不存在")
+    retry_root_run_id = retry_root_run_id_for_run(detail)
+    runs = list_agent_runs_for_retry_chain(retry_root_run_id, owner_user_id=current_user["id"])
+    if not runs:
+        runs = [detail]
+    sandbox_service = SandboxService()
+    cancelled_run_ids: List[str] = []
+    stopped_sandbox_ids: List[str] = []
+    released_locks: List[Dict[str, Any]] = []
+    locks_to_release: List[Dict[str, Any]] = []
+
+    for run in runs:
+        metadata = run.get("runtimeMetadata") if isinstance(run.get("runtimeMetadata"), dict) else {}
+        next_metadata = {
+            **metadata,
+            "retryRootRunId": retry_root_run_id,
+            "retryChainCancelled": True,
+            "autoRetryCancelled": True,
+            "cancelledByRunId": run_id,
+        }
+        update_agent_run(
+            run["id"],
+            status="cancelled",
+            summary="用户已取消",
+            mark_finished=True,
+            queued_reason="",
+            runtime_metadata=next_metadata,
+        )
+        cancelled_run_ids.append(run["id"])
+
+        sandbox = get_sandbox(run.get("sandboxId"), owner_user_id=current_user["id"]) if run.get("sandboxId") else None
+        if sandbox:
+            await sandbox_service.stop_container(sandbox["id"], sandbox.get("containerId"))
+            update_sandbox(sandbox["id"], status="cancelled")
+            stopped_sandbox_ids.append(sandbox["id"])
+
+        if run.get("runMode") in {"write", "deploy"} and run.get("workspaceId") and run.get("lockFencingToken"):
+            locks_to_release.append(run)
+
+    for run in locks_to_release:
+        release_result = release_workspace_mutation_lock(
+            run["workspaceId"],
+            "run",
+            run["id"],
+            int(run.get("lockFencingToken") or 0),
+        )
+        if release_result.get("released"):
+            update_agent_run(run["id"], queued_reason="", lock_owner_id="", lock_fencing_token=0)
+            released_locks.append(release_result)
+            await schedule_next_workspace_mutation_owner(release_result.get("nextOwner"))
+
+    return {
+        "run": get_agent_run_detail(run_id, owner_user_id=current_user["id"]) or detail,
+        "retryRootRunId": retry_root_run_id,
+        "cancelledRunIds": cancelled_run_ids,
+        "stoppedSandboxIds": stopped_sandbox_ids,
+        "releasedLocks": released_locks,
+        "status": "cancelled",
+        "autoRetryCancelled": True,
+    }
+
+
 def _restore_rollback_changes_to_workspace(
     sandbox: Optional[Dict[str, Any]],
     changes: List[Dict[str, Any]],
@@ -361,10 +458,11 @@ def rollback_run_workspace_changes(
 
     changes = rollback_sandbox_files_for_run(run_id)
     rollback_changes = _restore_rollback_changes_to_workspace(run.get("sandbox"), changes)
+    artifact_changes = rollback_artifacts_for_run(run_id)
     if run.get("workspaceId"):
         mark_workspace_index_stale(
             run["workspaceId"],
-            "Run 文件改动已撤销",
+            "Run 文件与产物改动已撤销",
             last_run_id=run_id,
         )
     update_agent_run(
@@ -381,6 +479,8 @@ def rollback_run_workspace_changes(
     return {
         "run": detail,
         "rollbackChanges": rollback_changes,
+        "artifactChanges": artifact_changes,
+        "artifacts": list_artifacts_for_run(run_id),
     }
 
 
@@ -662,6 +762,8 @@ async def retry_agent_run(
         raise ValueError("原 Run 所属会话不存在")
     original_metadata = original_run.get("runtimeMetadata") if isinstance(original_run.get("runtimeMetadata"), dict) else {}
     root_run_id = str(original_metadata.get("retryRootRunId") or original_run.get("id") or "").strip()
+    if retry_chain_cancelled(root_run_id, owner_user_id=current_user["id"]):
+        raise ValueError("自动重试链路已取消")
     current_attempt = max(0, _safe_int(original_metadata.get("retryAttempt"), 0))
     next_attempt = current_attempt + 1
     retry_limit = max_retry_attempts or settings.SANDBOX_AUTO_RETRY_MAX_ATTEMPTS
@@ -948,8 +1050,6 @@ async def create_run_for_conversation(
     conversation = get_conversation(conversation_id, owner_user_id=current_user["id"])
     if not conversation:
         raise ValueError("会话不存在")
-    if conversation.get("mode") == "agent":
-        raise ValueError("Agent 联系人会话不支持沙箱任务，请创建 single/group 会话并选择工作区")
     if conversation.get("mode") not in {"agent", "single", "group"}:
         raise ValueError("Sandbox Run 仅支持 agent、single 或 group 会话")
     if conversation.get("mode") in {"agent", "single"} and not choose_agent_for_conversation(conversation):
@@ -999,8 +1099,9 @@ async def create_run_for_conversation(
     existing_run = get_agent_run(existing_run_id, owner_user_id=current_user["id"]) if existing_run_id else None
     run_id = existing_run["id"] if existing_run else create_id("run")
     selected_runtime_agent = runtime_agent or choose_agent_for_conversation(conversation)
-    if not agent_has_tool(selected_runtime_agent, "workspace.read"):
-        raise ValueError("当前 Agent 未启用 workspace.read，不能创建工作区沙箱任务")
+    workspace_read_error = _sandbox_workspace_read_error(conversation, selected_runtime_agent)
+    if workspace_read_error:
+        raise ValueError(workspace_read_error)
     run_runtime_metadata = {
         **run_runtime_metadata,
         "queuePayload": payload,

@@ -113,6 +113,18 @@ def validate_platform_runtime_permissions(
     return None
 
 
+def platform_runtime_allows_workspace_write(
+    agent: Optional[Dict[str, Any]],
+    run: Dict[str, Any],
+    step: Dict[str, Any],
+) -> bool:
+    return (
+        str(run.get("runMode") or run.get("run_mode") or "").lower() != "read"
+        and platform_step_needs_write(step, run)
+        and agent_has_tool(agent, "platform.runtime_write")
+    )
+
+
 def _conversation_history_section(conversation_id: str, exclude_ids: Optional[set[str]] = None) -> List[str]:
     exclude_ids = exclude_ids or set()
     messages = [

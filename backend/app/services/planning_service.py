@@ -4,10 +4,9 @@ from typing import Any, Dict, List, Optional
 from app.core.orchestrator import AGENT_CONFIGS
 from app.database import (
     ORCHESTRATOR_AGENT_ID,
-    get_agent,
-    get_conversation_agent_config,
 )
 from app.runtimes.router import runtime_router
+from app.services.conversation_agent_config_service import get_effective_agent_for_conversation
 from app.services.intent_service import planner_agent_for_conversation
 from app.services.run_scheduler import normalize_dag
 
@@ -50,18 +49,7 @@ def _effective_agent_for_conversation(
     conversation: Dict[str, Any],
     agent_id: str,
 ) -> Optional[Dict[str, Any]]:
-    owner_user_id = conversation.get("ownerUserId")
-    if (
-        conversation.get("mode") == "group"
-        and agent_id != ORCHESTRATOR_AGENT_ID
-        and agent_id in conversation.get("agentIds", [])
-    ):
-        return get_conversation_agent_config(
-            conversation["id"],
-            agent_id,
-            owner_user_id=owner_user_id,
-        )
-    return get_agent(agent_id, owner_user_id=owner_user_id)
+    return get_effective_agent_for_conversation(conversation, agent_id)
 
 
 def _callable_agent_ids(conversation: Dict[str, Any]) -> List[str]:

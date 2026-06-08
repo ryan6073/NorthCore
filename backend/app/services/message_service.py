@@ -15,6 +15,9 @@ from app.database import *
 from app.model_providers.service import create_openai_client_for_agent, model_name_for_agent, validate_model_config_for_runtime
 from app.runtimes.router import runtime_router
 from app.services.agent_tool_catalog_service import agent_has_tool, normalize_agent_tools
+from app.services.conversation_agent_config_service import (
+    get_effective_agent_for_conversation as resolve_conversation_agent_config,
+)
 from app.services.attachment_context_service import (
     append_attachment_context_to_input,
     attachment_read_only_intent,
@@ -226,6 +229,14 @@ CONVERSATION_AGENT_IDENTITY_FIELDS = {
     "overrideSource",
     "systemPromptSource",
 }
+CONVERSATION_AGENT_RESPONSE_ONLY_FIELDS = {
+    *CONVERSATION_AGENT_IDENTITY_FIELDS,
+    "configScope",
+    "readonly",
+    "fallbackBaseOverrideSource",
+    "requiresWorkspace",
+    "supportsContactConversation",
+}
 
 
 def find_sensitive_model_config_key(value: Any, path: str = "modelConfig") -> Optional[str]:
@@ -334,9 +345,11 @@ def sanitize_conversation_agent_config_payload(
     existing_agent: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     payload = sanitize_agent_payload(payload)
-    blocked_fields = sorted(key for key in payload if key in CONVERSATION_AGENT_IDENTITY_FIELDS)
-    if blocked_fields:
-        return None, f"会话级 Agent 配置不允许修改身份字段: {', '.join(blocked_fields)}"
+    payload = {
+        key: value
+        for key, value in payload.items()
+        if key not in CONVERSATION_AGENT_RESPONSE_ONLY_FIELDS
+    }
     unsupported_fields = sorted(key for key in payload if key not in CONVERSATION_AGENT_CONFIG_FIELDS)
     if unsupported_fields:
         return None, f"会话级 Agent 配置包含不支持字段: {', '.join(unsupported_fields)}"
@@ -383,18 +396,7 @@ def get_effective_agent_for_conversation(
     conversation: Dict[str, Any],
     agent_id: str,
 ) -> Optional[Dict[str, Any]]:
-    owner_user_id = conversation.get("ownerUserId")
-    if (
-        conversation.get("mode") == "group"
-        and agent_id != ORCHESTRATOR_AGENT_ID
-        and agent_id in conversation.get("agentIds", [])
-    ):
-        return get_conversation_agent_config(
-            conversation["id"],
-            agent_id,
-            owner_user_id=owner_user_id,
-        )
-    return get_agent(agent_id, owner_user_id=owner_user_id)
+    return resolve_conversation_agent_config(conversation, agent_id)
 
 
 def choose_agent_for_conversation(conversation: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -475,6 +477,106 @@ def conversation_allows_agent_tool(
     if conversation.get("mode") == "group":
         return False
     return agent_has_tool(choose_agent_for_conversation(conversation), tool_id)
+
+
+def resolve_deploy_agent_for_conversation(
+    conversation: Dict[str, Any],
+    target_agent_id: Optional[str] = None,
+    allow_single_candidate_fallback: bool = False,
+) -> Dict[str, Any]:
+    requested_agent_id = str(target_agent_id or "").strip()
+    if requested_agent_id:
+        if requested_agent_id == ORCHESTRATOR_AGENT_ID:
+            return {
+                "ok": False,
+                "error": "Orchestrator 是系统协调器，不能直接发起部署。请指定一个启用 deploy.run 的成员 Agent。",
+                "reason": "orchestrator_not_executable",
+            }
+        target_agent = choose_target_agent(conversation, requested_agent_id)
+        if not target_agent:
+            return {
+                "ok": False,
+                "error": "指定的 Agent 不存在或不可用，不能发起部署。",
+                "reason": "target_agent_unavailable",
+            }
+        if not agent_has_tool(target_agent, "deploy.run"):
+            if allow_single_candidate_fallback and conversation.get("mode") == "group":
+                candidates = [
+                    agent
+                    for agent in callable_group_member_agents(conversation)
+                    if str(agent.get("id") or "") != requested_agent_id and agent_has_tool(agent, "deploy.run")
+                ]
+                if len(candidates) == 1:
+                    return {
+                        "ok": True,
+                        "agent": candidates[0],
+                        "selectionMode": "auto_single",
+                        "requestedAgentId": requested_agent_id,
+                        "fallbackReason": "requested_agent_missing_deploy_tool",
+                    }
+            return {
+                "ok": False,
+                "error": f"{target_agent.get('name') or '当前 Agent'} 未启用 deploy.run，不能发起部署。",
+                "reason": "target_agent_missing_deploy_tool",
+                "agent": target_agent,
+            }
+        return {
+            "ok": True,
+            "agent": target_agent,
+            "selectionMode": "explicit",
+        }
+
+    if conversation.get("mode") == "group":
+        candidates = [
+            agent
+            for agent in callable_group_member_agents(conversation)
+            if agent_has_tool(agent, "deploy.run")
+        ]
+        if not candidates:
+            return {
+                "ok": False,
+                "error": "群聊中没有启用 deploy.run 的可执行成员 Agent，不能发起部署。",
+                "reason": "no_group_deploy_agent",
+            }
+        if len(candidates) > 1:
+            return {
+                "ok": False,
+                "error": "群聊中有多个启用 deploy.run 的成员 Agent，请指定一个后再部署。",
+                "reason": "multiple_group_deploy_agents",
+                "candidates": candidates,
+            }
+        return {
+            "ok": True,
+            "agent": candidates[0],
+            "selectionMode": "auto_single",
+        }
+
+    agent = choose_agent_for_conversation(conversation)
+    if not agent or not agent_has_tool(agent, "deploy.run"):
+        return {
+            "ok": False,
+            "error": "当前 Agent 未启用 deploy.run，不能发起部署。",
+            "reason": "agent_missing_deploy_tool",
+            "agent": agent,
+        }
+    return {
+        "ok": True,
+        "agent": agent,
+        "selectionMode": "explicit",
+    }
+
+
+def deployment_agent_metadata(selection: Dict[str, Any]) -> Dict[str, Any]:
+    agent = selection.get("agent") if isinstance(selection, dict) else None
+    if not agent:
+        return {}
+    return {
+        "deploymentAgentId": agent.get("id"),
+        "deploymentAgentName": agent.get("name"),
+        "deploymentAgentSelection": selection.get("selectionMode") or "unknown",
+        "requestedDeploymentAgentId": selection.get("requestedAgentId"),
+        "deploymentAgentFallbackReason": selection.get("fallbackReason"),
+    }
 
 
 def agent_messages_allow_tool(
@@ -3139,8 +3241,9 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
     )
     if execution_decision["executionMode"] == "deployment":
         deploy_agent_id = target_agent.get("id") if target_agent else target_agent_id
-        if not conversation_allows_agent_tool(conversation, "deploy.run", deploy_agent_id):
-            status_content = "当前 Agent 未启用 deploy.run，不能发起部署。"
+        deploy_agent_selection = resolve_deploy_agent_for_conversation(conversation, deploy_agent_id)
+        if not deploy_agent_selection.get("ok"):
+            status_content = deploy_agent_selection.get("error") or "当前 Agent 未启用 deploy.run，不能发起部署。"
             status_message = create_message(
                 conversation_id=conversation_id,
                 sender_id="system",
@@ -3152,6 +3255,7 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
                     "event": "agent.tool.rejected",
                     "requiredTool": "deploy.run",
                     "executionMode": "deployment",
+                    "reason": deploy_agent_selection.get("reason"),
                 },
             )
             completed_messages.append(status_message)
@@ -3232,7 +3336,10 @@ async def handle_ws_message_create(websocket: WebSocket, event: Dict[str, Any], 
             workspace_id=workspace["id"],
             owner_user_id=current_user["id"],
             conversation_id=conversation_id,
-            config=data.get("deploymentConfig") if isinstance(data.get("deploymentConfig"), dict) else {},
+            config={
+                **(data.get("deploymentConfig") if isinstance(data.get("deploymentConfig"), dict) else {}),
+                **deployment_agent_metadata(deploy_agent_selection),
+            },
             public_base_url=explicit_public_base_url,
             chat_deployment=True,
             on_message=deployment_message_callback,
