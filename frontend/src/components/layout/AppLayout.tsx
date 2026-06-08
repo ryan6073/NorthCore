@@ -217,7 +217,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
         className={`
           h-full min-w-0 overflow-hidden border-l border-lark-border dark:border-[#161828] bg-lark-sidebar-bg dark:bg-[#090a12] transition-transform duration-300 lg:transition-none
           fixed lg:relative top-0 bottom-0 right-0 z-50 lg:z-auto
-          w-[320px] max-w-[90vw] lg:max-w-none lg:w-[var(--right-aside-width)] lg:flex-[0_0_var(--right-aside-width)] lg:min-w-[320px] lg:max-w-[700px]
+          w-[320px] max-w-[90vw] lg:max-w-none lg:w-[var(--right-aside-width)] lg:flex-[0_0_var(--right-aside-width)] lg:min-w-[420px] lg:max-w-[700px]
           ${isRightOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}
         `}
       >

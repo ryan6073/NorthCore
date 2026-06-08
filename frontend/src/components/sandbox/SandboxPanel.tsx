@@ -314,66 +314,50 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
         <div className="flex space-x-1 mt-4 p-1 bg-slate-800/50 backdrop-blur-lg rounded-xl border border-slate-700/40">
           <button
             onClick={() => setActiveTab('workflow')}
-            className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === 'workflow'
+            className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap ${activeTab === 'workflow'
                 ? 'bg-slate-800 text-indigo-400 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
               }`}
           >
-            <Terminal className="w-3.5 h-3.5 mr-1" />
-            步骤 & 日志
+            <Terminal className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>步骤 & 日志</span>
           </button>
           <button
             onClick={() => setActiveTab('files')}
-            className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === 'files'
+            className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap ${activeTab === 'files'
                 ? 'bg-slate-800 text-indigo-400 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
               }`}
           >
-            <FileText className="w-3.5 h-3.5 mr-1" />
-            生成文件
+            <FileText className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>生成文件</span>
             {runFiles.length > 0 && (
-              <span className="ml-1 px-1.5 py-0.2 rounded-full bg-slate-700 text-slate-300 text-[10px]">
+              <span className="px-1.5 py-0.2 rounded-full bg-slate-700 text-slate-300 text-[10px] flex-shrink-0">
                 {runFiles.length}
               </span>
             )}
           </button>
-          {/* 冲突合并暂时隐藏 */}
-          {/* <button
-            onClick={() => setActiveTab('conflicts')}
-            className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all relative ${activeTab === 'conflicts'
-                ? 'bg-slate-800 text-indigo-400 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-              }`}
-          >
-            <GitMerge className="w-3.5 h-3.5 mr-1" />
-            冲突合并
-            {openConflictsCount > 0 && (
-              <span className="ml-1 px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] animate-pulse">
-                {openConflictsCount}
-              </span>
-            )}
-          </button> */}
           {workspaceId && (
             <button
               onClick={() => setActiveTab('deployment')}
-              className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === 'deployment'
+              className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap ${activeTab === 'deployment'
                   ? 'bg-slate-800 text-indigo-400 shadow-sm'
                   : 'text-slate-400 hover:text-slate-200'
                 }`}
             >
-              <Globe className="w-3.5 h-3.5 mr-1" />
-              一键部署
+              <Globe className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>一键部署</span>
             </button>
           )}
           <button
             onClick={() => setActiveTab('debug')}
-            className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === 'debug'
+            className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md text-xs font-medium transition-all whitespace-nowrap ${activeTab === 'debug'
                 ? 'bg-slate-800 text-indigo-400 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
               }`}
           >
-            <Network className="w-3.5 h-3.5 mr-1" />
-            通信调试
+            <Network className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>通信调试</span>
           </button>
         </div>
       </div>
