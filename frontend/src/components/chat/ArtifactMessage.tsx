@@ -57,8 +57,8 @@ const ArtifactMessage: React.FC<ArtifactMessageProps> = ({ message }) => {
 
   // 2. Try to get version from conversationArtifacts matching runId / versionMetadata
   if (resolvedVersion === undefined && sourceRunId) {
-    const matchedArt = conversationArtifacts.find(a => 
-      (a.id === message.artifactId || a.artifactId === message.artifactId) && 
+    const matchedArt = conversationArtifacts.find(a =>
+      (a.id === message.artifactId || a.artifactId === message.artifactId) &&
       (a.runId === sourceRunId || (a as any).versionMetadata?.sourceRunId === sourceRunId)
     );
     if (matchedArt) {
@@ -69,8 +69,8 @@ const ArtifactMessage: React.FC<ArtifactMessageProps> = ({ message }) => {
   // 3. Try to search in versions history list in store
   if (resolvedVersion === undefined && sourceRunId && message.artifactId) {
     const versions = useAgentHubStore.getState().artifactVersions[message.artifactId] || [];
-    const matchedVer = versions.find((v: any) => 
-      v.metadata?.sourceRunId === sourceRunId || 
+    const matchedVer = versions.find((v: any) =>
+      v.metadata?.sourceRunId === sourceRunId ||
       v.sourceRunId === sourceRunId ||
       v.metadata?.runId === sourceRunId
     );
@@ -79,19 +79,14 @@ const ArtifactMessage: React.FC<ArtifactMessageProps> = ({ message }) => {
     }
   }
 
-  // 4. Try to parse version from message content (e.g., "更新产物 xxx 到 v7" or "新版本 v2" or "生成产物 xxx")
-  if (resolvedVersion === undefined && message.content) {
-    const match = message.content.match(/(?:到\s*v|新版本\s*v)(\d+)/i);
-    if (match) {
-      resolvedVersion = parseInt(match[1], 10);
-    } else if (message.content.includes('生成产物')) {
-      resolvedVersion = 1;
-    }
-  }
-
-  // 5. Fallback: use matched artifact's latestVersion if sourceRunId matched
+  // 4. Fallback: use matched artifact's latestVersion if sourceRunId matched
   if (resolvedVersion === undefined && sourceRunId && artifact && (artifact.runId === sourceRunId || (artifact as any).versionMetadata?.sourceRunId === sourceRunId)) {
     resolvedVersion = (artifact as any).versionMetadata?.sourceFileVersion || artifact.latestVersion;
+  }
+
+  // 5. Fallback: use artifact's latestVersion (most reliable for old messages without metadata)
+  if (resolvedVersion === undefined && artifact) {
+    resolvedVersion = artifact.latestVersion;
   }
 
   // 6. Fallback: use sequential index if no other version matches
