@@ -171,13 +171,7 @@ const AgentChatPanel: React.FC<AgentChatPanelProps> = ({ agent, conversation, me
     };
   }, []);
 
-  const bindConversationWorkspace = async (conversationId: string, workspaceId: string | null) => {
-    try {
-      await workspaceService.updateConversationWorkspace(conversationId, workspaceId);
-    } catch (err) {
-      console.error('Failed to bind workspace:', err);
-    }
-  };
+  const storeBindWorkspace = useAgentHubStore(state => state.bindConversationWorkspace);
 
   const createWorkspace = async (name: string): Promise<WorkspaceItem | null> => {
     try {
@@ -463,7 +457,7 @@ const AgentChatPanel: React.FC<AgentChatPanelProps> = ({ agent, conversation, me
                   <button
                     type="button"
                     onClick={async () => {
-                      await bindConversationWorkspace(conversation.id, null);
+                      await storeBindWorkspace(conversation.id, null);
                       setShowWorkspaceDropdown(false);
                     }}
                     className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-xs font-medium transition-all
@@ -495,7 +489,7 @@ const AgentChatPanel: React.FC<AgentChatPanelProps> = ({ agent, conversation, me
                           key={w.id}
                           type="button"
                           onClick={async () => {
-                            await bindConversationWorkspace(conversation.id, w.id);
+                            await storeBindWorkspace(conversation.id, w.id);
                             setShowWorkspaceDropdown(false);
                           }}
                           className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-xs font-medium transition-all group
@@ -534,7 +528,7 @@ const AgentChatPanel: React.FC<AgentChatPanelProps> = ({ agent, conversation, me
                             try {
                               const newWS = await createWorkspace(newWorkspaceName.trim());
                               if (newWS) {
-                                await bindConversationWorkspace(conversation.id, newWS.id);
+                                await storeBindWorkspace(conversation.id, newWS.id);
                               }
                               setShowWorkspaceDropdown(false);
                             } catch (err) {
@@ -567,7 +561,7 @@ const AgentChatPanel: React.FC<AgentChatPanelProps> = ({ agent, conversation, me
                             try {
                               const newWS = await createWorkspace(newWorkspaceName.trim());
                               if (newWS) {
-                                await bindConversationWorkspace(conversation.id, newWS.id);
+                                await storeBindWorkspace(conversation.id, newWS.id);
                               }
                               setShowWorkspaceDropdown(false);
                             } catch (err) {

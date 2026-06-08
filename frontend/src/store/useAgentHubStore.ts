@@ -1091,16 +1091,6 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       console.warn('Failed to load mock mode from localStorage', e);
     }
 
-    // Load from LocalStorage
-    try {
-      const storedConfigs = localStorage.getItem('ag_conversation_agent_configs');
-      if (storedConfigs) {
-        set({ conversationAgentConfigs: JSON.parse(storedConfigs) });
-      }
-    } catch (e) {
-      console.warn('Failed to load conversation agent configs', e);
-    }
-
     try {
       const storedSettings = localStorage.getItem('ag_settings');
       if (storedSettings) {
@@ -3078,11 +3068,6 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       }
     };
     set({ conversationAgentConfigs: nextConfigs });
-    try {
-      localStorage.setItem('ag_conversation_agent_configs', JSON.stringify(nextConfigs));
-    } catch (e) {
-      console.error('Failed to save conversation agent configs to localStorage', e);
-    }
   },
 
   saveAgent: async (updatedAgent) => {
