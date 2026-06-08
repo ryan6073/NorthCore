@@ -9,9 +9,10 @@ import type { FileTypeCategory } from '@/utils/fileType';
 interface AttachmentCardProps {
   attachment: MessageAttachment;
   isUser?: boolean;
+  onImagePress?: (url: string, name?: string) => void;
 }
 
-export default function AttachmentCard({ attachment, isUser = false }: AttachmentCardProps) {
+export default function AttachmentCard({ attachment, isUser = false, onImagePress }: AttachmentCardProps) {
   const [imageError, setImageError] = useState(false);
   const isImage = useMemo(() => isImageAttachment(attachment), [attachment]);
   const category: FileTypeCategory = useMemo(() => detectFileCategory(attachment), [attachment]);
@@ -19,28 +20,38 @@ export default function AttachmentCard({ attachment, isUser = false }: Attachmen
 
   if (isImage) {
     return (
-      <View style={[styles.imageCard, isUser ? styles.userCard : styles.agentCard]}>
-        {!imageError && attachment.url ? (
-          <AuthImage
-            uri={attachment.url}
-            style={styles.imagePreview}
-            resizeMode="cover"
-            onError={() => setImageError(true)}
-          />
-        ) : (
-          <View style={styles.imageError}>
-            <Ionicons name="image-outline" size={26} color="#94a3b8" />
-            <Text style={styles.imageErrorText}>图片加载失败</Text>
-          </View>
-        )}
+      <TouchableOpacity
+        activeOpacity={0.9}
+        onPress={() => {
+          if (attachment.url && onImagePress) {
+            onImagePress(attachment.url, attachment.name);
+          }
+        }}
+        disabled={!attachment.url || !onImagePress}
+      >
+        <View style={[styles.imageCard, isUser ? styles.userCard : styles.agentCard]}>
+          {!imageError && attachment.url ? (
+            <AuthImage
+              uri={attachment.url}
+              style={styles.imagePreview}
+              resizeMode="cover"
+              onError={() => setImageError(true)}
+            />
+          ) : (
+            <View style={styles.imageError}>
+              <Ionicons name="image-outline" size={26} color="#94a3b8" />
+              <Text style={styles.imageErrorText}>图片加载失败</Text>
+            </View>
+          )}
 
-        <View style={styles.imageMeta}>
-          <Text style={styles.imageName} numberOfLines={1}>
-            {attachment.name || '图片附件'}
-          </Text>
-          {!!sizeText && <Text style={styles.imageSize}>{sizeText}</Text>}
+          <View style={styles.imageMeta}>
+            <Text style={styles.imageName} numberOfLines={1}>
+              {attachment.name || '图片附件'}
+            </Text>
+            {!!sizeText && <Text style={styles.imageSize}>{sizeText}</Text>}
+          </View>
         </View>
-      </View>
+      </TouchableOpacity>
     );
   }
 

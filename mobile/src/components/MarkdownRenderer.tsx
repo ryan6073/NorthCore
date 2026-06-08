@@ -54,11 +54,19 @@ export default function MarkdownRenderer({
 /** Native WebView that auto-heights via postMessage */
 function NativeWebView({ content, language, isCodeBlock, maxHeight }: MarkdownRendererProps) {
   const [height, setHeight] = useState(40);
+  const [expanded, setExpanded] = useState(false);
+  const [fullContentExpanded, setFullContentExpanded] = useState(false);
+  const isOverflow = maxHeight !== undefined && height > maxHeight && !isCodeBlock;
+
+  // 超大内容截断：超过 3000 字符的 markdown 先折叠，避免 WebView 渲染超时/崩溃
+  const CONTENT_CHARS_LIMIT = 3000;
+  const isLongContent = !isCodeBlock && content.length > CONTENT_CHARS_LIMIT;
+  const displayContent = fullContentExpanded || isCodeBlock ? content : content.slice(0, CONTENT_CHARS_LIMIT) + '\n\n...（内容过长已截断，点击下方展开查看全文）';
 
   const html = useMemo(() => {
     if (isCodeBlock) return buildCodeHtml(content, language);
-    return buildMarkdownHtml(content);
-  }, [content, language, isCodeBlock]);
+    return buildMarkdownHtml(displayContent);
+  }, [displayContent, language, isCodeBlock]);
 
   const onMessage = useCallback((e: any) => {
     try {
@@ -69,23 +77,43 @@ function NativeWebView({ content, language, isCodeBlock, maxHeight }: MarkdownRe
 
   if (!WebView) return null;
 
+  const effectiveHeight = expanded ? height : Math.min(height, maxHeight || 99999);
+
   return (
-    <WebView
-      source={{ html, baseUrl: 'https://test2.yeolde.fun' }}
-      style={[
-        styles.webview,
-        { height: Math.min(height, maxHeight || 99999) },
-        isCodeBlock ? styles.codeBlock : styles.markdown,
-      ]}
-      scrollEnabled={!!maxHeight && height > maxHeight}
-      showsVerticalScrollIndicator={false}
-      originWhitelist={['*']}
-      javaScriptEnabled
-      domStorageEnabled
-      bounces={false}
-      automaticallyAdjustContentInsets={false}
-      onMessage={onMessage}
-    />
+    <>
+      <WebView
+        source={{ html, baseUrl: 'https://test2.yeolde.fun' }}
+        style={[
+          styles.webview,
+          { height: effectiveHeight },
+          isCodeBlock ? styles.codeBlock : styles.markdown,
+        ]}
+        scrollEnabled={expanded ? true : (!!maxHeight && height > maxHeight)}
+        showsVerticalScrollIndicator={expanded}
+        originWhitelist={['*']}
+        javaScriptEnabled
+        domStorageEnabled
+        bounces={false}
+        automaticallyAdjustContentInsets={false}
+        onMessage={onMessage}
+      />
+      {isOverflow && (
+        <Text
+          style={styles.expandToggle}
+          onPress={() => setExpanded(!expanded)}
+        >
+          {expanded ? '收起 ▲' : `展开全部 ▼ (剩余 ${Math.round((height - maxHeight!) / 20)} 行)`}
+        </Text>
+      )}
+      {isLongContent && !fullContentExpanded && (
+        <Text
+          style={styles.expandToggle}
+          onPress={() => setFullContentExpanded(true)}
+        >
+          展开全文 ▼（共约 {Math.ceil(content.length / 1000)}K 字符）
+        </Text>
+      )}
+    </>
   );
 }
 
@@ -222,6 +250,14 @@ const styles = StyleSheet.create({
   webview: { backgroundColor: 'transparent', width: '100%' },
   codeBlock: { backgroundColor: '#0d1117', borderRadius: 8 },
   markdown: {},
+  expandToggle: {
+    fontSize: 12,
+    color: '#3370ff',
+    fontWeight: '600',
+    textAlign: 'center',
+    paddingVertical: 6,
+    marginTop: 2,
+  },
   webCodeBlock: {
     fontFamily: Platform.OS === 'web' ? 'monospace' : 'Courier',
     fontSize: 12,
