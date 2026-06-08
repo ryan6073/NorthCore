@@ -1029,7 +1029,10 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     try {
       const agentRes = await getAgentList({ includeDisabled: true });
       if (agentRes.code === 0) {
-        set({ agents: agentRes.data.list as Agent[] });
+        const agents = (agentRes.data.list as Agent[]).map(a =>
+          a.status === 'offline' ? { ...a, status: 'online' as const } : a
+        );
+        set({ agents });
       }
       const convRes = await getConversationList();
       if (convRes.code === 0) {
@@ -1188,7 +1191,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
       set({
         conversations: mergeLocalFlags(mockConversations),
-        agents: initialAgents,
+        agents: initialAgents.map(a =>
+          a.status === 'offline' ? { ...a, status: 'online' as const } : a
+        ),
         messages: mockMessages,
         artifacts: mockArtifacts,
         artifactVersions: mockArtifactVersions.reduce((acc, v) => {
@@ -1244,7 +1249,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       console.log('[Store] 切换到 Mock 演示模式');
       set({
         conversations: mergeLocalFlags(mockConversations),
-        agents: initialAgents,
+        agents: initialAgents.map(a =>
+          a.status === 'offline' ? { ...a, status: 'online' as const } : a
+        ),
         messages: mockMessages,
         artifacts: mockArtifacts,
         artifactVersions: mockArtifactVersions.reduce((acc, v) => {
@@ -4573,6 +4580,17 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               ...state.runConflictsByRunId,
               [runId]: runDetail.conflicts || []
             };
+
+            // 重试任务创建时，将涉及的 agent 设为 thinking
+            const retryAgentIds = new Set<string>();
+            if (run.agentId) retryAgentIds.add(run.agentId);
+            run.steps?.forEach((s: any) => { if (s.agentId) retryAgentIds.add(s.agentId); });
+            run.dag?.nodes?.forEach((n: any) => { if (n.agentId) retryAgentIds.add(n.agentId); });
+            if (retryAgentIds.size > 0) {
+              updates.agents = state.agents.map(a =>
+                retryAgentIds.has(a.id) ? { ...a, status: 'thinking' as const } : a
+              );
+            }
           }
 
           return updates;
