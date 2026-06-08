@@ -244,7 +244,20 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
                 )}
               </div>
               <span className="text-[10px] text-lark-text-tertiary dark:text-slate-500 flex-shrink-0 font-normal group-hover:opacity-0 transition-opacity">
-                {conv.updatedAt.split(' ').pop()}
+                {(() => {
+                  const now = new Date();
+                  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+                  const parts = (conv.updatedAt || '').split(' ');
+                  const datePart = parts[0] || '';
+                  const timePart = parts[1] || '';
+                  // 今天：显示时间
+                  if (datePart === today) return timePart;
+                  // 今年：显示月-日
+                  const year = datePart.substring(0, 4);
+                  if (year === String(now.getFullYear())) return datePart.substring(5);
+                  // 更早：显示完整年月日
+                  return datePart;
+                })()}
               </span>
             </div>
             <p className={`text-xs truncate transition-colors ${
