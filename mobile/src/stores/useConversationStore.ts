@@ -42,6 +42,7 @@ interface ConversationState {
   pinConversation: (id: string, isPinned: boolean) => Promise<void>;
   archiveConversation: (id: string, isArchived: boolean) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
+  updateConversation: (id: string, partial: Partial<Conversation>) => void;
 }
 
 export const useConversationStore = create<ConversationState>((set) => ({
@@ -121,6 +122,14 @@ export const useConversationStore = create<ConversationState>((set) => ({
     }
     set((state) => ({
       conversations: state.conversations.filter((c) => c.id !== id),
+    }));
+  },
+
+  updateConversation: (id, partial) => {
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === id ? { ...c, ...partial } : c
+      ),
     }));
   },
 }));

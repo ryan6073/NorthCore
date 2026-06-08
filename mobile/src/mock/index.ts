@@ -1,4 +1,37 @@
-import { Agent, Conversation, Message, Artifact, ArtifactVersion, HealthCheckData } from '@/types';
+import { Agent, Conversation, Message, Artifact, ArtifactVersion, HealthCheckData, WorkspaceItem } from '@/types';
+
+export const mockWorkspaces: WorkspaceItem[] = [
+  {
+    id: 'ws-project-1',
+    name: '智能问答项目',
+    status: 'active',
+    createdAt: '2026-05-20 10:30:00',
+    updatedAt: '2026-05-23 15:20:00',
+    deletedAt: null,
+    conversationCount: 5,
+    lastUsedAt: '2026-05-23 15:20'
+  },
+  {
+    id: 'ws-project-2',
+    name: 'React 后台管理系统',
+    status: 'active',
+    createdAt: '2026-05-18 09:15:00',
+    updatedAt: '2026-05-22 11:45:00',
+    deletedAt: null,
+    conversationCount: 12,
+    lastUsedAt: '2026-05-22 11:45'
+  },
+  {
+    id: 'ws-project-3',
+    name: '移动端App开发',
+    status: 'active',
+    createdAt: '2026-05-15 14:00:00',
+    updatedAt: '2026-05-21 17:30:00',
+    deletedAt: null,
+    conversationCount: 8,
+    lastUsedAt: '2026-05-21 17:30'
+  }
+];
 
 export const mockAgents: Agent[] = [
   {
@@ -156,7 +189,8 @@ export const mockConversations: Conversation[] = [
     agentIds: ['agent-claude-code'],
     lastMessage: '已生成LoginPage.tsx',
     updatedAt: '2026-05-22 14:30',
-    createdAt: '2026-05-22 14:00'
+    createdAt: '2026-05-22 14:00',
+    workspaceId: 'ws-project-1'
   },
   {
     id: 'conv-group-website',
@@ -165,7 +199,8 @@ export const mockConversations: Conversation[] = [
     agentIds: ['agent-orchestrator', 'agent-design', 'agent-codex', 'agent-review', 'agent-doc'],
     lastMessage: '所有产物已生成完毕',
     updatedAt: '2026-05-22 15:20',
-    createdAt: '2026-05-22 14:50'
+    createdAt: '2026-05-22 14:50',
+    workspaceId: 'ws-project-2'
   },
   {
     id: 'conv-desktop-workspace',
@@ -174,7 +209,8 @@ export const mockConversations: Conversation[] = [
     agentIds: ['agent-orchestrator'],
     lastMessage: '已成功扫描本地工作区，发现5个项目文件',
     updatedAt: '2026-05-23 10:45',
-    createdAt: '2026-05-23 10:30'
+    createdAt: '2026-05-23 10:30',
+    workspaceId: 'ws-project-3'
   }
 ];
 

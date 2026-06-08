@@ -73,6 +73,7 @@ export interface Conversation {
   createdAt?: string;
   isPinned?: boolean;
   isArchived?: boolean;
+  workspaceId?: string;
   contextUsage?: ContextUsage;
 }
 
@@ -317,6 +318,56 @@ export interface ContextUsage {
   contextUsagePercent: number;
   contextUsageChars: number;
   contextLimitChars: number;
+}
+
+export interface WorkspaceItem {
+  id: string;
+  name: string;
+  status: 'active' | 'deleted';
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  conversationCount: number;
+  lastUsedAt: string | null;
+}
+
+export interface WorkspaceTreeNode {
+  name: string;
+  path: string;
+  type: 'directory' | 'file';
+  children?: WorkspaceTreeNode[];
+  truncated?: boolean;
+  reason?: string;
+  maxDepth?: number;
+  maxEntries?: number;
+}
+
+export interface FileContentData {
+  path: string;
+  name: string;
+  mime: string;
+  size: number;
+  sha256: string;
+  isText: boolean;
+  encoding: string;
+  content: string;
+  truncated: boolean;
+}
+
+export interface GetWorkspacesParams {
+  status?: 'active' | 'deleted' | 'all';
+  page?: number;
+  pageSize?: number;
+}
+
+export interface Workspace {
+  id: string;
+  ownerUserId: string;
+  name: string;
+  workspacePath: string;
+  status: 'active' | string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface PinItem {

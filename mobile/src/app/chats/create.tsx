@@ -8,13 +8,31 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
+  Modal,
 } from 'react-native';
 import { Stack, router } from 'expo-router';
 import { useAgentStore } from '@/stores/useAgentStore';
 import { useConversationStore } from '@/stores/useConversationStore';
-import { workspaceApi, Workspace } from '@/api/workspaceApi';
+import { getWorkspaces, createWorkspace } from '@/services/workspaceService';
 import { conversationApi } from '@/api/conversationApi';
 import { Ionicons } from '@expo/vector-icons';
+import AuthImage from '@/components/AuthImage';
+import type { WorkspaceItem } from '@/types';
+
+const getAgentAvatarFromObject = (agent: any) => {
+  const avatarUrl = 
+    agent?.avatar ||
+    agent?.avatarUrl ||
+    agent?.avatar_url ||
+    agent?.icon ||
+    agent?.metadata?.avatar ||
+    '';
+  
+  console.log('[CreateConversation] getAgentAvatarFromObject - agent:', JSON.stringify(agent, null, 2));
+  console.log('[CreateConversation] extracted avatarUrl:', avatarUrl);
+  
+  return avatarUrl;
+};
 
 export default function CreateConversationScreen() {
   const { agents } = useAgentStore();
@@ -22,12 +40,28 @@ export default function CreateConversationScreen() {
 
   const [mode, setMode] = useState<'single' | 'group'>('single');
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  
+  // Workspace states
+  const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>('');
-  const [showNewWorkspace, setShowNewWorkspace] = useState(false);
-  const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
+  const [workspaceSearch, setWorkspaceSearch] = useState('');
+  const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
+  const [newWorkspaceName, setNewWorkspaceName] = useState('');
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+
   const [submitLoading, setSubmitLoading] = useState(false);
+
+  useEffect(() => {
+    console.log('[CreateConversation] agents from useAgentStore:', JSON.stringify(agents, null, 2));
+    if (agents.length === 0) {
+      console.log('[CreateConversation] agents is empty, calling fetchAgents()...');
+      useAgentStore.getState().fetchAgents().then(() => {
+        console.log('[CreateConversation] fetchAgents() completed! New agents:', JSON.stringify(useAgentStore.getState().agents, null, 2));
+      });
+    }
+  }, [agents.length === 0]);
 
   useEffect(() => {
     loadWorkspaces();
@@ -35,37 +69,36 @@ export default function CreateConversationScreen() {
 
   const loadWorkspaces = async () => {
     try {
-      const list = await workspaceApi.getWorkspaces();
-      setWorkspaces(Array.isArray(list) ? list : []);
+      setWorkspaceLoading(true);
+      const res = await getWorkspaces();
+      if (Array.isArray(res)) {
+        setWorkspaces(res);
+      }
     } catch (e) {
       console.error(e);
       setWorkspaces([]);
-    }
-  };
-
-  const handleCreateWorkspace = async () => {
-    if (!newWorkspaceName.trim()) return;
-    setWorkspaceLoading(true);
-    try {
-      const ws = await workspaceApi.createWorkspace(newWorkspaceName.trim());
-      setWorkspaces((prev) => [ws, ...prev]);
-      setSelectedWorkspaceId(ws.id);
-      setNewWorkspaceName('');
-      setShowNewWorkspace(false);
-    } catch (e) {
-      Alert.alert('提示', '新建工作区失败');
     } finally {
       setWorkspaceLoading(false);
     }
   };
 
-  const handleToggleAgent = (id: string) => {
-    if (mode === 'single') {
-      setSelectedAgentIds([id]);
-    } else {
-      setSelectedAgentIds((prev) =>
-        prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-      );
+  const filteredWorkspaces = workspaces.filter(w => 
+    w.name.toLowerCase().includes(workspaceSearch.toLowerCase())
+  );
+
+  const handleCreateWorkspace = async () => {
+    if (!newWorkspaceName.trim()) return;
+    setCreatingWorkspace(true);
+    try {
+      const newWs = await createWorkspace(newWorkspaceName.trim());
+      setWorkspaces(prev => [newWs, ...prev]);
+      setSelectedWorkspaceId(newWs.id);
+      setIsCreatingWorkspace(false);
+      setNewWorkspaceName('');
+    } catch (e) {
+      Alert.alert('提示', '创建工作区失败');
+    } finally {
+      setCreatingWorkspace(false);
     }
   };
 
@@ -79,7 +112,7 @@ export default function CreateConversationScreen() {
       return;
     }
 
-    setSubmitLoading(false);
+    setSubmitLoading(true);
     let finalAgentIds = [...selectedAgentIds];
     if (mode === 'group') {
       const orchestratorId = 'agent-orchestrator';
@@ -103,9 +136,10 @@ export default function CreateConversationScreen() {
       await fetchConversations();
       router.replace(`/chats/${newConv.id}`);
     } catch (e) {
-      // Fallback
       Alert.alert('提示', '创建会话失败，已自动开启模拟会话');
       router.replace(`/chats/temp_${Date.now()}`);
+    } finally {
+      setSubmitLoading(false);
     }
   };
 
@@ -159,6 +193,9 @@ export default function CreateConversationScreen() {
             .filter((a) => a.id !== 'agent-orchestrator')
             .map((agent) => {
               const isSelected = selectedAgentIds.includes(agent.id);
+              const name = String((agent as any).name || (agent as any).displayName || '未命名智能体');
+              const avatarUrl = getAgentAvatarFromObject(agent);
+              
               return (
                 <TouchableOpacity
                   key={agent.id}
@@ -168,12 +205,20 @@ export default function CreateConversationScreen() {
                 >
                   <View style={styles.agentLeft}>
                     <View style={styles.avatar}>
-                      <Text style={styles.avatarText}>{agent.name.charAt(0)}</Text>
+                      {avatarUrl ? (
+                        <AuthImage
+                          uri={avatarUrl}
+                          style={{ flex: 1, borderRadius: 10 }}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <Text style={styles.avatarText}>{name.charAt(0)}</Text>
+                      )}
                     </View>
                     <View style={styles.agentInfo}>
-                      <Text style={styles.agentName}>{agent.name}</Text>
+                      <Text style={styles.agentName}>{name}</Text>
                       <Text style={styles.agentDesc} numberOfLines={1}>
-                        {agent.description}
+                        {String((agent as any).description || (agent as any).summary || '暂无智能体说明')}
                       </Text>
                     </View>
                   </View>
@@ -186,85 +231,31 @@ export default function CreateConversationScreen() {
         </View>
       </View>
 
-      {/* Workspace Selection Section */}
+      {/* Workspace Selection Section - Button that opens Modal */}
       <View style={styles.section}>
-        <View style={styles.workspaceHeader}>
-          <Text style={styles.sectionTitle}>绑定工作区</Text>
-          {!showNewWorkspace && (
-            <TouchableOpacity
-              onPress={() => setShowNewWorkspace(true)}
-              style={styles.newWsButton}
-            >
-              <Ionicons name="add" size={14} color="#3370ff" />
-              <Text style={styles.newWsButtonText}>新建工作区</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {showNewWorkspace ? (
-          <View style={styles.newWsCard}>
-            <TextInput
-              style={styles.wsInput}
-              placeholder="请输入工作区名称..."
-              placeholderTextColor="#8f959e"
-              value={newWorkspaceName}
-              onChangeText={setNewWorkspaceName}
-            />
-            <View style={styles.newWsActions}>
-              <TouchableOpacity
-                style={styles.newWsConfirm}
-                onPress={handleCreateWorkspace}
-                disabled={workspaceLoading || !newWorkspaceName.trim()}
-              >
-                {workspaceLoading ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.newWsConfirmText}>确认</Text>
-                )}
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.newWsCancel}
-                onPress={() => {
-                  setShowNewWorkspace(false);
-                  setNewWorkspaceName('');
-                }}
-              >
-                <Text style={styles.newWsCancelText}>取消</Text>
-              </TouchableOpacity>
+        <Text style={styles.sectionTitle}>绑定工作区</Text>
+        <TouchableOpacity
+          style={styles.workspaceSelectBtn}
+          onPress={() => {
+            setShowWorkspaceModal(true);
+            setWorkspaceSearch('');
+            setIsCreatingWorkspace(false);
+          }}
+        >
+          <View style={styles.workspaceSelectBtnContent}>
+            <Ionicons name="folder-open-outline" size={20} color="#646a73" />
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              {selectedWorkspaceId ? (
+                <Text style={styles.selectedWorkspaceName}>
+                  {workspaces.find(w => w.id === selectedWorkspaceId)?.name || '选择工作区'}
+                </Text>
+              ) : (
+                <Text style={styles.workspacePlaceholderText}>点击选择工作区</Text>
+              )}
             </View>
+            <Ionicons name="chevron-forward" size={18} color="#8f959e" />
           </View>
-        ) : (
-          <View style={styles.workspaceList}>
-            {(workspaces || []).map((ws) => {
-              const isSelected = selectedWorkspaceId === ws.id;
-              return (
-                <TouchableOpacity
-                  key={ws.id}
-                  style={[styles.wsItem, isSelected && styles.wsItemActive]}
-                  onPress={() => setSelectedWorkspaceId(ws.id)}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.wsLeft}>
-                    <Ionicons
-                      name="folder-open-outline"
-                      size={20}
-                      color={isSelected ? '#3370ff' : '#646a73'}
-                    />
-                    <Text style={[styles.wsName, isSelected && styles.wsNameActive]}>
-                      {ws.name}
-                    </Text>
-                  </View>
-                  {isSelected && (
-                    <Ionicons name="checkmark-circle" size={20} color="#3370ff" />
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-            {workspaces.length === 0 && (
-              <Text style={styles.emptyText}>暂无工作区，请先点击新建工作区</Text>
-            )}
-          </View>
-        )}
+        </TouchableOpacity>
       </View>
 
       {/* Submit Button */}
@@ -284,8 +275,157 @@ export default function CreateConversationScreen() {
           </Text>
         )}
       </TouchableOpacity>
+
+      {/* Workspace Selection Modal */}
+      <Modal
+        visible={showWorkspaceModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowWorkspaceModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            setShowWorkspaceModal(false);
+            setIsCreatingWorkspace(false);
+            setWorkspaceSearch('');
+          }}
+        >
+          <View style={styles.modalContent} onStartShouldSetResponder={() => true}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>选择工作区</Text>
+              <TouchableOpacity onPress={() => {
+                setShowWorkspaceModal(false);
+                setIsCreatingWorkspace(false);
+                setWorkspaceSearch('');
+              }}>
+                <Ionicons name="close" size={22} color="#8f959e" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Search Box */}
+            <View style={styles.workspaceSearchBox}>
+              <Ionicons name="search-outline" size={16} color="#8f959e" />
+              <TextInput
+                style={styles.workspaceSearchInput}
+                value={workspaceSearch}
+                onChangeText={setWorkspaceSearch}
+                placeholder="搜索工作区..."
+                placeholderTextColor="#8f959e"
+              />
+              {workspaceSearch.length > 0 && (
+                <TouchableOpacity onPress={() => setWorkspaceSearch('')}>
+                  <Ionicons name="close-circle" size={16} color="#8f959e" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Workspace List with Scroll */}
+            {workspaceLoading ? (
+              <View style={styles.loadingWrapper}>
+                <ActivityIndicator size="small" color="#3370ff" />
+              </View>
+            ) : (
+              <ScrollView style={styles.workspaceListScroll} showsVerticalScrollIndicator={false}>
+                {filteredWorkspaces.length === 0 && workspaceSearch ? (
+                  <Text style={styles.noMatchText}>无匹配工作区</Text>
+                ) : filteredWorkspaces.length === 0 && !workspaceSearch ? (
+                  <Text style={styles.noMatchText}>暂无工作区，请新建</Text>
+                ) : (
+                  filteredWorkspaces.map((w) => {
+                    const isSelected = selectedWorkspaceId === w.id;
+                    return (
+                      <TouchableOpacity
+                        key={w.id}
+                        style={[styles.wsItem, isSelected && styles.wsItemActive]}
+                        onPress={() => {
+                          setSelectedWorkspaceId(w.id);
+                          setShowWorkspaceModal(false);
+                        }}
+                      >
+                        <View style={styles.wsItemLeft}>
+                          <Ionicons
+                            name="folder-open-outline"
+                            size={18}
+                            color={isSelected ? '#3370ff' : '#646a73'}
+                          />
+                          <Text
+                            style={[styles.wsItemName, isSelected && styles.wsItemNameActive]}
+                            numberOfLines={1}
+                          >
+                            {w.name}
+                          </Text>
+                        </View>
+                        {isSelected && <Ionicons name="checkmark-circle" size={18} color="#3370ff" />}
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
+              </ScrollView>
+            )}
+
+            {/* Separator */}
+            <View style={styles.wsSeparator} />
+
+            {/* Create New Workspace Area */}
+            {isCreatingWorkspace ? (
+              <View style={styles.createWsCard}>
+                <TextInput
+                  style={styles.newWsInput}
+                  placeholder="工作区名称..."
+                  placeholderTextColor="#8f959e"
+                  value={newWorkspaceName}
+                  onChangeText={setNewWorkspaceName}
+                  autoFocus
+                />
+                <View style={styles.newWsActions}>
+                  <TouchableOpacity
+                    style={styles.newWsCancelBtn}
+                    onPress={() => {
+                      setIsCreatingWorkspace(false);
+                      setNewWorkspaceName('');
+                    }}
+                  >
+                    <Text style={styles.newWsCancelBtnText}>取消</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.newWsConfirmBtn}
+                    onPress={handleCreateWorkspace}
+                    disabled={creatingWorkspace || !newWorkspaceName.trim()}
+                  >
+                    {creatingWorkspace ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={styles.newWsConfirmBtnText}>确定</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.createNewWsBtn}
+                onPress={() => setIsCreatingWorkspace(true)}
+              >
+                <Ionicons name="add" size={16} color="#3370ff" />
+                <Text style={styles.createNewWsBtnText}>新建工作区</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </ScrollView>
   );
+
+  function handleToggleAgent(id: string) {
+    if (mode === 'single') {
+      setSelectedAgentIds([id]);
+    } else {
+      setSelectedAgentIds((prev) =>
+        prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+      );
+    }
+  }
 }
 
 const styles = StyleSheet.create({
@@ -374,6 +514,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#3370ff',
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
   },
   avatarText: {
     fontSize: 16,
@@ -394,37 +535,143 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#646a73',
   },
-  workspaceHeader: {
+  workspaceSelectBtn: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#dee0e3',
+  },
+  workspaceSelectBtnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+  },
+  workspacePlaceholderText: {
+    fontSize: 14,
+    color: '#8f959e',
+  },
+  selectedWorkspaceName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1f2329',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 16,
+    paddingBottom: 32,
+    paddingHorizontal: 16,
+    maxHeight: '75%',
+  },
+  modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: 12,
   },
-  newWsButton: {
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1f2329',
+  },
+  workspaceSearchBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 2,
-  },
-  newWsButtonText: {
-    fontSize: 12,
-    color: '#3370ff',
-    fontWeight: '700',
-  },
-  newWsCard: {
     backgroundColor: '#f5f6f7',
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    height: 40,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: '#dee0e3',
-    borderStyle: 'dashed',
   },
-  wsInput: {
+  workspaceSearchInput: {
+    flex: 1,
+    fontSize: 13,
+    paddingVertical: 0,
+    paddingHorizontal: 8,
+    color: '#1f2329',
+  },
+  loadingWrapper: {
+    paddingVertical: 30,
+    alignItems: 'center',
+  },
+  workspaceListScroll: {
+    maxHeight: 250,
+  },
+  wsItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 11,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+  },
+  wsItemActive: {
+    backgroundColor: '#deebff',
+  },
+  wsItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 10,
+  },
+  wsItemName: {
+    fontSize: 13,
+    color: '#1f2329',
+    flex: 1,
+  },
+  wsItemNameActive: {
+    fontWeight: '700',
+    color: '#3370ff',
+  },
+  noMatchText: {
+    textAlign: 'center',
+    paddingVertical: 20,
+    fontSize: 12,
+    color: '#8f959e',
+  },
+  wsSeparator: {
+    height: 1,
+    backgroundColor: '#eff0f1',
+    marginVertical: 12,
+  },
+  createNewWsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#3370ff',
+    borderStyle: 'dashed',
+    borderRadius: 10,
+    gap: 6,
+  },
+  createNewWsBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#3370ff',
+  },
+  createWsCard: {
+    padding: 12,
+    backgroundColor: '#f5f6f7',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#dee0e3',
+  },
+  newWsInput: {
     backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#dee0e3',
     borderRadius: 8,
     paddingHorizontal: 12,
-    height: 36,
+    height: 38,
     fontSize: 13,
     color: '#1f2329',
     marginBottom: 10,
@@ -432,69 +679,33 @@ const styles = StyleSheet.create({
   newWsActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    gap: 8,
-  },
-  newWsConfirm: {
-    backgroundColor: '#3370ff',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    height: 30,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  newWsConfirmText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '650',
-  },
-  newWsCancel: {
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#dee0e3',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    height: 30,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  newWsCancelText: {
-    color: '#646a73',
-    fontSize: 12,
-  },
-  workspaceList: {
-    gap: 8,
-  },
-  wsItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#f5f6f7',
-  },
-  wsItemActive: {
-    backgroundColor: '#deebff',
-    borderColor: '#3370ff',
-  },
-  wsLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: 10,
   },
-  wsName: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1f2329',
+  newWsCancelBtn: {
+    paddingHorizontal: 14,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 8,
+    backgroundColor: '#f5f6f7',
   },
-  wsNameActive: {
-    color: '#3370ff',
-  },
-  emptyText: {
+  newWsCancelBtnText: {
     fontSize: 12,
-    color: '#8f959e',
-    textAlign: 'center',
-    paddingVertical: 12,
+    color: '#646a73',
+    fontWeight: '600',
+  },
+  newWsConfirmBtn: {
+    paddingHorizontal: 14,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 8,
+    backgroundColor: '#3370ff',
+  },
+  newWsConfirmBtnText: {
+    fontSize: 12,
+    color: '#ffffff',
+    fontWeight: '600',
   },
   submitButton: {
     backgroundColor: '#3370ff',

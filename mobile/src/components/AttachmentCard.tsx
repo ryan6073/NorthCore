@@ -3,37 +3,19 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { MessageAttachment } from '@/types';
 import AuthImage from './AuthImage';
+import { detectFileCategory, isImageAttachment, getFileIcon, getFileColor, formatFileSize, getFileTypeLabel } from '@/utils/fileType';
+import type { FileTypeCategory } from '@/utils/fileType';
 
 interface AttachmentCardProps {
   attachment: MessageAttachment;
   isUser?: boolean;
 }
 
-const IMAGE_EXTENSIONS = /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i;
-
-const isImageAttachment = (attachment: MessageAttachment) => {
-  const type = String(attachment.type || '').toLowerCase();
-  const mimeType = String(attachment.mimeType || '').toLowerCase();
-  const name = String(attachment.name || '').toLowerCase();
-
-  return (
-    type === 'image' ||
-    mimeType.startsWith('image/') ||
-    IMAGE_EXTENSIONS.test(name)
-  );
-};
-
-const formatSize = (size?: number) => {
-  if (!size || size <= 0) return '';
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / 1024 / 1024).toFixed(1)} MB`;
-};
-
 export default function AttachmentCard({ attachment, isUser = false }: AttachmentCardProps) {
   const [imageError, setImageError] = useState(false);
   const isImage = useMemo(() => isImageAttachment(attachment), [attachment]);
-  const sizeText = formatSize(attachment.size);
+  const category: FileTypeCategory = useMemo(() => detectFileCategory(attachment), [attachment]);
+  const sizeText = formatFileSize(attachment.size);
 
   if (isImage) {
     return (
@@ -62,18 +44,26 @@ export default function AttachmentCard({ attachment, isUser = false }: Attachmen
     );
   }
 
+  const fileColor = getFileColor(category);
+  const fileIcon = getFileIcon(category);
+
   return (
     <TouchableOpacity
       style={[styles.fileCard, isUser ? styles.userCard : styles.agentCard]}
       activeOpacity={0.75}
     >
-      <View style={styles.fileIcon}>
-        <Ionicons name="document-outline" size={18} color="#3370ff" />
+      <View style={[styles.fileIcon, { backgroundColor: fileColor + '16' }]}>
+        <Ionicons name={fileIcon} size={18} color={fileColor} />
       </View>
       <View style={styles.fileInfo}>
-        <Text style={styles.fileName} numberOfLines={1}>
-          {attachment.name || '附件'}
-        </Text>
+        <View style={styles.fileNameRow}>
+          <Text style={styles.fileName} numberOfLines={1}>
+            {attachment.name || '附件'}
+          </Text>
+          <Text style={[styles.fileTypeBadge, { color: fileColor, backgroundColor: fileColor + '12' }]}>
+            {getFileTypeLabel(category)}
+          </Text>
+        </View>
         {!!sizeText && <Text style={styles.fileSize}>{sizeText}</Text>}
       </View>
     </TouchableOpacity>
@@ -147,17 +137,30 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#edf4ff',
     marginRight: 10,
   },
   fileInfo: {
     flex: 1,
     minWidth: 0,
   },
+  fileNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   fileName: {
     fontSize: 12,
     fontWeight: '600',
     color: '#1f2329',
+    flexShrink: 1,
+  },
+  fileTypeBadge: {
+    fontSize: 8,
+    fontWeight: '700',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 3,
+    overflow: 'hidden',
   },
   fileSize: {
     marginTop: 2,
