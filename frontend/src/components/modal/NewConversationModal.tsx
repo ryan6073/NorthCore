@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { CreateConversationPayload, Agent } from '@/types';
-import { X, UserPlus, Users, Check, FolderOpen, Plus, Loader2 } from 'lucide-react';
+import { CreateConversationPayload, Agent, UserInfo } from '@/types';
+import { X, UserPlus, Users, Check, Plus, Loader2 } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface NewConversationModalProps {
@@ -17,6 +17,9 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
   const workspaces = useAgentHubStore(state => state.workspaces);
   const loadWorkspaces = useAgentHubStore(state => state.loadWorkspaces);
   const createWorkspace = useAgentHubStore(state => state.createWorkspace);
+  const currentUser = useAgentHubStore(state => state.currentUser) as (UserInfo | null);
+
+  const isGuest = currentUser?.role === 'guest';
 
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>('');
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
@@ -30,7 +33,9 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
 
   useEffect(() => {
     if (open) {
-      loadWorkspaces();
+      if (!isGuest) {
+        loadWorkspaces();
+      }
       if (preselectedAgentId) {
         setSelectedAgentIds([preselectedAgentId]);
       }
@@ -43,11 +48,12 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
       setCreatingWorkspace(false);
       setPreselectedAgentId(null);
     }
-  }, [open, loadWorkspaces, preselectedAgentId, setPreselectedAgentId]);
+  }, [open, isGuest, loadWorkspaces, preselectedAgentId, setPreselectedAgentId]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedAgentIds.length === 0) return;
+    if (!isGuest && !selectedWorkspaceId) return;
 
     let finalAgentIds = selectedAgentIds;
     if (mode === 'group') {
@@ -65,7 +71,7 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
       title,
       mode,
       agentIds: finalAgentIds,
-      workspaceId: selectedWorkspaceId || undefined
+      ...(isGuest ? {} : { workspaceId: selectedWorkspaceId || undefined })
     });
 
     setSelectedAgentIds([]);
@@ -182,92 +188,94 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
             </div>
           </div>
 
-          {/* Workspace Selection Section */}
-          <div className="space-y-1.5 pt-1">
-            <div className="flex items-center justify-between">
-              <label className="block text-[11px] font-semibold text-lark-text-secondary dark:text-slate-400">
-                绑定工作区 (必填)
-              </label>
-              {!showCreateWorkspace && (
-                <button
-                  type="button"
-                  onClick={() => setShowCreateWorkspace(true)}
-                  className="text-[10px] text-lark-primary dark:text-violet-400 font-bold hover:underline flex items-center gap-0.5"
-                >
-                  <Plus className="w-3 h-3" />
-                  新建工作区
-                </button>
-              )}
-            </div>
-
-            {showCreateWorkspace ? (
-              <div className="flex gap-2 p-2 bg-slate-50 dark:bg-slate-950/40 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl items-center animate-fade-in">
-                <input
-                  type="text"
-                  value={newWorkspaceName}
-                  onChange={(e) => setNewWorkspaceName(e.target.value)}
-                  placeholder="工作区名称..."
-                  className="flex-1 text-xs px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-lark-primary"
-                  autoFocus
-                />
-                <button
-                  type="button"
-                  disabled={creatingWorkspace}
-                  onClick={async () => {
-                    const name = newWorkspaceName.trim();
-                    if (!name) return;
-                    setCreatingWorkspace(true);
-                    try {
-                      const newWs = await createWorkspace(name);
-                      if (newWs) {
-                        setSelectedWorkspaceId(newWs.id);
-                        setShowCreateWorkspace(false);
-                        setNewWorkspaceName('');
-                      }
-                    } catch (e) {
-                      console.error(e);
-                    } finally {
-                      setCreatingWorkspace(false);
-                    }
-                  }}
-                  className="px-2.5 py-1.5 bg-lark-primary text-white text-[10px] font-bold rounded-lg hover:bg-lark-primary-hover active:scale-95 transition-all flex items-center gap-1 flex-shrink-0"
-                >
-                  {creatingWorkspace ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                  确认
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowCreateWorkspace(false);
-                    setNewWorkspaceName('');
-                  }}
-                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-650 dark:text-slate-300 text-[10px] font-bold rounded-lg active:scale-95 transition-all flex-shrink-0"
-                >
-                  取消
-                </button>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-1.5">
-                <select
-                  value={selectedWorkspaceId}
-                  onChange={(e) => setSelectedWorkspaceId(e.target.value)}
-                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-1 focus:ring-lark-primary transition-all font-medium cursor-pointer"
-                >
-                  <option value="">📁 请选择绑定的工作区 (必填)</option>
-                  {workspaces.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      📁 {w.name}
-                    </option>
-                  ))}
-                </select>
-                {workspaces.length === 0 && (
-                  <p className="text-[10px] text-amber-600 dark:text-amber-400">
-                    ⚠️ 暂无可用工作区，请先点击“新建工作区”创建一个。
-                  </p>
+          {/* Workspace Selection Section - 只对非Guest用户显示 */}
+          {!isGuest && (
+            <div className="space-y-1.5 pt-1">
+              <div className="flex items-center justify-between">
+                <label className="block text-[11px] font-semibold text-lark-text-secondary dark:text-slate-400">
+                  绑定工作区 (必填)
+                </label>
+                {!showCreateWorkspace && (
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateWorkspace(true)}
+                    className="text-[10px] text-lark-primary dark:text-violet-400 font-bold hover:underline flex items-center gap-0.5"
+                  >
+                    <Plus className="w-3 h-3" />
+                    新建工作区
+                  </button>
                 )}
               </div>
-            )}
-          </div>
+
+              {showCreateWorkspace ? (
+                <div className="flex gap-2 p-2 bg-slate-50 dark:bg-slate-950/40 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl items-center animate-fade-in">
+                  <input
+                    type="text"
+                    value={newWorkspaceName}
+                    onChange={(e) => setNewWorkspaceName(e.target.value)}
+                    placeholder="工作区名称..."
+                    className="flex-1 text-xs px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-lark-primary"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    disabled={creatingWorkspace}
+                    onClick={async () => {
+                      const name = newWorkspaceName.trim();
+                      if (!name) return;
+                      setCreatingWorkspace(true);
+                      try {
+                        const newWs = await createWorkspace(name);
+                        if (newWs) {
+                          setSelectedWorkspaceId(newWs.id);
+                          setShowCreateWorkspace(false);
+                          setNewWorkspaceName('');
+                        }
+                      } catch (e) {
+                        console.error(e);
+                      } finally {
+                        setCreatingWorkspace(false);
+                      }
+                    }}
+                    className="px-2.5 py-1.5 bg-lark-primary text-white text-[10px] font-bold rounded-lg hover:bg-lark-primary-hover active:scale-95 transition-all flex items-center gap-1 flex-shrink-0"
+                  >
+                    {creatingWorkspace ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                    确认
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowCreateWorkspace(false);
+                      setNewWorkspaceName('');
+                    }}
+                    className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-650 dark:text-slate-300 text-[10px] font-bold rounded-lg active:scale-95 transition-all flex-shrink-0"
+                  >
+                    取消
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  <select
+                    value={selectedWorkspaceId}
+                    onChange={(e) => setSelectedWorkspaceId(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-1 focus:ring-lark-primary transition-all font-medium cursor-pointer"
+                  >
+                    <option value="">📁 请选择绑定的工作区 (必填)</option>
+                    {workspaces.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        📁 {w.name}
+                      </option>
+                    ))}
+                  </select>
+                  {workspaces.length === 0 && (
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                      ⚠️ 暂无可用工作区，请先点击"新建工作区"创建一个。
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Action Buttons */}
           <div className="flex gap-2.5 pt-2 flex-shrink-0">
@@ -280,8 +288,8 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
             </button>
             <button
               type="submit"
-              disabled={selectedAgentIds.length === 0 || !selectedWorkspaceId}
-              className={`flex-grow py-2 rounded-lg text-xs text-white font-semibold shadow-sm active:scale-95 transition-all ${selectedAgentIds.length === 0 || !selectedWorkspaceId
+              disabled={selectedAgentIds.length === 0 || (!isGuest && !selectedWorkspaceId)}
+              className={`flex-grow py-2 rounded-lg text-xs text-white font-semibold shadow-sm active:scale-95 transition-all ${selectedAgentIds.length === 0 || (!isGuest && !selectedWorkspaceId)
                   ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-550 border border-transparent cursor-not-allowed shadow-none'
                   : mode === 'single'
                     ? 'bg-lark-primary hover:bg-lark-primary-hover'

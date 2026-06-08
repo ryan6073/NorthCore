@@ -6057,42 +6057,45 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
                 [runId]: res.data
               }
             };
-
-            if (res.data.artifactChanges && Array.isArray(res.data.artifactChanges)) {
-              const revokedIds = res.data.artifactChanges
-                .filter((change: any) => change.action === 'revoked')
-                .map((change: any) => change.artifactId);
-
-              if (revokedIds.length > 0) {
-                updates.artifacts = state.artifacts.filter(
-                  art => !revokedIds.includes(art.id) && !revokedIds.includes(art.artifactId)
-                );
-              }
-
-              const revertedChanges = res.data.artifactChanges.filter(
-                (change: any) => change.action === 'version_reverted'
-              );
-              if (revertedChanges.length > 0 && !updates.artifacts) {
-                updates.artifacts = [...state.artifacts];
-              }
-              revertedChanges.forEach((change: any) => {
-                if (updates.artifacts) {
-                  updates.artifacts = updates.artifacts.map((art: any) => {
-                    if (art.id === change.artifactId || art.artifactId === change.artifactId) {
-                      return {
-                        ...art,
-                        latestVersion: change.currentVersion,
-                        updatedAt: getCurrentFullTime()
-                      };
-                    }
-                    return art;
-                  });
-                }
-              });
-            }
-
             return updates;
           });
+
+          // 完全重新从服务器拉取 workspace artifact list，不依赖本地缓存的增量计算
+          const runDetail = res.data;
+          const workspaceId = runDetail?.workspaceId;
+          const conversationId = runDetail?.conversationId || activeConversationId;
+
+          if (workspaceId) {
+            try {
+              const wsArtifactsRes = await getWorkspaceArtifacts(workspaceId);
+              if (wsArtifactsRes.code === 0 && wsArtifactsRes.data) {
+                set(state => ({
+                  workspaceArtifacts: {
+                    ...state.workspaceArtifacts,
+                    [workspaceId]: wsArtifactsRes.data
+                  }
+                }));
+              }
+            } catch (e) {
+              console.warn('[Store] 刷新 workspace artifacts 失败', e);
+            }
+          }
+
+          if (conversationId) {
+            try {
+              const convArtifactsRes = await getArtifactMetaList(conversationId);
+              if (convArtifactsRes.code === 0 && convArtifactsRes.data) {
+                set(state => ({
+                  conversationArtifacts: {
+                    ...state.conversationArtifacts,
+                    [conversationId]: convArtifactsRes.data
+                  }
+                }));
+              }
+            } catch (e) {
+              console.warn('[Store] 刷新 conversation artifacts 失败', e);
+            }
+          }
         }
       } catch (e) {
         console.error('[Store] 撤销沙箱更改失败', e);

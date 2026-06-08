@@ -603,6 +603,7 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                   
                   const isLockLost = status === 'mutation_lock_lost' || errorText.includes('workspace mutation lock 已失效');
                   const isOutsidePaths = status === 'outside_declared_target_paths' || (selectedStep.output?.outsideDeclaredTargetPaths && selectedStep.output.outsideDeclaredTargetPaths.length > 0) || (selectedStep.output?.extraChangedFiles && selectedStep.output.extraChangedFiles.length > 0);
+                  const isReadOnlyPlatformRuntimeRejected = errorText.includes('只读 platform runtime 产生了 workspace 修改，已拒绝提交');
                   const isToolBlocked = status === 'dynamic_workspace_tool_blocked' || errorText.includes('dynamic_workspace_tool_blocked');
 
                   if (isLockLost) {
@@ -648,6 +649,27 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                           <Ban className="w-4 h-4" /> 动态命令执行被阻止
                         </div>
                         该步骤被限制为纯文件写入，不能执行命令或环境安装。
+                      </div>
+                    );
+                  }
+
+                  if (isReadOnlyPlatformRuntimeRejected) {
+                    return (
+                      <div className="mb-3 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-300 text-xs">
+                        <div className="font-semibold flex items-center gap-1.5 mb-1 text-amber-400">
+                          <ShieldAlert className="w-4 h-4" /> 只读 Platform Runtime 写入已拒绝
+                        </div>
+                        该 Runtime 配置为只读模式，所有文件修改都被安全拒绝。
+                        {selectedStep.output?.rejectedFiles && selectedStep.output.rejectedFiles.length > 0 && (
+                          <div className="mt-2 p-2 bg-slate-950/60 rounded border border-slate-800 font-mono text-[10px] space-y-1">
+                            <div className="text-slate-400 font-semibold uppercase tracking-wider">被拒绝的文件路径:</div>
+                            {selectedStep.output.rejectedFiles.map((path: string, fIdx: number) => (
+                              <div key={fIdx} className="text-slate-350">
+                                • <span className="text-amber-400">{path}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   }
@@ -716,6 +738,25 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
             ) : (
               <div className="p-4 space-y-2">
                 <div className="text-[11px] uppercase text-slate-500 font-bold tracking-wider mb-2">沙箱环境生成的文件</div>
+                {(() => {
+                  const allSkippedFiles: string[] = activeRun.steps?.flatMap((step: AgentRunStep) => step.output?.skippedFiles || []) || [];
+                  if (allSkippedFiles.length === 0) return null;
+                  return (
+                    <div className="mb-3 p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-lg text-indigo-300 text-xs">
+                      <div className="font-semibold flex items-center gap-1.5 mb-1 text-indigo-400">
+                        <ShieldAlert className="w-4 h-4" /> 敏感文件未发布为产物
+                      </div>
+                      以下 .env / key / 密钥类敏感文件已自动跳过，不会发布为公开产物。
+                      <div className="mt-2 p-2 bg-slate-950/60 rounded border border-slate-800 font-mono text-[10px] space-y-1">
+                        {allSkippedFiles.map((path: string, fIdx: number) => (
+                          <div key={fIdx} className="text-slate-350">
+                            • <span className="text-indigo-400">{path}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
                 {runFiles.length === 0 ? (
                   <div className="text-center py-8 text-slate-500 text-xs">
                     当前尚未生成任何文件
