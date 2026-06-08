@@ -267,12 +267,14 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
   }, [artifact, artifactVersions]);
 
   // Active version that is currently selected or default currentVersionId
+  // 需要校验 selectedArtifactVersionId/selectedArtifactVersion 属于当前 artifact
   const currentVersion: ArtifactVersion | null = useMemo(() => {
     if (!versions.length) return null;
-    if (selectedArtifactVersionId) {
+    const selectedArtifactId = useAgentHubStore.getState().selectedArtifactId;
+    if (selectedArtifactVersionId && selectedArtifactId === artifact?.id) {
       return versions.find(v => v.id === selectedArtifactVersionId) || versions[versions.length - 1];
     }
-    if (selectedArtifactVersion !== null) {
+    if (selectedArtifactVersion !== null && selectedArtifactId === artifact?.id) {
       return versions.find(v => v.version === selectedArtifactVersion) || versions[versions.length - 1];
     }
     return versions.find(v => v.id === artifact?.currentVersionId) || versions[versions.length - 1];

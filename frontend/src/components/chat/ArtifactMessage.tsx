@@ -68,6 +68,7 @@ const ArtifactMessage: React.FC<ArtifactMessageProps> = ({ message }) => {
     return (
       <div className="w-full h-[420px] border border-lark-border dark:border-slate-800 rounded-xl overflow-hidden shadow-sm my-2 bg-white dark:bg-slate-900 flex flex-col animate-fade-in transition-colors">
         <ArtifactPreview
+          key={artifact.id}
           artifact={artifact}
           initialVersion={resolvedVersion}
           initialVersionId={resolvedVersionId}

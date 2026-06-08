@@ -1281,8 +1281,10 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
                       : 'border-slate-100 dark:border-slate-850 hover:border-slate-205 dark:hover:border-slate-750'
                   }`}
                   onClick={() => {
+                    setLocalVersionId(v.id);
                     setLocalVersionNumber(v.version);
                     if (selectedArtifactId && artifact && selectedArtifactId === artifact.id) {
+                      useAgentHubStore.getState().setSelectedArtifactVersionId(v.id);
                       useAgentHubStore.getState().setSelectedArtifactVersion(v.version);
                     }
                   }}
