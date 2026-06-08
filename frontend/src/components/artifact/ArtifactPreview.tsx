@@ -314,17 +314,18 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   // Inline multi-file HTML assets (CSS, JS, Images) in frontend, ensure 100% matches user's latest edits
   const buildIntegratedHtml = (baseHtml: string): string => {
     let result = baseHtml;
-    
+
     const resolvePath = (relPath: string) => {
       if (!currentArtifact) return relPath;
-      const baseParts = currentArtifact.title.replace(/\\/g, '/').split('/');
+      const baseSource = currentArtifact.filePath || currentArtifact.title || '';
+      const baseParts = baseSource.replace(/\\/g, '/').split('/');
       baseParts.pop(); // remove file name
-      
+
       const relParts = relPath.replace(/\\/g, '/').split('/');
       for (const part of relParts) {
         if (part === '.' || part === '') continue;
         if (part === '..') {
-          baseParts.pop();
+          if (baseParts.length > 0) baseParts.pop();
         } else {
           baseParts.push(part);
         }
@@ -398,19 +399,33 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     return result;
   };
 
+  /**
+   * 重写 HTML 中的相对路径为后端 API 预览路径
+   * 修复点：
+   * 1. resolvePath 优先用 artifact.filePath 作为基础路径（更准确），回退到 title
+   * 2. 只对 CDN/绝对URL不处理，仅处理相对路径
+   * 3. 不重写 data: URI 和 // 协议相对路径
+   */
   const rewriteRelativeUrls = (html: string, runId: string): string => {
     if (!html || !currentArtifact) return html;
     let result = html;
-    
+
     const resolvePath = (relPath: string) => {
-      const baseParts = currentArtifact.title.replace(/\\/g, '/').split('/');
+      // 跳过绝对 URL、CDN URL、data: URI、协议相对路径
+      if (/^(https?:|data:|blob:|ftp:|#|\/\/)/i.test(relPath)) return relPath;
+      // 已经是绝对路径 / 开头，不处理
+      if (relPath.startsWith('/')) return relPath;
+
+      // 优先使用 filePath 作为基础路径，回退到 title
+      const baseSource = currentArtifact.filePath || currentArtifact.title || '';
+      const baseParts = baseSource.replace(/\\/g, '/').split('/');
       baseParts.pop(); // remove file name
-      
+
       const relParts = relPath.replace(/\\/g, '/').split('/');
       for (const part of relParts) {
         if (part === '.' || part === '') continue;
         if (part === '..') {
-          baseParts.pop();
+          if (baseParts.length > 0) baseParts.pop();
         } else {
           baseParts.push(part);
         }
@@ -430,28 +445,29 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       base = `${window.location.protocol}//${window.location.host}/api/v1`;
     }
 
-    // 1. Rewrite Images: <img src="xxx">
-    const imgRegex = /(<img[^>]*src=["'])([^"']+\.(png|jpg|jpeg|gif|svg|webp|ico))(["'][^>]*>)/gi;
-    result = result.replace(imgRegex, (match, prefix, filePath, ext, suffix) => {
+    // 1. Rewrite Images: <img src="xxx"> 只处理相对路径
+    const imgRegex = /(<img[^>]*src=["'])([^"']+?)(["'][^>]*>)/gi;
+    result = result.replace(imgRegex, (match, prefix, filePath, suffix) => {
+      if (/^(https?:|data:|blob:|ftp:|#|\/\/)/i.test(filePath) || filePath.startsWith('/')) return match;
       const resolved = resolvePath(filePath);
       const backendUrl = `${base}/runs/${runId}/preview/${encodeURIComponent(resolved)}`;
       return `${prefix}${backendUrl}${suffix}`;
     });
 
-    // 2. Rewrite CSS links: <link rel="stylesheet" href="xxx">
+    // 2. Rewrite CSS links: <link rel="stylesheet" href="xxx"> 只处理相对路径
     const cssRegex = /(<link[^>]*href=["'])([^"']+\.css)(["'][^>]*>)/gi;
     result = result.replace(cssRegex, (match, prefix, filePath, suffix) => {
-      if (match.toLowerCase().includes('stylesheet')) {
-        const resolved = resolvePath(filePath);
-        const backendUrl = `${base}/runs/${runId}/preview/${encodeURIComponent(resolved)}`;
-        return `${prefix}${backendUrl}${suffix}`;
-      }
-      return match;
+      if (!match.toLowerCase().includes('stylesheet')) return match;
+      if (/^(https?:|data:|blob:|ftp:|#|\/\/)/i.test(filePath) || filePath.startsWith('/')) return match;
+      const resolved = resolvePath(filePath);
+      const backendUrl = `${base}/runs/${runId}/preview/${encodeURIComponent(resolved)}`;
+      return `${prefix}${backendUrl}${suffix}`;
     });
 
-    // 3. Rewrite Script tags: <script src="xxx">
+    // 3. Rewrite Script tags: <script src="xxx"> 只处理相对路径
     const jsRegex = /(<script[^>]*src=["'])([^"']+\.js)(["'][^>]*>)/gi;
     result = result.replace(jsRegex, (match, prefix, filePath, suffix) => {
+      if (/^(https?:|data:|blob:|ftp:|#|\/\/)/i.test(filePath) || filePath.startsWith('/')) return match;
       const resolved = resolvePath(filePath);
       const backendUrl = `${base}/runs/${runId}/preview/${encodeURIComponent(resolved)}`;
       return `${prefix}${backendUrl}${suffix}`;
@@ -919,7 +935,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
               ) : (
                 <iframe
                   key={`html-preview-${currentVersion?.version || 1}-${currentArtifact?.id}`}
-                  srcDoc={useAgentHubStore.getState().useMockMode ? previewHtml : (serverPreviewHtml || '')}
+                  srcDoc={useAgentHubStore.getState().useMockMode ? previewHtml : (serverPreviewHtml || currentVersion?.content || '')}
                   className="w-full h-full bg-white"
                   title="HTML Preview"
                   sandbox="allow-scripts allow-same-origin"
