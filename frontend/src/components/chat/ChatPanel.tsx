@@ -686,15 +686,22 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
 
   return (
     <div
-      className={`flex-grow h-full flex flex-col bg-white dark:bg-slate-900 relative z-0 transition-all duration-200 ${
-        isDragOver
-          ? 'ring-[3px] ring-violet-400 ring-inset bg-violet-50/40 dark:bg-violet-950/20 shadow-[inset_0_0_40px_rgba(139,92,246,0.08)]'
-          : ''
-      }`}
+      className="flex-grow h-full flex flex-col bg-white dark:bg-slate-900 relative z-0 transition-colors"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {/* 拖拽 Agent 到群聊的遮罩提示 - 参考浮窗效果 */}
+      {isDragOver && (
+        <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[3px] z-[200] flex items-center justify-center pointer-events-none animate-fade-in">
+          <div className="p-6 bg-white/90 dark:bg-slate-900/90 border-2 border-dashed border-violet-500/80 dark:border-violet-400 rounded-3xl shadow-2xl flex flex-col items-center justify-center gap-2.5">
+            <Plus className="w-10 h-10 text-violet-500 animate-bounce-subtle" />
+            <h3 className="text-sm font-bold text-violet-700 dark:text-violet-300">✨ 添加 Agent 到群聊 ✨</h3>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">松开鼠标即可将 Agent 加入当前群聊</p>
+          </div>
+        </div>
+      )}
+
       {(showEmojiPicker || showMentionPopup) && (
         <div className="fixed inset-0 z-50 bg-transparent" onClick={() => {
           setShowEmojiPicker(false);
