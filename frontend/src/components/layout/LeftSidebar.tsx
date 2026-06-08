@@ -75,8 +75,6 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
   const [deleteConvId, setDeleteConvId] = useState<string | null>(null);
   const [deleteConvTitle, setDeleteConvTitle] = useState<string>('');
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
-  const [isSessionsExpanded, setIsSessionsExpanded] = useState(true);
-  const [isAgentChatsExpanded, setIsAgentChatsExpanded] = useState(true);
   const [isArchivedExpanded, setIsArchivedExpanded] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
@@ -180,10 +178,6 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
 
   const sessionConversations = sortConversations(
     activeConversations.filter(conv => conv.mode !== 'agent')
-  );
-
-  const agentConversations = sortConversations(
-    activeConversations.filter(conv => conv.mode === 'agent' && conv.visible !== false)
   );
 
   const archivedConversations = sortConversations(
@@ -425,55 +419,12 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
             </div>
           )}
 
-          {/* 2. Chat (Standard Sessions) */}
-          <div className="space-y-1">
-            <button
-              onClick={() => setIsSessionsExpanded(!isSessionsExpanded)}
-              className="w-full flex items-center justify-between px-1 py-1 text-[11px] font-bold text-lark-text-secondary dark:text-slate-400 hover:bg-slate-200/40 dark:hover:bg-slate-800/40 rounded-md transition-colors group select-none"
-            >
-              <div className="flex items-center gap-1.5">
-                {isSessionsExpanded ? <ChevronDown className="w-3 h-3 text-slate-400" /> : <ChevronRight className="w-3 h-3 text-slate-400" />}
-                <span>Chat</span>
-                <span className="px-1 py-0.2 text-[9px] bg-slate-100 dark:bg-slate-900 text-lark-text-tertiary dark:text-slate-550 border border-lark-border/30 dark:border-slate-800/50 rounded ml-1 font-normal font-sans">
-                  {sessionConversations.length}
-                </span>
-              </div>
-            </button>
-
-            {isSessionsExpanded && (
-              <div className="space-y-0.5">
-                {sessionConversations.length === 0 ? (
-                  <p className="text-xs text-lark-text-tertiary dark:text-slate-500 text-center py-4">无活动会话</p>
-                ) : (
-                  sessionConversations.map(conv => renderConversationItem(conv))
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* 3. Agent chat (Agent long-term conversations) */}
-          <div className="space-y-1">
-            <button
-              onClick={() => setIsAgentChatsExpanded(!isAgentChatsExpanded)}
-              className="w-full flex items-center justify-between px-1 py-1 text-[11px] font-bold text-lark-text-secondary dark:text-slate-400 hover:bg-slate-200/40 dark:hover:bg-slate-800/40 rounded-md transition-colors group select-none"
-            >
-              <div className="flex items-center gap-1.5">
-                {isAgentChatsExpanded ? <ChevronDown className="w-3 h-3 text-slate-400" /> : <ChevronRight className="w-3 h-3 text-slate-400" />}
-                <span>Agent chat</span>
-                <span className="px-1 py-0.2 text-[9px] bg-slate-100 dark:bg-slate-900 text-lark-text-tertiary dark:text-slate-550 border border-lark-border/30 dark:border-slate-800/50 rounded ml-1 font-normal font-sans">
-                  {agentConversations.length}
-                </span>
-              </div>
-            </button>
-
-            {isAgentChatsExpanded && (
-              <div className="space-y-0.5">
-                {agentConversations.length === 0 ? (
-                  <p className="text-xs text-lark-text-tertiary dark:text-slate-500 text-center py-4">无专属对话</p>
-                ) : (
-                  agentConversations.map(conv => renderConversationItem(conv))
-                )}
-              </div>
+          {/* Chat (所有会话，无展开/收起） */}
+          <div className="space-y-0.5">
+            {sessionConversations.length === 0 ? (
+              <p className="text-xs text-lark-text-tertiary dark:text-slate-500 text-center py-4">无活动会话</p>
+            ) : (
+              sessionConversations.map(conv => renderConversationItem(conv))
             )}
           </div>
         </div>
@@ -490,7 +441,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
             } else {
               try {
                 await getOrCreateAgentChat(agentId);
-                setViewMode('conversations');
+                // 不再切换到会话列表，保留在 agents 视图
               } catch (e) {
                 console.error("Failed to start contact chat", e);
               }
