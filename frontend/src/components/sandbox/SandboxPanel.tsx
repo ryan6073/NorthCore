@@ -693,23 +693,8 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                   const stripAnsi = (str: string) => str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
                   const lines = selectedStep.log.split('\n');
 
-                  // 检测是否包含 tool call 失败信息，注入到日志中展示
-                  const toolCalls = (selectedStep as any).output?.toolCalls || [];
-                  const failedTools = toolCalls.filter((tc: any) => tc.status === 'failed');
-
                   return (
                     <>
-                      {failedTools.length > 0 && failedTools.map((tc: any, fi: number) => (
-                        <div key={fi} className="mb-2 p-2 bg-rose-500/10 border border-rose-500/20 rounded-lg text-rose-300 text-[10px]">
-                          <div className="font-semibold flex items-center gap-1 mb-1 text-rose-400">
-                            <AlertTriangle className="w-3 h-3" /> Tool Call 失败: {tc.name || tc.tool}
-                          </div>
-                          <div className="text-rose-200/80">{tc.error || tc.result?.error || '未知错误'}</div>
-                          {tc.result?.status && (
-                            <div className="mt-1 text-rose-400/70">状态: {tc.result.status}</div>
-                          )}
-                        </div>
-                      ))}
                       {lines.map((line: string, i: number) => {
                         const clean = stripAnsi(line);
                         let lineColor = 'text-slate-300';

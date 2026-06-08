@@ -4672,15 +4672,17 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       });
 
       const unsubRunStepToolFailed = wsClient.on('run.step.tool.failed', (event: any) => {
-        const { runId, stepId, toolCall, error } = event.data;
+        const { runId, stepId, toolCall } = event.data;
         const toolName = toolCall?.name || toolCall?.tool || 'unknown';
+        // 从 toolCall 内部取 error（WS 数据中 error 在 toolCall 对象内）
+        const toolError = toolCall?.error || toolCall?.result?.error || 'Unknown error';
         set(state => {
           const targetRun = state.runDetailsById[runId];
           if (!targetRun) return {};
           const updatedSteps = targetRun.steps?.map((step: any) => {
             if (step.id === stepId) {
               const currentLog = step.log || step.logs || '';
-              const newLog = `${currentLog}❌ [Tool Call Failed] ${toolName} error: ${error || 'Unknown error'}\n`;
+              const newLog = `${currentLog}❌ [Tool Call Failed] ${toolName} error: ${toolError}\n`;
               return { 
                 ...step, 
                 log: newLog,
