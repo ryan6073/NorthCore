@@ -1867,8 +1867,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         return;
       }
 
-      // Load conversation-level agent configurations in parallel
-      if (activeConv && activeConv.mode !== 'agent') {
+      // Load conversation-level agent configurations in parallel（包括 agent chat）
+      if (activeConv) {
         const agentIds = activeConv.agentIds || [];
         const configPromises = agentIds.map(async (agentId) => {
           try {
