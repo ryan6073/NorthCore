@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Agent } from '@/types';
 import { Ionicons } from '@expo/vector-icons';
+import AuthImage from './AuthImage';
 
 interface AgentCardProps {
   agent: Agent;
@@ -10,19 +11,22 @@ interface AgentCardProps {
 
 export default function AgentCard({ agent, onPress }: AgentCardProps) {
   const isOnline = agent.status === 'online';
+  const name = String((agent as any).name || (agent as any).displayName || '未命名智能体');
+  const description = String((agent as any).description || (agent as any).summary || '暂无智能体说明');
+  const tags: unknown[] = Array.isArray((agent as any).tags) ? (agent as any).tags : [];
 
   return (
     <TouchableOpacity style={styles.container} onPress={onPress} activeOpacity={0.75}>
       <View style={styles.header}>
         <View style={styles.avatar}>
           {agent.avatar ? (
-            <Image
-              source={{ uri: agent.avatar }}
-              style={{ width: '100%', height: '100%', borderRadius: 14 }}
+            <AuthImage
+              uri={agent.avatar}
+              style={{ flex: 1, borderRadius: 14 }}
               resizeMode="cover"
             />
           ) : (
-            <Text style={styles.avatarText}>{agent.name.charAt(0)}</Text>
+            <Text style={styles.avatarText}>{name.charAt(0)}</Text>
           )}
           <View style={[styles.statusIndicator, isOnline ? styles.statusOnline : styles.statusOffline]} />
         </View>
@@ -34,15 +38,15 @@ export default function AgentCard({ agent, onPress }: AgentCardProps) {
         </View>
       </View>
       
-      <Text style={styles.name} numberOfLines={1}>{agent.name}</Text>
+      <Text style={styles.name} numberOfLines={1}>{name}</Text>
       <Text style={styles.description} numberOfLines={2}>
-        {agent.description}
+        {description}
       </Text>
       
       <View style={styles.tagsContainer}>
-        {agent.tags.slice(0, 2).map((tag, index) => (
+        {tags.slice(0, 2).map((tag, index) => (
           <View key={index} style={styles.tag}>
-            <Text style={styles.tagText}>{tag}</Text>
+            <Text style={styles.tagText}>{String(tag)}</Text>
           </View>
         ))}
       </View>
@@ -53,15 +57,15 @@ export default function AgentCard({ agent, onPress }: AgentCardProps) {
 const styles = StyleSheet.create({
   container: {
     backgroundColor: '#ffffff',
-    borderRadius: 16,
+    borderRadius: 14,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#dee0e3',
+    borderColor: '#e8ecf3',
     shadowColor: '#1f2329',
-    shadowOpacity: 0.02,
-    shadowRadius: 10,
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
-    elevation: 1,
+    elevation: 2,
   },
   header: {
     flexDirection: 'row',
@@ -100,10 +104,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#8f959e',
   },
   categoryBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    backgroundColor: '#f5f6f7',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: '#f5f7fb',
+    borderWidth: 1,
+    borderColor: '#eef2f7',
   },
   categoryText: {
     fontSize: 10,
@@ -112,7 +118,7 @@ const styles = StyleSheet.create({
   },
   name: {
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#1f2329',
     marginBottom: 6,
   },
@@ -129,9 +135,9 @@ const styles = StyleSheet.create({
   },
   tag: {
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    backgroundColor: '#deebff',
-    borderRadius: 6,
+    paddingVertical: 4,
+    backgroundColor: '#edf4ff',
+    borderRadius: 8,
   },
   tagText: {
     fontSize: 11,

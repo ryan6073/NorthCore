@@ -90,12 +90,15 @@ const ArtifactList: React.FC<ArtifactListProps> = ({
   };
 
   const filteredArtifacts = useMemo(() => {
-    if (!searchQuery) return baseArtifacts;
-    return baseArtifacts.filter(art =>
-      art.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (art.type && art.type.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (art.runId && art.runId.toLowerCase().includes(searchQuery.toLowerCase()))
-    );
+    let result = baseArtifacts.filter(art => art.status !== 'revoked');
+    if (searchQuery) {
+      result = result.filter(art =>
+        art.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (art.type && art.type.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (art.runId && art.runId.toLowerCase().includes(searchQuery.toLowerCase()))
+      );
+    }
+    return result;
   }, [baseArtifacts, searchQuery]);
 
   const groups = useMemo(() => {
@@ -113,11 +116,13 @@ const ArtifactList: React.FC<ArtifactListProps> = ({
       result[runId].items.push(art);
     });
     
-    return Object.values(result).sort((a, b) => {
-      if (a.id === 'direct') return 1;
-      if (b.id === 'direct') return -1;
-      return b.id.localeCompare(a.id);
-    });
+    return Object.values(result)
+      .filter(group => group.items.length > 0)
+      .sort((a, b) => {
+        if (a.id === 'direct') return 1;
+        if (b.id === 'direct') return -1;
+        return b.id.localeCompare(a.id);
+      });
   }, [filteredArtifacts]);
 
   const buildTreeDataForGroup = (groupItems: Artifact[]) => {

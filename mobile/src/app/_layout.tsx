@@ -2,15 +2,36 @@ import { useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { useMessageStore } from '@/stores/useMessageStore';
+import { useAgentStore } from '@/stores/useAgentStore';
 
 export default function RootLayout() {
-  const { isAuthenticated, checkAuth } = useAuthStore();
+  const { isAuthenticated, token, checkAuth } = useAuthStore();
+  const { connectWS, disconnectWS } = useMessageStore();
+  const { fetchAgents } = useAgentStore();
   const segments = useSegments();
   const router = useRouter();
 
   useEffect(() => {
     checkAuth();
   }, []);
+
+  // WS lifecycle: connect when authenticated, disconnect on logout
+  useEffect(() => {
+    if (isAuthenticated && token) {
+      // Small delay to let routing settle, then connect WS + load agents
+      const timer = setTimeout(() => {
+        connectWS(token);
+        fetchAgents();
+      }, 500);
+      return () => {
+        clearTimeout(timer);
+        disconnectWS();
+      };
+    } else if (isAuthenticated === false) {
+      disconnectWS();
+    }
+  }, [isAuthenticated, token]);
 
   useEffect(() => {
     if (isAuthenticated === null) return;

@@ -6,7 +6,6 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
-  Image,
   Alert,
   Platform,
 } from 'react-native';
@@ -15,6 +14,7 @@ import { useConversationStore } from '@/stores/useConversationStore';
 import { useAgentStore } from '@/stores/useAgentStore';
 import { conversationApi } from '@/api/conversationApi';
 import { Ionicons } from '@expo/vector-icons';
+import AuthImage from '@/components/AuthImage';
 
 export default function ChatSettingsScreen() {
   const { conversationId } = useLocalSearchParams<{ conversationId: string }>();
@@ -194,7 +194,7 @@ export default function ChatSettingsScreen() {
                   onPress={() => handleAddAgent(agent.id)}
                   disabled={loading}
                 >
-                  <Image source={{ uri: agent.avatar }} style={styles.inviteAvatar} />
+                  <AuthImage uri={agent.avatar} style={styles.inviteAvatar} />
                   <Text style={styles.inviteName} numberOfLines={1}>{agent.name}</Text>
                   <Ionicons name="add-circle" size={16} color="#3370ff" style={styles.inviteAddIcon} />
                 </TouchableOpacity>
@@ -207,7 +207,7 @@ export default function ChatSettingsScreen() {
         <View style={styles.agentList}>
           {activeAgents.map(agent => (
             <View key={agent.id} style={styles.agentItem}>
-              <Image source={{ uri: agent.avatar }} style={styles.agentAvatar} />
+              <AuthImage uri={agent.avatar} style={styles.agentAvatar} />
               <View style={styles.agentInfo}>
                 <Text style={styles.agentName}>{agent.name}</Text>
                 <Text style={styles.agentDesc} numberOfLines={1}>{agent.description}</Text>

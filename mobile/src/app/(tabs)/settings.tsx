@@ -1,10 +1,12 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Platform, Switch } from 'react-native';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { useSettingsStore } from '@/stores/useSettingsStore';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function SettingsScreen() {
   const { logout } = useAuthStore();
+  const { useMock, setUseMock } = useSettingsStore();
 
   const handleLogout = () => {
     const performLogout = () => {
@@ -38,9 +40,34 @@ export default function SettingsScreen() {
       </View>
 
       <View style={styles.menuSection}>
+        <TouchableOpacity
+          style={styles.menuItem}
+          activeOpacity={0.82}
+          onPress={() => setUseMock(!useMock)}
+        >
+          <View style={styles.menuLeft}>
+            <View style={styles.menuIcon}>
+              <Ionicons name="construct-outline" size={18} color="#3370ff" />
+            </View>
+            <View style={styles.menuTextContainer}>
+              <Text style={styles.menuText}>Mock模式</Text>
+              <Text style={styles.menuDesc}>后端不可用时也能测试</Text>
+            </View>
+          </View>
+          <View style={styles.switchSlot}>
+            <Switch
+              value={useMock}
+              onValueChange={setUseMock}
+              trackColor={{ false: '#dee0e3', true: '#3370ff' }}
+            />
+          </View>
+        </TouchableOpacity>
+
         <TouchableOpacity style={styles.menuItem}>
           <View style={styles.menuLeft}>
-            <Ionicons name="notifications-outline" size={20} color="#666" />
+            <View style={styles.menuIcon}>
+              <Ionicons name="notifications-outline" size={18} color="#3370ff" />
+            </View>
             <Text style={styles.menuText}>通知设置</Text>
           </View>
           <Ionicons name="chevron-forward" size={16} color="#ccc" />
@@ -48,7 +75,9 @@ export default function SettingsScreen() {
 
         <TouchableOpacity style={styles.menuItem}>
           <View style={styles.menuLeft}>
-            <Ionicons name="shield-checkmark-outline" size={20} color="#666" />
+            <View style={styles.menuIcon}>
+              <Ionicons name="shield-checkmark-outline" size={18} color="#3370ff" />
+            </View>
             <Text style={styles.menuText}>隐私与安全</Text>
           </View>
           <Ionicons name="chevron-forward" size={16} color="#ccc" />
@@ -56,7 +85,9 @@ export default function SettingsScreen() {
 
         <TouchableOpacity style={styles.menuItem}>
           <View style={styles.menuLeft}>
-            <Ionicons name="help-circle-outline" size={20} color="#666" />
+            <View style={styles.menuIcon}>
+              <Ionicons name="help-circle-outline" size={18} color="#3370ff" />
+            </View>
             <Text style={styles.menuText}>帮助与反馈</Text>
           </View>
           <Ionicons name="chevron-forward" size={16} color="#ccc" />
@@ -73,22 +104,27 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f6f7',
+    backgroundColor: '#f6f8fb',
     padding: 16,
   },
   profileSection: {
     alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: 16,
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
     padding: 24,
-    marginBottom: 24,
+    marginBottom: 18,
     borderWidth: 1,
-    borderColor: '#dee0e3',
+    borderColor: '#e8ecf3',
+    shadowColor: '#1f2329',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.06,
+    shadowRadius: 16,
+    elevation: 3,
   },
   avatar: {
     width: 80,
     height: 80,
-    borderRadius: 24,
+    borderRadius: 26,
     backgroundColor: '#3370ff',
     justifyContent: 'center',
     alignItems: 'center',
@@ -96,7 +132,7 @@ const styles = StyleSheet.create({
   },
   avatarText: {
     fontSize: 32,
-    fontWeight: 'bold',
+    fontWeight: '800',
     color: '#fff',
   },
   username: {
@@ -110,12 +146,17 @@ const styles = StyleSheet.create({
     color: '#646a73',
   },
   menuSection: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
     paddingVertical: 8,
-    marginBottom: 24,
+    marginBottom: 18,
     borderWidth: 1,
-    borderColor: '#dee0e3',
+    borderColor: '#e8ecf3',
+    shadowColor: '#1f2329',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    elevation: 2,
   },
   menuItem: {
     flexDirection: 'row',
@@ -124,27 +165,59 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#f5f6f7',
+    borderBottomColor: '#eef2f7',
   },
   menuLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    flex: 1,
+    minWidth: 0,
+    marginRight: 12,
   },
   menuText: {
-    fontSize: 16,
+    fontSize: 15,
+    fontWeight: '700',
     color: '#1f2329',
+  },
+  menuTextContainer: {
+    flexDirection: 'column',
+    flex: 1,
+    minWidth: 0,
+  },
+  menuDesc: {
+    fontSize: 12,
+    color: '#8f959e',
+    marginTop: 2,
   },
   logoutButton: {
     backgroundColor: '#ff3b30',
-    borderRadius: 12,
-    paddingVertical: 14,
+    borderRadius: 14,
+    paddingVertical: 15,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#ff3b30',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    elevation: 3,
   },
   logoutText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  menuIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#edf4ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  switchSlot: {
+    width: 58,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
 });

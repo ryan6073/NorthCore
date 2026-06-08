@@ -256,6 +256,7 @@ function App() {
               }
               return (
                 <AgentDetailPanel
+                  key={`${configuringAgentId}-${isSessionLevel ? 'session' : 'global'}-${activeConversationId || 'none'}`}
                   agent={configAgent}
                   globalAgent={globalAgent}
                   isNew={configuringAgentId === 'new'}

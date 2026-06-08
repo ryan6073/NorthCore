@@ -30,14 +30,15 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
   }, [toolCatalog.length, loadToolCatalog]);
 
   const handleSyncToGlobal = async () => {
-    if (!onSyncToGlobal) return;
+    if (!activeConversationId) return;
     setSyncing(true);
     try {
-      await onSyncToGlobal(form);
+      await agentService.syncConversationAgentConfigToGlobal(activeConversationId, agent.id);
       setSynced(true);
       setTimeout(() => setSynced(false), 2000);
     } catch (e) {
       console.error('Failed to sync config to global', e);
+      alert('同步失败，请重试');
     } finally {
       setSyncing(false);
     }
@@ -98,72 +99,57 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
     }
   }, [toolCatalog]);
 
-  // Synchronize derived permissions when tools change
-  useEffect(() => {
-    const derivedPermissions: AgentPermission = {
-      canReadFiles: false,
-      canWriteFiles: false,
-      canRunCommands: false,
-      canGenerateArtifacts: false,
-      canDeploy: false
-    };
-
-    form.tools.forEach(tool => {
-      if (tool.enabled) {
-        const catItem = toolCatalog.find(c => c.id === tool.id);
-        const permissionKeys = catItem?.permissionKeys || [];
-        permissionKeys.forEach(key => {
-          if (key in derivedPermissions) {
-            derivedPermissions[key as keyof AgentPermission] = true;
-          }
-        });
-      }
-    });
-
-    const hasChanged = Object.keys(derivedPermissions).some(
-      key => derivedPermissions[key as keyof AgentPermission] !== form.permissions[key as keyof AgentPermission]
-    );
-
-    if (hasChanged) {
-      setForm(prev => ({
-        ...prev,
-        permissions: derivedPermissions
-      }));
-    }
-  }, [form.tools, toolCatalog, form.permissions]);
 
   const providers: AgentProvider[] = ['mock', 'claude-code', 'codex', 'opencode', 'local-qwen', 'custom'];
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitting(true);
 
-    if (form.runtime !== 'native' && !form.modelConfigId) {
-      alert('建议您为当前运行模式选择一个模型配置（Model Config）。');
-    }
+    try {
+      if (form.runtime !== 'native' && !form.modelConfigId) {
+        alert('建议您为当前运行模式选择一个模型配置（Model Config）。');
+      }
 
-    if (form.runtime === 'claude_code') {
-      const selectedConfig = modelConfigs.find(c => c.id === form.modelConfigId);
-      if (!selectedConfig || (selectedConfig.provider !== 'anthropic' && selectedConfig.provider !== 'anthropic_compatible')) {
-        const confirmSave = window.confirm('检测到您选择的模型配置不是 Anthropic 或 Anthropic-compatible，Claude Code 可能无法在此配置下正常运行。是否确认保存？');
-        if (!confirmSave) {
-          return;
+      if (form.runtime === 'claude_code') {
+        const selectedConfig = modelConfigs.find(c => c.id === form.modelConfigId);
+        if (!selectedConfig || (selectedConfig.provider !== 'anthropic' && selectedConfig.provider !== 'anthropic_compatible')) {
+          const confirmSave = window.confirm('检测到您选择的模型配置不是 Anthropic 或 Anthropic-compatible，Claude Code 可能无法在此配置下正常运行。是否确认保存？');
+          if (!confirmSave) {
+            return;
+          }
         }
       }
+
+      const cleanRuntimeConfig = { ...(form.runtimeConfig || {}) };
+      delete (cleanRuntimeConfig as any).apiKey;
+      delete (cleanRuntimeConfig as any).baseUrl;
+      delete (cleanRuntimeConfig as any).modelName;
+      delete (cleanRuntimeConfig as any).provider;
+      delete (cleanRuntimeConfig as any).opencode_bin;
+      delete (cleanRuntimeConfig as any).codex_bin;
+      delete (cleanRuntimeConfig as any).claude_code_bin;
+
+      const updatedAgent = {
+        ...form,
+        runtimeConfig: cleanRuntimeConfig
+      };
+
+      if (isSessionLevel && activeConversationId) {
+        await agentService.updateConversationAgentConfig(activeConversationId, agent.id, updatedAgent);
+      } else {
+        await agentService.updateAgentDetail(agent.id, updatedAgent);
+      }
+
+      onSave(updatedAgent);
+    } catch (error) {
+      console.error('Failed to save agent config:', error);
+      alert('保存失败，请重试');
+    } finally {
+      setSubmitting(false);
     }
-
-    const cleanRuntimeConfig = { ...(form.runtimeConfig || {}) };
-    delete (cleanRuntimeConfig as any).apiKey;
-    delete (cleanRuntimeConfig as any).baseUrl;
-    delete (cleanRuntimeConfig as any).modelName;
-    delete (cleanRuntimeConfig as any).provider;
-    delete (cleanRuntimeConfig as any).opencode_bin;
-    delete (cleanRuntimeConfig as any).codex_bin;
-    delete (cleanRuntimeConfig as any).claude_code_bin;
-
-    onSave({
-      ...form,
-      runtimeConfig: cleanRuntimeConfig
-    });
   };
 
   const toggleTool = (toolId: string) => {
@@ -820,6 +806,8 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                             riskBadge = <span className="text-[9px] px-1.5 py-0.2 rounded bg-red-500/10 text-red-500 font-semibold border border-red-500/20 ml-2">高风险</span>;
                           }
 
+                          const isHighRisk = riskLevel === 'high' || riskLevel === 'critical';
+
                           return (
                             <div
                               key={tool.id}
@@ -828,7 +816,9 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                                 !isCompatible
                                   ? 'border-slate-100 dark:border-slate-900 bg-slate-50/50 dark:bg-slate-955/10 opacity-50 cursor-not-allowed'
                                   : tool.enabled
-                                    ? 'border-emerald-500 bg-emerald-50/15 dark:bg-emerald-500/5 shadow-sm cursor-pointer'
+                                    ? isHighRisk
+                                      ? 'border-amber-500 bg-amber-500/5 dark:bg-amber-500/5 shadow-sm cursor-pointer'
+                                      : 'border-emerald-500 bg-emerald-50/15 dark:bg-emerald-500/5 shadow-sm cursor-pointer'
                                     : 'border-slate-200 dark:border-slate-800 bg-slate-50/20 dark:bg-slate-955/20 hover:bg-slate-100/50 dark:hover:bg-slate-800/40 cursor-pointer'
                               }`}
                             >
@@ -836,7 +826,9 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                                 !isCompatible
                                   ? 'border-slate-200 dark:border-slate-800 bg-slate-105 dark:bg-slate-900'
                                   : tool.enabled
-                                    ? 'bg-emerald-500 border-emerald-500 text-white shadow-sm shadow-emerald-500/20'
+                                    ? isHighRisk
+                                      ? 'bg-amber-500 border-amber-500 text-white shadow-sm shadow-amber-500/20'
+                                      : 'bg-emerald-500 border-emerald-500 text-white shadow-sm shadow-emerald-500/20'
                                     : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950'
                               }`}>
                                 {tool.enabled && <Check className="w-3.5 h-3.5 stroke-[3]" />}
@@ -846,7 +838,9 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                                   !isCompatible
                                     ? 'text-slate-450 dark:text-slate-600'
                                     : tool.enabled
-                                      ? 'text-emerald-700 dark:text-emerald-450'
+                                      ? isHighRisk
+                                        ? 'text-amber-700 dark:text-amber-450'
+                                        : 'text-emerald-700 dark:text-emerald-450'
                                       : 'text-slate-700 dark:text-slate-350'
                                 }`}>
                                   {tool.name || catItem?.name || tool.id}
@@ -855,6 +849,12 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
                                 <span className="text-[10px] text-slate-400 dark:text-slate-555 mt-1 block leading-normal">
                                   {tool.description || catItem?.description}
                                 </span>
+                                {isCompatible && tool.enabled && isHighRisk && (
+                                  <span className="text-[9px] text-amber-600 dark:text-amber-400 mt-1.5 font-semibold flex items-center gap-1 bg-amber-500/10 dark:bg-amber-500/5 px-2 py-0.5 rounded border border-amber-500/20 w-fit">
+                                    <AlertCircle className="w-3 h-3 text-amber-500 flex-shrink-0" />
+                                    高风险工具：请谨慎授予，确保智能体来源可信。
+                                  </span>
+                                )}
                                 {!isCompatible && (
                                   <span className="text-[9px] text-red-500/80 dark:text-red-400/80 mt-1 block font-medium">
                                     当前模式 ({form.runtime}) 不支持该工具
@@ -952,15 +952,15 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
 
           {/* Persistent Floating Save action footer */}
           <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-t border-slate-200/60 dark:border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center sm:justify-end gap-2.5 flex-shrink-0 bg-white dark:bg-slate-900 shadow-md">
-            {isSessionLevel && onSyncToGlobal && (
+            {isSessionLevel && (
               <button
                 type="button"
                 onClick={handleSyncToGlobal}
                 disabled={syncing}
                 className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-550 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/10 active:scale-95 disabled:opacity-50 w-full sm:w-auto animate-fade-in"
               >
-                {synced ? <Check className="w-3.5 h-3.5" /> : <Globe className="w-3.5 h-3.5" />}
-                <span>{synced ? '已同步到全局' : '同步为全局配置'}</span>
+                {synced ? <Check className="w-3.5 h-3.5" /> : syncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Globe className="w-3.5 h-3.5" />}
+                <span>{synced ? '已同步到全局' : syncing ? '同步中...' : '同步为全局配置'}</span>
               </button>
             )}
             <button
@@ -973,10 +973,11 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
             <button
               type="submit"
               form="agent-config-form"
-              className="px-6 py-2.5 bg-violet-600 hover:bg-violet-550 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md shadow-violet-600/10 active:scale-95 w-full sm:w-auto"
+              disabled={submitting}
+              className="px-6 py-2.5 bg-violet-600 hover:bg-violet-550 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md shadow-violet-600/10 active:scale-95 w-full sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Save className="w-3.5 h-3.5" />
-              <span>保存修改</span>
+              {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              <span>{submitting ? '保存中...' : '保存修改'}</span>
             </button>
           </div>
         </div>

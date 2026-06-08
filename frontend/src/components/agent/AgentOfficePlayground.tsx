@@ -176,8 +176,7 @@ const HorseAgentV2: React.FC<{ agent: Agent; activityType: 'work' | 'game' | 'gy
 };
 
 export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ agents, agentIds, onClose }) => {
-  // Toggle between classic emoji and realistic dynamic styles
-  const [styleMode, setStyleMode] = React.useState<'emoji' | 'dynamic'>('dynamic');
+  const styleMode: 'emoji' = 'emoji';
 
   // Filter agents by the active conversation's assigned agents
   const displayAgents = agentIds && agentIds.length > 0
@@ -276,7 +275,8 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
   });
 
   return (
-    <div className="w-full p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800/80 shadow-sm mb-4 select-none animate-slide-down">
+    <div className="w-full p-4 bg-white/90 dark:bg-slate-900/90 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 shadow-[0_18px_45px_rgba(15,23,42,0.08)] dark:shadow-[0_18px_45px_rgba(0,0,0,0.22)] mb-3 select-none animate-slide-down overflow-hidden relative">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-gradient-to-b from-indigo-50/80 via-cyan-50/30 to-transparent dark:from-indigo-950/30 dark:via-cyan-950/10" />
       {/* Self-contained CSS Keyframes for Animations */}
       <style>{`
         @keyframes office-typing {
@@ -530,42 +530,31 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
       `}</style>
 
       {/* Header Info */}
-      <div className="flex items-center justify-between mb-3.5 pb-2 border-b border-slate-200/60 dark:border-slate-800/60">
-        <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 font-sans">
-          <Monitor className="w-3.5 h-3.5 text-indigo-500" />
-          会话智能体办公室 (Horse-head Office)
-        </h3>
+      <div className="relative flex items-center justify-between mb-4 pb-3 border-b border-slate-200/70 dark:border-slate-800/70">
+        <div className="min-w-0">
+          <h3 className="text-sm font-extrabold text-slate-850 dark:text-slate-100 flex items-center gap-2 font-sans tracking-tight">
+            <span className="w-7 h-7 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/20">
+              <Monitor className="w-3.5 h-3.5" />
+            </span>
+            智能体办公室
+          </h3>
+          <p className="text-[10px] text-slate-500 dark:text-slate-450 mt-1">
+            实时查看当前会话成员的工作、等待和休息状态
+          </p>
+        </div>
         <div className="flex items-center gap-2">
-          {/* Style Mode Selector Switch */}
-          <div className="flex bg-slate-200 dark:bg-slate-800 p-0.5 rounded-lg text-[9px] font-bold select-none border border-slate-300/40 dark:border-slate-700/40 mr-1 shadow-xs">
-            <button
-              onClick={() => setStyleMode('emoji')}
-              className={`px-1.5 py-0.5 rounded-md transition-all ${
-                styleMode === 'emoji' 
-                  ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-xs' 
-                  : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-350'
-              }`}
-            >
-              经典Emoji
-            </button>
-            <button
-              onClick={() => setStyleMode('dynamic')}
-              className={`px-1.5 py-0.5 rounded-md transition-all ${
-                styleMode === 'dynamic' 
-                  ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-xs' 
-                  : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-350'
-              }`}
-            >
-              拟真动态
-            </button>
+          <div className="hidden sm:flex items-center gap-1.5 text-[10px] font-semibold">
+            <span className="px-2 py-1 rounded-full bg-indigo-50 dark:bg-indigo-950/35 text-indigo-650 dark:text-indigo-350 border border-indigo-100 dark:border-indigo-900/45">
+              工作 {workingAgents.length}
+            </span>
+            <span className="px-2 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/30 text-emerald-650 dark:text-emerald-350 border border-emerald-100 dark:border-emerald-900/45">
+              待命 {leisureAgents.length}
+            </span>
           </div>
-          <span className="text-[10px] text-slate-400 dark:text-slate-550 mr-1">
-            工作中: {workingAgents.length} | 休息中: {leisureAgents.length}
-          </span>
           {onClose && (
             <button 
               onClick={onClose}
-              className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-md text-slate-400 dark:text-slate-500 hover:text-slate-650 dark:hover:text-slate-200 transition-colors"
+              className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-650 dark:hover:text-slate-200 transition-colors"
               title="隐藏办公室"
             >
               <X className="w-3 h-3" />
@@ -575,14 +564,14 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
       </div>
 
       {/* Main Grid: Working & Leisure Panels */}
-      <div className="flex flex-col gap-4">
+      <div className="relative flex flex-col gap-4">
         {/* 1. Working Area (Desks) */}
         <div>
           <div className="text-[10px] font-bold text-indigo-500 dark:text-indigo-400 uppercase tracking-wider mb-2 select-none flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping"></span>
-            开发工作区 (Horse-head Workstations)
+            开发工作区
           </div>
-          <div className="grid grid-cols-4 gap-2.5">
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-2.5">
             {deskAssignments.map((assignedAgent, deskIndex) => (
               <div 
                 key={deskIndex}
@@ -609,13 +598,13 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
                       
                       {/* Interactive hover tooltip */}
                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-30 bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
-                        {assignedAgent.name}: 正在疯狂敲键盘开发中...
+                        {assignedAgent.name}: 正在处理当前任务
                       </div>
                     </div>
                     {/* Laptop Screen Indicator */}
-                    <div className="flex items-center gap-1 text-[8px] font-medium text-indigo-600 dark:text-indigo-400 font-sans">
+                    <div className="flex items-center gap-1 text-[8px] font-semibold text-indigo-600 dark:text-indigo-400 font-sans px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/40">
                       <Laptop className="w-2.5 h-2.5 text-indigo-500 animate-pulse" />
-                      Coding...
+                      处理中
                     </div>
                   </div>
                 ) : (
@@ -633,21 +622,21 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
         <div className="border-t border-slate-200/60 dark:border-slate-800/60 pt-3">
           <div className="text-[10px] font-bold text-emerald-500 dark:text-emerald-400 uppercase tracking-wider mb-2 flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-            员工休闲区 (Horse-head Lounge)
+            待命与休息区
           </div>
           
           {leisureAgents.length === 0 ? (
             <p className="text-[9px] text-slate-400 dark:text-slate-550 text-center py-2 italic font-medium">
-              所有的 Agent 马头人都在工位上勤劳工作呢！
+              所有智能体都在工作区处理任务
             </p>
           ) : (
             <div className="flex flex-wrap gap-2.5">
               {leisureAgents.map((agent) => {
                 const state = leisureStates[agent.id] || { type: 'game', seconds: 0 };
                 const activityMap = {
-                  game: { type: 'game' as const, label: '工位摸鱼', icon: Gamepad2, color: 'text-pink-500 bg-pink-50 dark:bg-pink-950/20' },
-                  gym: { type: 'gym' as const, label: '在健身', icon: Dumbbell, color: 'text-amber-500 bg-amber-50 dark:bg-amber-950/20' },
-                  sleep: { type: 'sleep' as const, label: '睡觉中', icon: BedDouble, color: 'text-purple-500 bg-purple-50 dark:bg-purple-950/20' },
+                  game: { type: 'game' as const, label: '待命巡检', icon: Gamepad2, color: 'text-pink-500 bg-pink-50 dark:bg-pink-950/20' },
+                  gym: { type: 'gym' as const, label: '状态热身', icon: Dumbbell, color: 'text-amber-500 bg-amber-50 dark:bg-amber-950/20' },
+                  sleep: { type: 'sleep' as const, label: '低功耗待机', icon: BedDouble, color: 'text-purple-500 bg-purple-50 dark:bg-purple-950/20' },
                 };
                 const activity = activityMap[state.type];
                 const ActivityIcon = activity.icon;
@@ -655,7 +644,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
                 return (
                   <div 
                     key={agent.id}
-                    className="flex items-center gap-2 p-2 bg-white dark:bg-slate-950/40 border border-slate-200/80 dark:border-slate-850 rounded-xl shadow-xs group relative animate-office-glow"
+                    className="flex items-center gap-2 p-2 bg-white/85 dark:bg-slate-950/45 border border-slate-200/80 dark:border-slate-850 rounded-xl shadow-sm group relative hover:-translate-y-0.5 hover:shadow-md transition-all"
                   >
                     {/* Horse-headed Man with specific leisure activity */}
                     <div className="relative">
@@ -676,7 +665,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
 
                     {/* Interactive hover status balloon */}
                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-30 bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
-                      {agent.name} {activity.type === 'sleep' ? '正在呼呼大睡 💤' : activity.type === 'gym' ? '在跑跑步机锻炼 🏃‍♂️' : '正在玩复古街机 🎮'} (已持续 {state.seconds}秒)
+                      {agent.name} 当前{activity.label}，已持续 {state.seconds} 秒
                     </div>
                   </div>
                 );

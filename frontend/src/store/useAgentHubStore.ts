@@ -15,6 +15,7 @@ import { registerApi, loginApi, loginAsGuestApi, getMeApi, logoutApi, updateProf
 import sandboxService from '@/services/http/sandboxService';
 import { platform, FileNode, WorkspaceInfo, AgentProcessInfo } from '@/utils/platform';
 import modelService from '@/services/http/modelService';
+import workspaceService, { WorkspaceItem, WorkspaceTreeNode as ServerWorkspaceTreeNode, FileContentData } from '@/services/http/workspaceService';
 
 const generateMockDocContent = (fileName: string, fileSize: number) => {
   const formattedSize = fileSize > 1024 * 1024 
@@ -529,12 +530,22 @@ const updateSandboxStatusMessage = (state: any, conversationId: string, runId: s
     createdAt: run.createdAt || getCurrentFullTime()
   };
 
+  if (existingMsgIndex === -1 && ['completed', 'failed', 'cancelled'].includes(run.status)) {
+    return state;
+  }
+
   const updatedMessages = [...targetMessages];
   if (existingMsgIndex > -1) {
     updatedMessages[existingMsgIndex] = message;
   } else {
     updatedMessages.push(message);
+    updatedMessages.sort((a: any, b: any) => {
+      const timeA = new Date(a.createdAt).getTime() || 0;
+      const timeB = new Date(b.createdAt).getTime() || 0;
+      return timeA - timeB;
+    });
   }
+
 
   const nextState = {
     ...state,
@@ -637,6 +648,27 @@ interface AgentHubStore {
   leftSidebarViewMode: 'conversations' | 'agents' | 'agent-detail' | 'files' | 'workspace' | 'notifications' | 'settings';
   useMockMode: boolean;
   wsStatus: 'connecting' | 'connected' | 'disconnected';
+
+  // Server-side Workspaces
+  serverWorkspaces: WorkspaceItem[];
+  serverDeletedWorkspaces: WorkspaceItem[];
+  serverCurrentWorkspace: WorkspaceItem | null;
+  serverWorkspaceTree: ServerWorkspaceTreeNode | null;
+  serverSelectedFileContent: FileContentData | null;
+  serverWorkspaceTotal: number;
+  serverWorkspacePage: number;
+  serverWorkspacePageSize: number;
+
+  fetchServerWorkspaces: (status?: 'active' | 'deleted' | 'all', page?: number) => Promise<void>;
+  createServerWorkspace: (name: string) => Promise<WorkspaceItem | null>;
+  renameServerWorkspace: (id: string, name: string) => Promise<void>;
+  deleteServerWorkspace: (id: string) => Promise<void>;
+  restoreServerWorkspace: (id: string) => Promise<void>;
+  purgeServerWorkspace: (id: string) => Promise<void>;
+  loadServerWorkspaceTree: (id: string) => Promise<void>;
+  loadServerFileContent: (id: string, path: string) => Promise<string>;
+  saveServerFileContent: (id: string, path: string, content: string) => Promise<boolean>;
+  uploadServerFile: (id: string, dir: string, file: File) => Promise<void>;
 
   // Desktop specific states
   currentWorkspace: WorkspaceInfo | null;
@@ -775,7 +807,7 @@ interface AgentHubStore {
   runConflictsByRunId: Record<string, any[]>; // SandboxConflict[]
   runFileContentsByRunId: Record<string, Record<string, string>>;
   selectedSandboxFilePathByRunId: Record<string, string | null>;
-  rightPanelTab: 'artifacts' | 'sandbox';
+  rightPanelTab: 'artifacts' | 'sandbox' | 'file-preview';
   workspaces: Workspace[];
   fileTreeByRunId: Record<string, WorkspaceTreeNode>;
   /** Orchestrator 规划阶段追踪，key=runId，value=已到达的 phase 列表（按时序） */
@@ -798,7 +830,7 @@ interface AgentHubStore {
     method?: string
   ) => void;
   clearSandboxDebugLogs: () => void;
-  setRightPanelTab: (tab: 'artifacts' | 'sandbox') => void;
+  setRightPanelTab: (tab: 'artifacts' | 'sandbox' | 'file-preview') => void;
   getActiveRunId: (conversationId: string | null) => string | null;
   getActiveRun: (conversationId: string | null) => any | null;
   setSelectedSandboxFilePath: (runId: string | null, path: string | null) => void;
@@ -826,6 +858,7 @@ interface AgentHubStore {
   removeRecentWorkspace: (workspacePath: string) => Promise<void>;
   setSelectedWorkspaceFilePath: (path: string | null) => void;
   loadWorkspaceFileContent: (path: string) => Promise<string>;
+  saveWorkspaceFileContent: (path: string, content: string) => Promise<boolean>;
   addFileToContext: (path: string) => void;
   removeFileFromContext: (path: string) => void;
   clearFileContext: () => void;
@@ -842,6 +875,8 @@ interface AgentHubStore {
   // Floating Chat Specific properties
   floatingConversations: FloatingConversation[];
   conversationMessages: Record<string, Message[]>;
+  conversationHasMore: Record<string, boolean>;
+  isLoadingMoreMessages: boolean;
   conversationArtifacts: Record<string, Artifact[]>;
   workspaceArtifacts: Record<string, Artifact[]>;
   conversationSelectedArtifactId: Record<string, string | null>;
@@ -851,6 +886,7 @@ interface AgentHubStore {
   removeFloatingConversation: (id: string) => void;
   updateFloatingConversation: (id: string, updates: Partial<FloatingConversation>) => void;
   sendMessageToConversation: (convId: string, content: string, attachments?: any[], targetAgentId?: string, useSandbox?: boolean, webSearchMode?: 'auto' | 'force' | 'off') => Promise<void>;
+  loadMoreMessages: (convId: string) => Promise<void>;
 }
 
 const mergeLocalFlags = (list: Conversation[]): Conversation[] => {
@@ -879,6 +915,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   messages: [],
   floatingConversations: [],
   conversationMessages: {},
+  conversationHasMore: {},
+  isLoadingMoreMessages: false,
   conversationArtifacts: {},
   workspaceArtifacts: {},
   conversationSelectedArtifactId: {},
@@ -901,6 +939,16 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   leftSidebarViewMode: 'conversations',
   useMockMode: USE_MOCK,
   wsStatus: 'disconnected',
+
+  // Server-side Workspaces
+  serverWorkspaces: [],
+  serverDeletedWorkspaces: [],
+  serverCurrentWorkspace: null,
+  serverWorkspaceTree: null,
+  serverSelectedFileContent: null,
+  serverWorkspaceTotal: 0,
+  serverWorkspacePage: 1,
+  serverWorkspacePageSize: 20,
 
   // Desktop specific states
   currentWorkspace: null,
@@ -978,6 +1026,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       if (convRes.code === 0) {
         const list = convRes.data.list;
         set({ conversations: mergeLocalFlags(list) });
+        await get().fetchServerWorkspaces('active');
+        await get().fetchServerWorkspaces('deleted');
         if (list.length > 0) {
           set({ activeConversationId: list[0].id });
           await get().loadConversationData(list[0].id);
@@ -1583,11 +1633,17 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
 
   setSelectedArtifactVersion: (version) => set({ selectedArtifactVersion: version }),
-  setIsNewConversationOpen: (open) => set({ isNewConversationOpen: open }),
+  setIsNewConversationOpen: (open) => set({
+    isNewConversationOpen: open,
+    ...(open ? { configuringAgentId: null, configuringAgentIsSessionLevel: false } : {})
+  }),
   setPreselectedAgentId: (id) => set({ preselectedAgentId: id }),
   setIsFullScreenOpen: (open) => set({ isFullScreenOpen: open }),
   setSelectedAgentId: (id) => set({ selectedAgentId: id }),
-  setConfiguringAgentId: (id, isSessionLevel = false) => set({ configuringAgentId: id, configuringAgentIsSessionLevel: isSessionLevel }),
+  setConfiguringAgentId: (id, isSessionLevel = false) => set({
+    configuringAgentId: id,
+    configuringAgentIsSessionLevel: id ? isSessionLevel : false
+  }),
   setLeftSidebarViewMode: (mode) => set({ leftSidebarViewMode: mode }),
 
   loadConversationData: async (convId) => {
@@ -1717,6 +1773,10 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           ...get().conversationMessages,
           [convId]: mergedMessages
         },
+        conversationHasMore: {
+          ...get().conversationHasMore,
+          [convId]: false
+        },
         conversationArtifacts: {
           ...get().conversationArtifacts,
           [convId]: mergedConvArtifacts
@@ -1767,8 +1827,24 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       const activeConv = get().conversations.find(c => c.id === convId);
       const workspaceId = activeConv?.workspaceId;
 
+      if (workspaceId) {
+        let wsItem = get().serverWorkspaces.find(w => w.id === workspaceId);
+        if (!wsItem) {
+          await get().fetchServerWorkspaces('active');
+          wsItem = get().serverWorkspaces.find(w => w.id === workspaceId);
+        }
+        if (wsItem) {
+          set({ serverCurrentWorkspace: wsItem });
+          get().loadServerWorkspaceTree(workspaceId).catch(() => {});
+        } else {
+          set({ serverCurrentWorkspace: null, serverWorkspaceTree: null });
+        }
+      } else {
+        set({ serverCurrentWorkspace: null, serverWorkspaceTree: null });
+      }
+
       const [msgRes, pinsRes, memoriesRes, artifactRes, wsArtifactRes] = await Promise.all([
-        getMessageList(convId),
+        getMessageList(convId, { limit: 20 }),
         getPins(convId),
         getMemories(convId),
         getArtifactMetaList(convId),
@@ -1832,14 +1908,17 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       }
 
       let messagesData: Message[] = [];
+      let hasMore = false;
       if (msgRes.code === 0 && msgRes.data && msgRes.data.list) {
-        messagesData = msgRes.data.list.map((m: Message) => {
+        const reversedList = [...msgRes.data.list].reverse();
+        messagesData = reversedList.map((m: Message) => {
           const mapped = mapMessageMetadata(m);
           return {
             ...mapped,
             isPinned: pinsData.some(p => p.messageId === m.id)
           };
         });
+        hasMore = msgRes.data.hasMore ?? false;
       }
 
       const currentMessages = get().messages;
@@ -1919,6 +1998,10 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           ...get().conversationMessages,
           [convId]: mergedMessages
         },
+        conversationHasMore: {
+          ...get().conversationHasMore,
+          [convId]: hasMore
+        },
         conversationPins: {
           ...get().conversationPins,
           [convId]: mergedPins
@@ -1982,6 +2065,54 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           memories: []
         });
       }
+    }
+  },
+
+  loadMoreMessages: async (convId) => {
+    const { useMockMode, conversationHasMore, isLoadingMoreMessages, conversationMessages } = get();
+    const hasMore = conversationHasMore[convId] ?? false;
+    
+    if (useMockMode || !hasMore || isLoadingMoreMessages) {
+      return;
+    }
+
+    const currentMsgs = conversationMessages[convId] || [];
+    if (currentMsgs.length === 0) {
+      return;
+    }
+
+    set({ isLoadingMoreMessages: true });
+    try {
+      const oldestMsgId = currentMsgs[0].id;
+      const res = await getMessageList(convId, { limit: 20, beforeId: oldestMsgId });
+      
+      if (res && res.code === 0 && res.data) {
+        const list = res.data.list || [];
+        const nextHasMore = res.data.hasMore ?? false;
+        
+        // Reverse list to match oldest-first ascending order
+        const reversedList = [...list].reverse();
+        const mappedList = reversedList.map((m: Message) => mapMessageMetadata(m));
+        
+        const updatedMsgs = [...mappedList, ...currentMsgs];
+        const isActive = get().activeConversationId === convId;
+        
+        set((state: any) => ({
+          conversationMessages: {
+            ...state.conversationMessages,
+            [convId]: updatedMsgs
+          },
+          conversationHasMore: {
+            ...state.conversationHasMore,
+            [convId]: nextHasMore
+          },
+          ...(isActive ? { messages: updatedMsgs } : {}),
+        }));
+      }
+    } catch (e) {
+      console.error('[Store] 加载更多历史消息失败', e);
+    } finally {
+      set({ isLoadingMoreMessages: false });
     }
   },
 
@@ -3615,6 +3746,14 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
       const unsubAllCompleted = wsClient.on('conversation.all_tasks.completed', (event: any) => {
         const { conversationId, summary, contextUsage, artifacts, runId } = event.data;
+
+        // Skip historical/replayed completion events pushed during subscription
+        const runDetail = get().runDetailsById[runId];
+        const isHistorical = runDetail && ['completed', 'failed', 'cancelled'].includes(runDetail.status);
+        if (isHistorical) {
+          return;
+        }
+
         set(state => {
           if (state.activeConversationId !== conversationId) return {};
 
@@ -4551,7 +4690,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           const user = { ...res.data.user, isLoggedIn: true };
           localStorage.setItem('auth_token', res.data.token);
           localStorage.setItem('ag_user', JSON.stringify(user));
-          set({ currentUser: user as any });
+          set({
+            currentUser: user as any,
+            configuringAgentId: null,
+            configuringAgentIsSessionLevel: false,
+            isNewConversationOpen: false,
+            preselectedAgentId: null,
+          });
           
           await get().loadBusinessData();
           return { success: true, message: '登录成功' };
@@ -4578,7 +4723,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       }
 
       const user = { name: found.name, email: found.email, avatar: found.avatar, isLoggedIn: true };
-      set({ currentUser: user });
+      set({
+        currentUser: user,
+        configuringAgentId: null,
+        configuringAgentIsSessionLevel: false,
+        isNewConversationOpen: false,
+        preselectedAgentId: null,
+      });
       localStorage.setItem('ag_user', JSON.stringify(user));
       return { success: true, message: '登录成功' };
     } catch (e) {
@@ -4596,7 +4747,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           const user = { ...res.data.user, isLoggedIn: true };
           localStorage.setItem('auth_token', res.data.token);
           localStorage.setItem('ag_user', JSON.stringify(user));
-          set({ currentUser: user as any });
+          set({
+            currentUser: user as any,
+            configuringAgentId: null,
+            configuringAgentIsSessionLevel: false,
+            isNewConversationOpen: false,
+            preselectedAgentId: null,
+          });
           
           await get().loadBusinessData();
           return { success: true, message: '注册成功' };
@@ -4654,7 +4811,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     }
 
     const user = { name, email, avatar, isLoggedIn: true };
-    set({ currentUser: user });
+    set({
+      currentUser: user,
+      configuringAgentId: null,
+      configuringAgentIsSessionLevel: false,
+      isNewConversationOpen: false,
+      preselectedAgentId: null,
+    });
     localStorage.setItem('ag_user', JSON.stringify(user));
   },
 
@@ -4670,7 +4833,19 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     localStorage.removeItem('auth_token');
     localStorage.removeItem('ag_user');
     get().disconnectWS();
-    set({ currentUser: null, activeConversationId: null, messages: [], pins: [], memories: [] });
+    set({
+      currentUser: null,
+      activeConversationId: null,
+      messages: [],
+      pins: [],
+      memories: [],
+      configuringAgentId: null,
+      configuringAgentIsSessionLevel: false,
+      isNewConversationOpen: false,
+      preselectedAgentId: null,
+      replyContext: null,
+      quoteArtifactRef: null,
+    });
   },
 
   updateProfile: async (name, email, avatar) => {
@@ -5870,17 +6045,54 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
 
   rollbackSandboxRun: async (runId) => {
-    const { useMockMode } = get();
+    const { useMockMode, activeConversationId } = get();
     if (!useMockMode) {
       try {
         const res = await sandboxService.rollbackSandboxRun(runId);
         if (res.code === 0 && res.data) {
-          set(state => ({
-            runDetailsById: {
-              ...state.runDetailsById,
-              [runId]: res.data
+          set(state => {
+            let updates: any = {
+              runDetailsById: {
+                ...state.runDetailsById,
+                [runId]: res.data
+              }
+            };
+
+            if (res.data.artifactChanges && Array.isArray(res.data.artifactChanges)) {
+              const revokedIds = res.data.artifactChanges
+                .filter((change: any) => change.action === 'revoked')
+                .map((change: any) => change.artifactId);
+
+              if (revokedIds.length > 0) {
+                updates.artifacts = state.artifacts.filter(
+                  art => !revokedIds.includes(art.id) && !revokedIds.includes(art.artifactId)
+                );
+              }
+
+              const revertedChanges = res.data.artifactChanges.filter(
+                (change: any) => change.action === 'version_reverted'
+              );
+              if (revertedChanges.length > 0 && !updates.artifacts) {
+                updates.artifacts = [...state.artifacts];
+              }
+              revertedChanges.forEach((change: any) => {
+                if (updates.artifacts) {
+                  updates.artifacts = updates.artifacts.map((art: any) => {
+                    if (art.id === change.artifactId || art.artifactId === change.artifactId) {
+                      return {
+                        ...art,
+                        latestVersion: change.currentVersion,
+                        updatedAt: getCurrentFullTime()
+                      };
+                    }
+                    return art;
+                  });
+                }
+              });
             }
-          }));
+
+            return updates;
+          });
         }
       } catch (e) {
         console.error('[Store] 撤销沙箱更改失败', e);
@@ -6037,6 +6249,317 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
   setWorkspaceSearchKeyword: (keyword) => set({ workspaceSearchKeyword: keyword }),
 
+  fetchServerWorkspaces: async (status = 'active', page = 1) => {
+    const { useMockMode, serverWorkspacePageSize } = get();
+    if (useMockMode) {
+      let activeList = get().serverWorkspaces;
+      let deletedList = get().serverDeletedWorkspaces;
+      if (activeList.length === 0 && deletedList.length === 0) {
+        activeList = [
+          {
+            id: 'ws-mock-1',
+            name: '项目工作区',
+            status: 'active',
+            createdAt: '2026-06-05 10:00:00',
+            updatedAt: '2026-06-05 10:10:00',
+            deletedAt: null,
+            conversationCount: 2,
+            lastUsedAt: '2026-06-05 10:10:00'
+          },
+          {
+            id: 'ws-mock-2',
+            name: '数据分析沙箱',
+            status: 'active',
+            createdAt: '2026-06-05 11:00:00',
+            updatedAt: '2026-06-05 11:30:00',
+            deletedAt: null,
+            conversationCount: 1,
+            lastUsedAt: '2026-06-05 11:30:00'
+          }
+        ];
+        set({ serverWorkspaces: activeList });
+      }
+      if (status === 'active') {
+        set({
+          serverWorkspaces: activeList,
+          serverWorkspaceTotal: activeList.length,
+          serverWorkspacePage: 1
+        });
+      } else if (status === 'deleted') {
+        set({
+          serverDeletedWorkspaces: deletedList,
+          serverWorkspaceTotal: deletedList.length,
+          serverWorkspacePage: 1
+        });
+      }
+      return;
+    }
+    try {
+      const res = await workspaceService.getWorkspaces({ status, page, pageSize: serverWorkspacePageSize });
+      if (res.code === 0 && res.data) {
+        const items = (res.data as any).items || res.data.list || [];
+        if (status === 'active') {
+          set({
+            serverWorkspaces: items,
+            serverWorkspaceTotal: res.data.total,
+            serverWorkspacePage: res.data.page
+          });
+        } else if (status === 'deleted') {
+          set({
+            serverDeletedWorkspaces: items,
+            serverWorkspaceTotal: res.data.total,
+            serverWorkspacePage: res.data.page
+          });
+        }
+      }
+    } catch (e) {
+      console.error('[Store] 获取服务器工作区失败', e);
+    }
+  },
+
+  createServerWorkspace: async (name) => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      const newWs: WorkspaceItem = {
+        id: `ws-mock-${Date.now()}`,
+        name,
+        status: 'active',
+        createdAt: getCurrentFullTime(),
+        updatedAt: getCurrentFullTime(),
+        deletedAt: null,
+        conversationCount: 0,
+        lastUsedAt: getCurrentFullTime()
+      };
+      set(state => ({
+        serverWorkspaces: [newWs, ...state.serverWorkspaces]
+      }));
+      return newWs;
+    }
+    const res = await workspaceService.createWorkspace(name);
+    if (res.code === 0 && res.data) {
+      await get().fetchServerWorkspaces('active');
+      return res.data;
+    } else {
+      throw res;
+    }
+  },
+
+  renameServerWorkspace: async (id, name) => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      set(state => ({
+        serverWorkspaces: state.serverWorkspaces.map(w => w.id === id ? { ...w, name, updatedAt: getCurrentFullTime() } : w),
+        serverCurrentWorkspace: state.serverCurrentWorkspace?.id === id ? { ...state.serverCurrentWorkspace, name, updatedAt: getCurrentFullTime() } : state.serverCurrentWorkspace
+      }));
+      return;
+    }
+    const res = await workspaceService.renameWorkspace(id, name);
+    if (res.code === 0) {
+      await get().fetchServerWorkspaces('active');
+      const { serverCurrentWorkspace } = get();
+      if (serverCurrentWorkspace && serverCurrentWorkspace.id === id) {
+        set({ serverCurrentWorkspace: { ...serverCurrentWorkspace, name } });
+      }
+    } else {
+      throw res;
+    }
+  },
+
+  deleteServerWorkspace: async (id) => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      const target = get().serverWorkspaces.find(w => w.id === id);
+      if (target) {
+        const deletedTarget = { ...target, status: 'deleted' as const, deletedAt: getCurrentFullTime() };
+        set(state => ({
+          serverWorkspaces: state.serverWorkspaces.filter(w => w.id !== id),
+          serverDeletedWorkspaces: [deletedTarget, ...state.serverDeletedWorkspaces],
+          serverCurrentWorkspace: state.serverCurrentWorkspace?.id === id ? null : state.serverCurrentWorkspace,
+          serverWorkspaceTree: state.serverCurrentWorkspace?.id === id ? null : state.serverWorkspaceTree,
+          conversations: state.conversations.map(c => c.workspaceId === id ? { ...c, workspaceId: null } : c)
+        }));
+      }
+      return;
+    }
+    const res = await workspaceService.deleteWorkspace(id);
+    if (res.code === 0) {
+      await get().fetchServerWorkspaces('active');
+      await get().fetchServerWorkspaces('deleted');
+      const { serverCurrentWorkspace, conversations } = get();
+      if (serverCurrentWorkspace && serverCurrentWorkspace.id === id) {
+        set({ serverCurrentWorkspace: null, serverWorkspaceTree: null });
+      }
+      // Unbind from conversations
+      set({
+        conversations: conversations.map(c =>
+          c.workspaceId === id ? { ...c, workspaceId: null } : c
+        )
+      });
+    } else {
+      throw res;
+    }
+  },
+
+  restoreServerWorkspace: async (id) => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      const target = get().serverDeletedWorkspaces.find(w => w.id === id);
+      if (target) {
+        const restoredTarget = { ...target, status: 'active' as const, deletedAt: null };
+        set(state => ({
+          serverDeletedWorkspaces: state.serverDeletedWorkspaces.filter(w => w.id !== id),
+          serverWorkspaces: [restoredTarget, ...state.serverWorkspaces]
+        }));
+      }
+      return;
+    }
+    const res = await workspaceService.restoreWorkspace(id);
+    if (res.code === 0) {
+      await get().fetchServerWorkspaces('active');
+      await get().fetchServerWorkspaces('deleted');
+    } else {
+      throw res;
+    }
+  },
+
+  purgeServerWorkspace: async (id) => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      set(state => ({
+        serverDeletedWorkspaces: state.serverDeletedWorkspaces.filter(w => w.id !== id)
+      }));
+      return;
+    }
+    const res = await workspaceService.purgeWorkspace(id);
+    if (res.code === 0) {
+      await get().fetchServerWorkspaces('deleted');
+    } else {
+      throw res;
+    }
+  },
+
+  loadServerWorkspaceTree: async (id) => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      const mockTree: ServerWorkspaceTreeNode = {
+        name: '项目工作区',
+        path: '',
+        type: 'directory',
+        children: [
+          { name: 'src', path: 'src', type: 'directory', children: [
+            { name: 'App.tsx', path: 'src/App.tsx', type: 'file' },
+            { name: 'index.css', path: 'src/index.css', type: 'file' }
+          ] },
+          { name: 'package.json', path: 'package.json', type: 'file' },
+          { name: 'README.md', path: 'README.md', type: 'file' }
+        ]
+      };
+      set({ serverWorkspaceTree: mockTree });
+      return;
+    }
+    try {
+      const res = await workspaceService.getFileTree(id);
+      if (res.code === 0 && res.data) {
+        set({ serverWorkspaceTree: res.data });
+      }
+    } catch (e) {
+      console.error('[Store] 加载服务器文件树失败', e);
+    }
+  },
+
+  loadServerFileContent: async (id, path) => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      const mockContent = path.endsWith('.json') ? '{\n  "name": "mock-project"\n}' : '/* Mock Content for ' + path + ' */';
+      const fileData: FileContentData = {
+        path,
+        name: path.split('/').pop() || '',
+        mime: 'text/plain',
+        size: mockContent.length,
+        sha256: 'mock-sha-' + path,
+        isText: true,
+        encoding: 'utf-8',
+        content: mockContent,
+        truncated: false
+      };
+      set({ serverSelectedFileContent: fileData });
+      return mockContent;
+    }
+    const res = await workspaceService.getFileContent(id, path);
+    if (res.code === 0 && res.data) {
+      set({ serverSelectedFileContent: res.data });
+      return res.data.content;
+    }
+    return '';
+  },
+
+  saveServerFileContent: async (id, path, content) => {
+    const { useMockMode, serverSelectedFileContent } = get();
+    if (useMockMode) {
+      if (serverSelectedFileContent) {
+        set({
+          serverSelectedFileContent: {
+            ...serverSelectedFileContent,
+            content,
+            sha256: 'mock-sha-updated-' + Date.now()
+          }
+        });
+      }
+      return true;
+    }
+    const baseSha256 = (serverSelectedFileContent && serverSelectedFileContent.path === path) ? serverSelectedFileContent.sha256 : '';
+    const res = await workspaceService.saveFileContent(id, path, content, baseSha256);
+    if (res.code === 0) {
+      await get().loadServerFileContent(id, path);
+      await get().loadServerWorkspaceTree(id);
+      return true;
+    } else {
+      throw res;
+    }
+  },
+
+  uploadServerFile: async (id, dir, file) => {
+    const { useMockMode } = get();
+    if (useMockMode) {
+      const addFileToMockTree = (node: ServerWorkspaceTreeNode): ServerWorkspaceTreeNode => {
+        if (node.path === dir || (dir === '' && node.path === '')) {
+          const children = node.children || [];
+          const exists = children.some(c => c.name === file.name);
+          if (exists) {
+            throw { code: 40900, message: '文件已存在', data: { error: 'file_exists', path: dir ? `${dir}/${file.name}` : file.name } };
+          }
+          return {
+            ...node,
+            children: [...children, { name: file.name, path: dir ? `${dir}/${file.name}` : file.name, type: 'file' }]
+          };
+        }
+        if (node.children) {
+          return {
+            ...node,
+            children: node.children.map(c => addFileToMockTree(c))
+          };
+        }
+        return node;
+      };
+      const tree = get().serverWorkspaceTree;
+      if (tree) {
+        try {
+          const updated = addFileToMockTree(tree);
+          set({ serverWorkspaceTree: updated });
+        } catch (e) {
+          throw e;
+        }
+      }
+      return;
+    }
+    const res = await workspaceService.uploadFile(id, dir, file);
+    if (res.code === 0) {
+      await get().loadServerWorkspaceTree(id);
+    } else {
+      throw res;
+    }
+  },
+
   selectWorkspace: async () => {
     set({ workspaceStatus: 'loading' });
     try {
@@ -6130,6 +6653,24 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     } catch (e) {
       console.error('Load workspace file content error:', e);
       return '';
+    }
+  },
+
+  saveWorkspaceFileContent: async (path, content) => {
+    const { currentWorkspace } = get();
+    if (!currentWorkspace) return false;
+    try {
+      const fullPath = (path.startsWith('/') || path.includes(':')) ? path : `${currentWorkspace.path}/${path}`;
+      const res = await platform.file.writeText(fullPath, content);
+      if (res.success) {
+        set({ selectedWorkspaceFileContent: content });
+        await get().scanWorkspace();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error('Save workspace file content error:', e);
+      return false;
     }
   },
 

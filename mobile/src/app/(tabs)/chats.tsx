@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, FlatList, View, ActivityIndicator, Text, TouchableOpacity, TextInput, ScrollView, Alert, Platform, Modal, Dimensions } from 'react-native';
+import { StyleSheet, FlatList, View, ActivityIndicator, Text, TouchableOpacity, TextInput, Alert, Platform, Modal, Dimensions } from 'react-native';
 import { router, Stack } from 'expo-router';
 import { useConversationStore } from '@/stores/useConversationStore';
 import { useAgentStore } from '@/stores/useAgentStore';
@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 export default function ChatsScreen() {
   const { conversations, loading, fetchConversations, pinConversation, archiveConversation, deleteConversation } = useConversationStore();
-  const { agents } = useAgentStore();
+  const { fetchAgents } = useAgentStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'chat' | 'agent' | 'archived'>('chat');
   const [selectedConv, setSelectedConv] = useState<any>(null);
@@ -18,11 +18,15 @@ export default function ChatsScreen() {
 
   useEffect(() => {
     fetchConversations();
+    fetchAgents();
   }, []);
 
-  const filteredConversations = (conversations || []).filter(c => 
-    c.title.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const safeConversations = Array.isArray(conversations) ? conversations.filter(Boolean) : [];
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filteredConversations = safeConversations.filter((c: any) => {
+    const title = String(c?.title || c?.name || '未命名会话');
+    return title.toLowerCase().includes(normalizedQuery);
+  });
 
   // Grouping matches frontend logic:
   // - archived: isArchived is true
@@ -59,35 +63,8 @@ export default function ChatsScreen() {
     }
   };
 
-  if (loading && conversations.length === 0) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#3370ff" />
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.container}>
-      <Stack.Screen
-        options={{
-          headerTitle: '会话列表',
-          headerTitleAlign: 'center',
-          headerTitleStyle: { fontSize: 17, fontWeight: '700', color: '#1f2329' },
-          headerStyle: { backgroundColor: '#ffffff' },
-          headerShadowVisible: false,
-          headerRight: () => (
-            <TouchableOpacity
-              onPress={() => router.push('/chats/create')}
-              style={{ marginRight: 16 }}
-            >
-              <Ionicons name="add" size={24} color="#3370ff" />
-            </TouchableOpacity>
-          ),
-        }}
-      />
-
-      {/* Search Input Box */}
+  const renderListHeader = () => (
+    <>
       <View style={styles.searchWrapper}>
         <View style={styles.searchBar}>
           <Ionicons name="search-outline" size={16} color="#8f959e" style={{ marginRight: 8 }} />
@@ -106,7 +83,6 @@ export default function ChatsScreen() {
         </View>
       </View>
 
-      {/* Lark Segments / Category Switcher */}
       <View style={styles.tabsWrapper}>
         <TouchableOpacity
           style={[styles.tabBtn, activeTab === 'chat' && styles.tabBtnActive]}
@@ -133,10 +109,42 @@ export default function ChatsScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+    </>
+  );
+
+  if (loading && conversations.length === 0) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#3370ff" />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <Stack.Screen
+        options={{
+          headerTitle: '会话列表',
+          headerTitleAlign: 'center',
+          headerTitleStyle: { fontSize: 17, fontWeight: '800', color: '#111827' },
+          headerStyle: { backgroundColor: '#ffffff' },
+          headerShadowVisible: false,
+          headerRight: () => (
+            <TouchableOpacity
+              onPress={() => router.push('/chats/create')}
+              style={styles.headerAddButton}
+            >
+              <Ionicons name="add" size={22} color="#3370ff" />
+            </TouchableOpacity>
+          ),
+        }}
+      />
 
       <FlatList
+        style={styles.list}
         data={getActiveData()}
         keyExtractor={(item) => item.id}
+        ListHeaderComponent={renderListHeader}
         renderItem={({ item }) => (
           <ConversationItem
             conversation={item}
@@ -153,7 +161,13 @@ export default function ChatsScreen() {
         )}
         onRefresh={fetchConversations}
         refreshing={loading}
-        contentContainerStyle={{ paddingBottom: 16 }}
+        contentContainerStyle={styles.listContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        bounces
+        alwaysBounceVertical
+        overScrollMode="always"
+        scrollEventThrottle={16}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="chatbubbles-outline" size={40} color="#c5c7cb" style={{ marginBottom: 12 }} />
@@ -212,7 +226,9 @@ export default function ChatsScreen() {
                   <View style={[styles.arrow, styles.arrowDown, { left: arrowLeft }]} />
                 )}
                 
-                <Text style={styles.menuHeader} numberOfLines={1}>{selectedConv.title}</Text>
+                <Text style={styles.menuHeader} numberOfLines={1}>
+                  {String(selectedConv.title || selectedConv.name || '未命名会话')}
+                </Text>
                 
                 <TouchableOpacity
                   style={styles.menuBtn}
@@ -249,11 +265,11 @@ export default function ChatsScreen() {
                     };
 
                     if (Platform.OS === 'web') {
-                      if (window.confirm(`确认删除会话 "${selectedConv.title}" 吗？该操作不可恢复！`)) {
+                      if (window.confirm(`确认删除会话 "${selectedConv.title || selectedConv.name || '未命名会话'}" 吗？该操作不可恢复！`)) {
                         performDelete();
                       }
                     } else {
-                      Alert.alert('警告', `确认删除会话 "${selectedConv.title}" 吗？该操作将清空所有消息记录！`, [
+                      Alert.alert('警告', `确认删除会话 "${selectedConv.title || selectedConv.name || '未命名会话'}" 吗？该操作将清空所有消息记录！`, [
                         { text: '取消', style: 'cancel' },
                         { text: '删除', style: 'destructive', onPress: performDelete }
                       ]);
@@ -275,20 +291,35 @@ export default function ChatsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f6f8fb',
+  },
+  list: {
+    flex: 1,
+  },
+  listContent: {
+    flexGrow: 1,
+    paddingBottom: 28,
   },
   searchWrapper: {
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: '#ffffff',
+    paddingTop: 12,
+    paddingBottom: 10,
+    backgroundColor: '#f6f8fb',
   },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f5f6f7',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    height: 36,
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    height: 42,
+    borderWidth: 1,
+    borderColor: '#e8ecf3',
+    shadowColor: '#1f2329',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    elevation: 1,
   },
   searchInput: {
     flex: 1,
@@ -298,19 +329,26 @@ const styles = StyleSheet.create({
   },
   tabsWrapper: {
     flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: '#eff0f1',
-    backgroundColor: '#ffffff',
-    paddingHorizontal: 8,
+    backgroundColor: '#eef2f7',
+    padding: 4,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    borderRadius: 14,
   },
   tabBtn: {
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
+    flex: 1,
+    paddingVertical: 9,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    alignItems: 'center',
   },
   tabBtnActive: {
-    borderBottomColor: '#3370ff',
+    backgroundColor: '#ffffff',
+    shadowColor: '#1f2329',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 1,
   },
   tabText: {
     fontSize: 13,
@@ -324,7 +362,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f6f8fb',
   },
   emptyContainer: {
     paddingTop: 80,
@@ -353,6 +391,15 @@ const styles = StyleSheet.create({
     elevation: 10,
     borderWidth: 1,
     borderColor: '#eff0f1',
+  },
+  headerAddButton: {
+    marginRight: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#edf4ff',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   menuHeader: {
     fontSize: 13,

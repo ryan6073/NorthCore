@@ -3,6 +3,7 @@ import { Conversation } from '@/types';
 import { conversationApi } from '@/api/conversationApi';
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import { getConversations } from '@/services/conversationService';
 
 const isWeb = Platform.OS === 'web';
 
@@ -41,35 +42,8 @@ interface ConversationState {
   pinConversation: (id: string, isPinned: boolean) => Promise<void>;
   archiveConversation: (id: string, isArchived: boolean) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
+  updateConversation: (id: string, partial: Partial<Conversation>) => void;
 }
-
-const mockConversations: Conversation[] = [
-  {
-    id: '1',
-    title: '代码助手对话',
-    mode: 'agent',
-    agentIds: ['1'],
-    lastMessage: '好的，我已经完成了代码重构',
-    updatedAt: '2024-01-15 10:30:00',
-    isPinned: true,
-  },
-  {
-    id: '2',
-    title: '文档助手',
-    mode: 'agent',
-    agentIds: ['2'],
-    lastMessage: '文档已生成完毕',
-    updatedAt: '2024-01-15 09:15:00',
-  },
-  {
-    id: '3',
-    title: '工作群聊',
-    mode: 'group',
-    agentIds: ['1', '2'],
-    lastMessage: '大家有什么问题可以随时问我',
-    updatedAt: '2024-01-14 18:00:00',
-  },
-];
 
 export const useConversationStore = create<ConversationState>((set) => ({
   conversations: [],
@@ -78,26 +52,19 @@ export const useConversationStore = create<ConversationState>((set) => ({
   fetchConversations: async () => {
     set({ loading: true });
     try {
-      const data = await conversationApi.getConversations();
-      // Handle if backend returns PaginatedData wrapping the conversations list
-      const list = Array.isArray(data) ? data : ((data as any)?.list || []);
+      const list = await getConversations();
       const pinned = await localFlagsStore.getArray('ag_pinned_conversations');
       const archived = await localFlagsStore.getArray('ag_archived_conversations');
-      const merged = list.map((c: any) => ({
+      const sourceList = Array.isArray(list) ? list.filter(Boolean) : [];
+      const merged = sourceList.map((c: any) => ({
         ...c,
         isPinned: pinned.includes(c.id),
         isArchived: archived.includes(c.id),
       }));
       set({ conversations: merged });
     } catch (error) {
-      const pinned = await localFlagsStore.getArray('ag_pinned_conversations');
-      const archived = await localFlagsStore.getArray('ag_archived_conversations');
-      const merged = mockConversations.map((c) => ({
-        ...c,
-        isPinned: pinned.includes(c.id) || !!c.isPinned,
-        isArchived: archived.includes(c.id) || !!c.isArchived,
-      }));
-      set({ conversations: merged });
+      console.warn('[ConversationStore] fetchConversations failed', error);
+      set({ conversations: [] });
     } finally {
       set({ loading: false });
     }
@@ -157,5 +124,12 @@ export const useConversationStore = create<ConversationState>((set) => ({
       conversations: state.conversations.filter((c) => c.id !== id),
     }));
   },
-}));
 
+  updateConversation: (id, partial) => {
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === id ? { ...c, ...partial } : c
+      ),
+    }));
+  },
+}));

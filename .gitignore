@@ -82,4 +82,16 @@ sandboxes/
 
 docs/
 
+* text=auto
+
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.css text eol=lf
+*.scss text eol=lf
+=======
 ai-collab/
+

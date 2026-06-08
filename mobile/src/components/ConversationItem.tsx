@@ -1,19 +1,24 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, type GestureResponderEvent } from 'react-native';
 import { Conversation } from '@/types';
 import { Ionicons } from '@expo/vector-icons';
 import { useAgentStore } from '@/stores/useAgentStore';
+import AuthImage from './AuthImage';
 
 interface ConversationItemProps {
   conversation: Conversation;
   onPress: () => void;
-  onLongPress?: () => void;
+  onLongPress?: (event: GestureResponderEvent) => void;
 }
 
 export default function ConversationItem({ conversation, onPress, onLongPress }: ConversationItemProps) {
   const isPinned = conversation.isPinned;
   const isArchived = conversation.isArchived;
   const { agents } = useAgentStore();
+  const title = String((conversation as any).title || (conversation as any).name || '未命名会话');
+  const updatedAt = String((conversation as any).updatedAt || (conversation as any).createdAt || '');
+  const lastMessage = String((conversation as any).lastMessage || (conversation as any).lastMessageContent || '暂无新消息');
+  const conversationAgents = Array.isArray((conversation as any).agents) ? (conversation as any).agents : [];
 
   // Format time (e.g., "2024-01-15 10:30:00" -> "10:30")
   const getTimeString = (timeStr: string) => {
@@ -29,19 +34,44 @@ export default function ConversationItem({ conversation, onPress, onLongPress }:
     }
   };
 
-  const getAgentAvatar = (agentId: string) => {
-    return agents.find(a => a.id === agentId)?.avatar || '';
+  const getAgentId = (agent: any) => String(agent?.id || agent?.agentId || '');
+
+  const getAgentAvatarFromObject = (agent: any) => (
+    agent?.avatar ||
+    agent?.avatarUrl ||
+    agent?.avatar_url ||
+    agent?.icon ||
+    agent?.metadata?.avatar ||
+    ''
+  );
+
+  const getAgentAvatar = (agentLike: any) => {
+    if (typeof agentLike === 'object' && agentLike) {
+      const directAvatar = getAgentAvatarFromObject(agentLike);
+      if (directAvatar) return directAvatar;
+    }
+
+    const agentId = String(agentLike || '');
+    const fromConversation = conversationAgents.find((a: any) => getAgentId(a) === agentId);
+    const fromStore = agents.find((a: any) => getAgentId(a) === agentId);
+    return getAgentAvatarFromObject(fromConversation) || getAgentAvatarFromObject(fromStore);
+  };
+
+  const normalizeAgentRefs = () => {
+    const rawAgentIds = Array.isArray((conversation as any).agentIds) ? (conversation as any).agentIds : [];
+    const rawAgentId = (conversation as any).agentId ? [(conversation as any).agentId] : [];
+    return [...rawAgentIds, ...rawAgentId, ...conversationAgents].filter(Boolean);
   };
 
   const renderConversationIcon = () => {
-    const agentIds = conversation.agentIds || [];
+    const agentIds = normalizeAgentRefs();
     
     if (conversation.mode === 'single' || conversation.mode === 'agent') {
       const avatarUrl = getAgentAvatar(agentIds[0] || '');
       if (avatarUrl) {
         return (
-          <Image
-            source={{ uri: avatarUrl }}
+          <AuthImage
+            uri={avatarUrl}
             style={styles.avatarImage}
             resizeMode="cover"
           />
@@ -51,11 +81,11 @@ export default function ConversationItem({ conversation, onPress, onLongPress }:
       if (agentIds.length <= 2) {
         return (
           <View style={styles.avatarGrid}>
-            {agentIds.slice(0, 2).map((id, index) => {
-              const avatarUrl = getAgentAvatar(id);
+            {agentIds.slice(0, 2).map((agentRef, index) => {
+              const avatarUrl = getAgentAvatar(agentRef);
               return (
-                <View key={index} style={{ flex: 1, height: '100%', overflow: 'hidden' }}>
-                  <Image source={{ uri: avatarUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                <View key={index} style={{ flex: 1, overflow: 'hidden' }}>
+                  <AuthImage uri={avatarUrl} style={{ flex: 1 }} resizeMode="cover" />
                 </View>
               );
             })}
@@ -66,15 +96,15 @@ export default function ConversationItem({ conversation, onPress, onLongPress }:
       if (agentIds.length === 3) {
         return (
           <View style={[styles.avatarGrid, { flexDirection: 'row', padding: 1 }]}>
-            <View style={{ flex: 1, height: '100%', overflow: 'hidden', marginRight: 1 }}>
-              <Image source={{ uri: getAgentAvatar(agentIds[0]) }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+            <View style={{ flex: 1, overflow: 'hidden', marginRight: 1 }}>
+              <AuthImage uri={getAgentAvatar(agentIds[0])} style={{ flex: 1 }} resizeMode="cover" />
             </View>
-            <View style={{ flex: 1, height: '100%' }}>
+            <View style={{ flex: 1 }}>
               <View style={{ flex: 1, overflow: 'hidden', marginBottom: 1 }}>
-                <Image source={{ uri: getAgentAvatar(agentIds[1]) }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                <AuthImage uri={getAgentAvatar(agentIds[1])} style={{ flex: 1 }} resizeMode="cover" />
               </View>
               <View style={{ flex: 1, overflow: 'hidden' }}>
-                <Image source={{ uri: getAgentAvatar(agentIds[2]) }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                <AuthImage uri={getAgentAvatar(agentIds[2])} style={{ flex: 1 }} resizeMode="cover" />
               </View>
             </View>
           </View>
@@ -124,7 +154,7 @@ export default function ConversationItem({ conversation, onPress, onLongPress }:
               />
             )}
             <Text style={styles.title} numberOfLines={1}>
-              {conversation.title}
+              {title}
             </Text>
             {isArchived && (
               <View style={styles.archiveBadge}>
@@ -132,12 +162,12 @@ export default function ConversationItem({ conversation, onPress, onLongPress }:
               </View>
             )}
           </View>
-          <Text style={styles.time}>{getTimeString(conversation.updatedAt)}</Text>
+          <Text style={styles.time}>{getTimeString(updatedAt)}</Text>
         </View>
 
         <View style={styles.footer}>
           <Text style={styles.lastMessage} numberOfLines={1}>
-            {conversation.lastMessage || '暂无新消息'}
+            {lastMessage}
           </Text>
         </View>
       </View>
@@ -148,28 +178,36 @@ export default function ConversationItem({ conversation, onPress, onLongPress }:
 const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
     backgroundColor: '#ffffff',
     alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#eff0f1',
+    borderRadius: 14,
+    marginHorizontal: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#e8ecf3',
+    shadowColor: '#1f2329',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
   },
   containerPinned: {
-    backgroundColor: '#f4f6fa',
+    backgroundColor: '#f7faff',
+    borderColor: '#d6e5ff',
   },
   avatarWrapper: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
+    width: 48,
+    height: 48,
+    borderRadius: 14,
     overflow: 'hidden',
     backgroundColor: '#f5f6f7',
     borderWidth: 1,
-    borderColor: '#eff0f1',
+    borderColor: '#e6eaf2',
   },
   avatarImage: {
-    width: '100%',
-    height: '100%',
+    flex: 1,
   },
   avatarGrid: {
     width: '100%',
@@ -193,8 +231,8 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   title: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '800',
     color: '#1f2329',
   },
   archiveBadge: {
@@ -214,6 +252,7 @@ const styles = StyleSheet.create({
   time: {
     fontSize: 11,
     color: '#8f959e',
+    fontWeight: '600',
   },
   footer: {
     flexDirection: 'row',
@@ -222,6 +261,7 @@ const styles = StyleSheet.create({
   lastMessage: {
     flex: 1,
     fontSize: 13,
-    color: '#646a73',
+    color: '#6b7280',
+    lineHeight: 18,
   },
 });

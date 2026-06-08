@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, MessageSquarePlus, UserPlus, Edit2, Trash2, Circle, CircleDot, CircleDotDashed, ChevronDown, ChevronUp, Wrench, Settings as SettingsIcon } from 'lucide-react';
+import { X, MessageSquarePlus, Edit2, Trash2, Circle, CircleDot, CircleDotDashed, ChevronDown, ChevronUp, Wrench, Settings as SettingsIcon } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 import type { Agent } from '@/types';
 import ConfirmModal from '../modal/ConfirmModal';
@@ -258,45 +258,15 @@ const AgentProfileCard: React.FC<AgentProfileCardProps> = ({ agent, onClose, onG
               </div>
             </div>
 
-            {/* 可用工具 */}
-            {agent.tools && agent.tools.length > 0 && (
-              <div className="mb-5">
-                <h4 className="text-xs font-semibold text-slate-600 dark:text-slate-300 mb-2.5 flex items-center gap-1.5">
-                  <span className="w-1 h-3 bg-green-500 rounded-full" />
-                  可用工具
-                </h4>
-                <div className="space-y-1.5">
-                  {agent.tools.filter(t => t.enabled).map(tool => (
-                    <div key={tool.id} className="flex items-start gap-2.5 p-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200/30 dark:border-slate-800 hover:border-slate-200/80 dark:hover:border-slate-700 transition-all duration-150">
-                      <div className="w-4 h-4 rounded-full bg-green-500/10 dark:bg-green-500/20 text-green-600 dark:text-green-400 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      </div>
-                      <div className="min-w-0">
-                        <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 block">{tool.name}</span>
-                        <span className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed block mt-0.5">{tool.description}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
-            {/* 底部操作双按钮 */}
+            {/* 底部操作按钮 */}
             <div className="flex items-stretch gap-3 pt-2">
               <button
                 onClick={handleGoChat}
-                className="flex-1 flex items-center justify-center gap-1.5 py-3 bg-lark-primary text-white rounded-xl hover:bg-lark-primary-hover transition-all shadow-sm active:scale-[0.985] font-semibold text-sm"
+                className="w-full flex items-center justify-center gap-1.5 py-3 bg-lark-primary text-white rounded-xl hover:bg-lark-primary-hover transition-all shadow-sm active:scale-[0.985] font-semibold text-sm"
               >
                 <MessageSquarePlus className="w-4 h-4" />
                 发消息
-              </button>
-              <button
-                className="flex-1 flex items-center justify-center gap-1.5 py-3 bg-slate-100 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-800/90 transition-all shadow-sm active:scale-[0.985] font-medium text-sm border border-slate-200 dark:border-slate-700/50"
-              >
-                <UserPlus className="w-4 h-4" />
-                邀请入会话
               </button>
             </div>
           </div>
