@@ -225,17 +225,12 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-900 border-l border-slate-800 text-slate-200 overflow-hidden font-sans">
-      <div className="p-4 border-b border-slate-800 bg-slate-950/60 backdrop-blur-md">
+    <div className="flex flex-col h-full bg-slate-900/40 backdrop-blur-xl border-l border-slate-700/40 text-slate-200 overflow-hidden font-sans">
+      <div className="p-4 border-b border-slate-700/20 bg-slate-800/10 backdrop-blur-xl">
         <div className="flex items-start justify-between">
           <div>
             <div className="flex items-center space-x-2">
               <span className="text-xs uppercase tracking-wider font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded">Docker Sandbox V1</span>
-              {activeRun.runMode && (
-                <span className="text-[10px] font-semibold text-slate-350 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700/50">
-                  {activeRun.runMode === 'write' ? '写入模式' : activeRun.runMode === 'deploy' ? '部署模式' : '只读模式'}
-                </span>
-              )}
               {activeRun.status === 'queued' && activeRun.queuePosition !== undefined && activeRun.queuePosition !== null && (
                 <span className="text-[10px] font-semibold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 animate-pulse">
                   队列第 {activeRun.queuePosition} 位
@@ -260,46 +255,48 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
               </div>
             )}
           </div>
-          {(activeRun.status === 'running' || activeRun.status === 'pending' || activeRun.status === 'conflict' || activeRun.status === 'queued') && (
-            <button
-              onClick={() => activeRunId && cancelSandboxRun(activeRunId)}
-              className="text-xs flex items-center space-x-1 px-2.5 py-1.5 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-all font-medium"
-            >
-              <Ban className="w-3.5 h-3.5 mr-1" />
-              终止
-            </button>
-          )}
-          {(activeRun.status === 'completed' || activeRun.status === 'failed') && (
-            <button
-              onClick={handleRollback}
-              disabled={isRollingBack}
-              className="text-xs flex items-center space-x-1 px-2.5 py-1.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 disabled:bg-slate-800 disabled:text-slate-500 text-indigo-400 border border-indigo-500/20 transition-all font-medium"
-            >
-              {isRollingBack ? (
-                <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-              ) : (
-                <Undo className="w-3.5 h-3.5 mr-1" />
-              )}
-              撤销更改
-            </button>
-          )}
-          {(activeRun.status === 'failed' || activeRun.status === 'conflict' || activeRun.status === 'cancelled') && (
-            <button
-              onClick={handleRetry}
-              disabled={isRetrying}
-              className="text-xs flex items-center space-x-1 px-2.5 py-1.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 disabled:bg-slate-800 disabled:text-slate-500 text-emerald-400 border border-emerald-500/20 transition-all font-medium shadow-lg hover:shadow-emerald-500/10"
-            >
-              {isRetrying ? (
-                <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-              ) : (
-                <RotateCw className="w-3.5 h-3.5 mr-1" />
-              )}
-              重试
-            </button>
-          )}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {(activeRun.status === 'running' || activeRun.status === 'pending' || activeRun.status === 'conflict' || activeRun.status === 'queued') && (
+              <button
+                onClick={() => activeRunId && cancelSandboxRun(activeRunId)}
+                className="whitespace-nowrap text-xs flex items-center gap-1 px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-all font-semibold"
+              >
+                <Ban className="w-3.5 h-3.5" />
+                终止
+              </button>
+            )}
+            {(activeRun.status === 'completed' || activeRun.status === 'failed') && (
+              <button
+                onClick={handleRollback}
+                disabled={isRollingBack}
+                className="whitespace-nowrap text-xs flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-700/40 hover:bg-slate-700/60 disabled:bg-slate-800 disabled:text-slate-600 text-slate-300 border border-slate-600/30 transition-all font-semibold"
+              >
+                {isRollingBack ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Undo className="w-3.5 h-3.5" />
+                )}
+                撤销更改
+              </button>
+            )}
+            {(activeRun.status === 'failed' || activeRun.status === 'conflict' || activeRun.status === 'cancelled') && (
+              <button
+                onClick={handleRetry}
+                disabled={isRetrying}
+                className="whitespace-nowrap text-xs flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 disabled:bg-slate-800 disabled:text-slate-600 text-emerald-400 border border-emerald-500/20 transition-all font-semibold"
+              >
+                {isRetrying ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <RotateCw className="w-3.5 h-3.5" />
+                )}
+                重试
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="flex space-x-1 mt-4 p-0.5 bg-slate-900/80 rounded-lg border border-slate-800/80">
+        <div className="flex space-x-1 mt-4 p-1 bg-slate-800/30 backdrop-blur-lg rounded-xl border border-slate-700/30">
           <button
             onClick={() => setActiveTab('workflow')}
             className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === 'workflow'
@@ -546,7 +543,7 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                     <div
                       key={step.id}
                       onClick={() => setSelectedStepId(step.id)}
-                      className={`flex items-start space-x-3 p-2.5 rounded-lg border transition-all cursor-pointer ${isSelected
+                      className={`flex items-start space-x-3 p-3 rounded-xl border backdrop-blur-sm transition-all cursor-pointer ${isSelected
                           ? 'border-indigo-500 bg-indigo-500/5 text-indigo-200'
                           : 'border-slate-800 bg-slate-900/50 hover:bg-slate-800/40 text-slate-300'
                         }`}
@@ -576,8 +573,8 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
               </div>
             </div>
 
-            <div className="flex-1 flex flex-col min-h-0 bg-slate-950">
-              <div className="flex items-center justify-between px-4 py-2 border-b border-slate-850 bg-slate-900/40">
+            <div className="flex-1 flex flex-col min-h-0 bg-slate-900/20 backdrop-blur-sm rounded-xl border border-slate-700/20 mx-2 mb-2 overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700/20 bg-slate-800/10">
                 <div className="flex items-center space-x-2 text-xs text-slate-400 font-mono">
                   <Terminal className="w-3.5 h-3.5 text-indigo-400" />
                   <span>step-log: {selectedStep ? `${selectedStep.agentName}` : 'none'}</span>
@@ -596,7 +593,7 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                   );
                 })()}
               </div>
-              <div className="flex-1 overflow-auto p-4 font-mono text-xs text-slate-300 space-y-1 select-text selection:bg-indigo-500/30">
+              <div className="flex-1 overflow-auto p-3 font-mono text-xs text-slate-300 space-y-0.5 select-text selection:bg-indigo-500/30">
                 {selectedStep && (() => {
                   const errorText = selectedStep.error || '';
                   const status = selectedStep.status;
@@ -688,13 +685,35 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                   return null;
                 })()}
 
-                {selectedStep?.log ? (
-                  selectedStep.log.split('\n').map((line: string, i: number) => (
-                    <div key={i} className="whitespace-pre-wrap break-all leading-relaxed">
-                      {line}
-                    </div>
-                  ))
-                ) : (
+                {selectedStep?.log ? (() => {
+                  const stripAnsi = (str: string) => str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
+                  const lines = selectedStep.log.split('\n');
+                  return lines.map((line: string, i: number) => {
+                    const clean = stripAnsi(line);
+                    // 错误/警告/成功 关键词高亮
+                    let lineColor = 'text-slate-300';
+                    if (/error|Error|ERROR|❌|失败/.test(clean)) {
+                      lineColor = 'text-rose-300';
+                    } else if (/warn|Warn|WARN|warning|Warning|WARNING|⚠️/.test(clean)) {
+                      lineColor = 'text-amber-300';
+                    } else if (/✓|✔|success|Success|SUCCESS|完成/.test(clean)) {
+                      lineColor = 'text-emerald-300';
+                    }
+                    // 时间戳行高亮
+                    const tsMatch = clean.match(/^(\[\d{2}:\d{2}:\d{2}\])\s*/);
+                    const dtMatch = clean.match(/^(\d{4}-\d{2}-\d{2}\s*\d{2}:\d{2}:\d{2})\s*/);
+                    const timestamp = tsMatch?.[1] || dtMatch?.[1] || null;
+                    const content = timestamp ? clean.slice(timestamp.length) : clean;
+                    return (
+                      <div key={i} className={`whitespace-pre-wrap break-all leading-relaxed ${lineColor}`}>
+                        {timestamp && (
+                          <span className="text-slate-500 select-none mr-2">{timestamp}</span>
+                        )}
+                        {content || (timestamp ? '' : clean)}
+                      </div>
+                    );
+                  });
+                })() : (
                   <div className="text-slate-600 italic">没有获取到当前步骤的日志记录</div>
                 )}
                 <div ref={logEndRef} />
