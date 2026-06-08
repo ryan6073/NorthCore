@@ -460,72 +460,13 @@ docs/feature-design.md
 - 中文直接写中文，不使用 `\uXXXX` 转义。
 - 文件写入时必须保证 UTF-8。
 
-## 常用开发任务
 
-### 新增一个 HTTP 接口
-
-1. 在 `src/services/http` 中新增或更新对应 service。
-2. 在 `src/types` 中补充类型。
-3. 在 Store 或组件中调用 service。
-4. 检查接口返回结构和前端类型是否一致。
-5. 验证正常请求、错误响应和登录失效等场景。
-
-### 新增一种产物预览
-
-1. 在类型定义中确认产物类型。
-2. 在 `ArtifactPreview.tsx` 中补充分支。
-3. 如果需要全屏预览，同步检查 `ArtifactFullScreenModal.tsx`。
-4. 如果产物来自消息，同步检查 `ArtifactMessage.tsx`。
-5. 检查产物、版本和消息之间的 ID 对应关系。
-
-### 修改消息展示逻辑
-
-1. 优先检查 `ChatPanel.tsx`。
-2. 消息气泡样式检查 `MessageBubble.tsx`。
-3. Markdown 内容检查 `MarkdownRenderer.tsx`。
-4. 附件展示检查 `AttachmentCard.tsx`。
-5. 产物消息检查 `ArtifactMessage.tsx`。
-6. 修改滚动逻辑后，需要验证进入会话、重复进入会话、加载历史消息和发送新消息四种场景。
-
-### 修改 Agent 配置逻辑
-
-1. 检查 `AgentDetailPanel.tsx` 和 `AgentConfigForm.tsx`。
-2. 检查 `useAgentHubStore.ts` 中的配置状态。
-3. 检查新建会话弹窗和多 Agent 会话中的配置入口。
-4. 验证切换 Agent、关闭面板、退出登录、切换账号后状态是否正确。
-
-## 验证建议
-
-提交前建议至少执行：
-
-```bash
-npm run build
-```
-
-如果只想检查 TypeScript：
-
-```bash
-npx tsc --noEmit
-```
-
-同时建议人工验证：
-
-- 登录并进入主界面。
-- 新建单 Agent 会话。
-- 新建多 Agent 会话。
-- 发送普通文本消息。
-- 发送带附件消息。
-- 查看 HTML、Markdown、Mermaid 产物预览。
-- 切换产物版本。
-- 打开全屏预览。
-- 加载历史消息。
-- 退出登录后切换账号。
 
 ## 常见问题
 
 ### 开发服务器端口是多少？
 
-开发服务器默认端口是 `9006`。配置位于：
+配置位于：
 
 ```text
 vite.config.ts
