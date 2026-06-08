@@ -14,7 +14,7 @@ import { LoginView } from './components/auth/LoginView';
 import { SettingsModal } from './components/modal/SettingsModal';
 import { MessageSquare, X } from 'lucide-react';
 import FloatingChatWindow from './components/chat/FloatingChatWindow';
-import * as platform from './utils/platform';
+import { platform } from './utils/platform';
 
 const getNewAgentTemplate = (): Agent => ({
   id: 'new',
