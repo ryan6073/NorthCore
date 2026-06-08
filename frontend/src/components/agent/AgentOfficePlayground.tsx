@@ -11,7 +11,7 @@ interface AgentOfficePlaygroundProps {
 }
 
 // Horse-headed Man (马头人) character component
-const HorseAgent: React.FC<{ agent: Agent; activityType: 'work' | 'game' | 'gym' | 'sleep' }> = ({ agent, activityType }) => {
+const HorseAgent: React.FC<{ agent: Agent; activityType: 'work' | 'game' | 'gym' | 'sleep'; showNameBadge?: boolean }> = ({ agent, activityType, showNameBadge = true }) => {
   const getBodyEmoji = () => {
     switch (activityType) {
       case 'work': return '👔';
@@ -25,9 +25,11 @@ const HorseAgent: React.FC<{ agent: Agent; activityType: 'work' | 'game' | 'gym'
   return (
     <div className="flex flex-col items-center relative group select-none">
       {/* Name Badge */}
-      <span className="text-[8px] font-bold bg-slate-900/80 dark:bg-slate-950/80 text-white px-1.5 py-0.2 rounded-sm mb-1 max-w-[65px] truncate shadow-sm">
-        {agent.name}
-      </span>
+      {showNameBadge && (
+        <span className="text-[8px] font-bold bg-slate-900/80 dark:bg-slate-950/80 text-white px-1.5 py-0.2 rounded-sm mb-1 max-w-[65px] truncate shadow-sm">
+          {agent.name}
+        </span>
+      )}
 
       {/* Horse-headed Character Container */}
       <div className={`relative flex flex-col items-center transition-transform ${
@@ -361,53 +363,89 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
   };
 
   if (isCollapsed) {
-    // 收起态：使用与展开态相同的 HorseAgent 组件，保留动画，只是隐藏工位和休闲区
+    // 收起态：分左右两部分，左边工作区/右边休闲区，显示持续时长
+    const workingCollapsed = displayAgents.filter(a => a.status === 'thinking');
+    const leisureCollapsed = displayAgents.filter(a => a.status !== 'thinking');
+    const renderAgentCard = (agent: Agent) => {
+      const isWorking = agent.status === 'thinking';
+      const leisureState = leisureStates[agent.id];
+      const activityType = isWorking ? 'work' : (leisureState?.type || 'game');
+      const activityLabel = isWorking
+        ? '处理中'
+        : leisureState?.type === 'gym'
+          ? '状态热身'
+          : leisureState?.type === 'sleep'
+            ? '低功耗待机'
+            : '待命巡检';
+      const seconds = isWorking ? 0 : (leisureState?.seconds || 0);
+      return (
+        <div key={agent.id} className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-lg bg-white/85 dark:bg-slate-950/45 border border-slate-200/80 dark:border-slate-800/80 group relative" style={{ overflow: 'visible' }}>
+          <div className="flex-shrink-0">
+            {styleMode === 'emoji' ? (
+              <HorseAgent agent={agent} activityType={activityType} showNameBadge={false} />
+            ) : (
+              <HorseAgentV2 agent={agent} activityType={activityType} />
+            )}
+          </div>
+          <div className="flex flex-col leading-tight">
+            <span className="text-[9px] font-semibold text-slate-700 dark:text-slate-300">{agent.name}</span>
+            <div className="flex items-center gap-1">
+              <span className={`text-[7px] font-medium ${isWorking ? 'text-indigo-500' : 'text-emerald-500'}`}>{activityLabel}</span>
+              {isWorking ? (
+                <span className="text-[7px] text-indigo-400/70 font-mono">—</span>
+              ) : (
+                <span className="text-[7px] text-slate-400 font-mono">{seconds}s</span>
+              )}
+            </div>
+          </div>
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-full mt-[-4px] hidden group-hover:flex z-[9999] bg-slate-900 text-white text-[9px] px-2 py-1 rounded shadow-lg whitespace-nowrap pointer-events-none">
+            {agent.name}: {isWorking ? '正在处理当前任务' : `当前${activityLabel}`}
+          </div>
+        </div>
+      );
+    };
     return (
       <div className="w-full px-4 py-3 bg-white/90 dark:bg-slate-900/90 border-b border-slate-200/70 dark:border-slate-800/70 select-none">
         {officeStyles}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <button
-              onClick={handleToggle}
-              className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors whitespace-nowrap"
-              title="展开办公室"
-            >
-              <Monitor className="w-3.5 h-3.5" />
-              智能体办公室
-              <ChevronRight className="w-3 h-3" />
-            </button>
+        <div className="flex items-center gap-2 mb-2">
+          <button
+            onClick={handleToggle}
+            className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors whitespace-nowrap"
+            title="展开办公室"
+          >
+            <Monitor className="w-3.5 h-3.5" />
+            智能体办公室
+            <ChevronRight className="w-3 h-3" />
+          </button>
+        </div>
+        <div className="flex items-stretch gap-3">
+          {/* 左侧：工作区 */}
+          <div className="flex-1 min-w-0">
+            {workingCollapsed.length > 0 && (
+              <div className="text-[8px] font-bold text-indigo-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping" />
+                工作中
+              </div>
+            )}
+            <div className="flex flex-wrap gap-1.5">
+              {workingCollapsed.map(renderAgentCard)}
+            </div>
           </div>
-          <div className="flex items-center gap-2 pl-2 flex-wrap justify-end">
-            {displayAgents.map((agent) => {
-              const isWorking = agent.status === 'thinking';
-              const leisureState = leisureStates[agent.id];
-              const activityType = isWorking ? 'work' : (leisureState?.type || 'game');
-              const activityLabel = isWorking
-                ? '处理中'
-                : leisureState?.type === 'gym'
-                  ? '状态热身'
-                  : leisureState?.type === 'sleep'
-                    ? '低功耗待机'
-                    : '待命巡检';
-              return (
-                <div key={agent.id} className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-lg bg-white/85 dark:bg-slate-950/45 border border-slate-200/80 dark:border-slate-800/80 group relative" style={{ overflow: 'visible' }}>
-                  <div className="flex-shrink-0">
-                    {styleMode === 'emoji' ? (
-                      <HorseAgent agent={agent} activityType={activityType} />
-                    ) : (
-                      <HorseAgentV2 agent={agent} activityType={activityType} />
-                    )}
-                  </div>
-                  <div className="flex flex-col leading-tight">
-                    <span className="text-[9px] font-semibold text-slate-700 dark:text-slate-300">{agent.name}</span>
-                    <span className={`text-[7px] font-medium ${isWorking ? 'text-indigo-500' : 'text-emerald-500'}`}>{activityLabel}</span>
-                  </div>
-                  <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-full mt-[-4px] hidden group-hover:flex z-[9999] bg-slate-900 text-white text-[9px] px-2 py-1 rounded shadow-lg whitespace-nowrap pointer-events-none">
-                    {agent.name}: {isWorking ? '正在处理当前任务' : `当前${activityLabel}`}
-                  </div>
-                </div>
-              );
-            })}
+          {/* 分隔线 */}
+          {workingCollapsed.length > 0 && leisureCollapsed.length > 0 && (
+            <div className="w-px bg-slate-200 dark:bg-slate-700/50 self-stretch flex-shrink-0" />
+          )}
+          {/* 右侧：休闲区 */}
+          <div className="flex-1 min-w-0">
+            {leisureCollapsed.length > 0 && (
+              <div className="text-[8px] font-bold text-emerald-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                待命中
+              </div>
+            )}
+            <div className="flex flex-wrap gap-1.5">
+              {leisureCollapsed.map(renderAgentCard)}
+            </div>
           </div>
         </div>
       </div>
