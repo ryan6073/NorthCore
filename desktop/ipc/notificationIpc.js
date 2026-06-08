@@ -14,18 +14,18 @@ function registerNotificationHandlers() {
         silent: options.silent || false
       })
 
-      if (options.onClick) {
-        notification.on('click', () => {
-          const focusedWindow = BrowserWindow.getFocusedWindow()
-          if (focusedWindow) {
-            focusedWindow.show()
-            focusedWindow.focus()
-          }
-          if (options.callbackId) {
-            event.sender.send('notification:clicked', options.callbackId)
-          }
+      notification.on('click', () => {
+        const focusedWindow = BrowserWindow.getFocusedWindow()
+        if (focusedWindow) {
+          focusedWindow.show()
+          focusedWindow.focus()
+        }
+        // 将 conversationId 传回 renderer，用于点击通知后跳转到对应会话
+        event.sender.send('notification:clicked', {
+          callbackId: options.callbackId,
+          conversationId: options.conversationId || null
         })
-      }
+      })
 
       notification.show()
       return { success: true }

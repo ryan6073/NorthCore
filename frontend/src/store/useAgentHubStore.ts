@@ -3837,7 +3837,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           '工作流任务已全部完成',
           '所有 Agent 的规划任务均已成功执行完成。',
           'success',
-          'task'
+          'task',
+          conversationId
         );
       });
 
@@ -4318,11 +4319,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           get().loadSandboxFiles(runId);
           get().loadSandboxFileTree(runId);
         }
+        const completedConvId = run?.conversationId || get().activeConversationId;
         get().addDesktopNotification(
           '沙箱运行已完成',
           `沙箱任务 (ID: ${runId}) 已成功执行完成。`,
           'success',
-          'task'
+          'task',
+          completedConvId
         );
       });
 
@@ -4382,11 +4385,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           });
           get().loadSandboxRunDetail(runId);
         }
+        const failedConvId = run?.conversationId || targetConvId || get().activeConversationId;
         get().addDesktopNotification(
           '沙箱运行失败',
           `沙箱任务 (ID: ${runId}) 执行失败。`,
           'error',
-          'error'
+          'error',
+          failedConvId
         );
       });
 
@@ -6839,7 +6844,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     }
   },
 
-  addDesktopNotification: (title, body, type, eventType) => {
+  addDesktopNotification: (title, body, type, eventType, conversationId) => {
     const newNotification = {
       id: createId('notif'),
       title,
@@ -6863,7 +6868,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       // 1. Electron Desktop Native Bridge Notification
       try {
         if (platform.isDesktop() && platform.notification?.show) {
-          platform.notification.show({ title, body });
+          platform.notification.show({ title, body, conversationId });
           return;
         }
       } catch (err) {

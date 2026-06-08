@@ -49,7 +49,7 @@ contextBridge.exposeInMainWorld('northcoreDesktop', {
     artifactApplied: (filePath) => ipcRenderer.invoke('notification:artifact-applied', filePath),
     checkSupport: () => ipcRenderer.invoke('notification:check-support'),
     onNotificationClicked: (callback) => {
-      ipcRenderer.on('notification:clicked', (event, callbackId) => callback(callbackId))
+      ipcRenderer.on('notification:clicked', (event, data) => callback(data))
     }
   },
   

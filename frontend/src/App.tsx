@@ -14,6 +14,7 @@ import { LoginView } from './components/auth/LoginView';
 import { SettingsModal } from './components/modal/SettingsModal';
 import { MessageSquare, X } from 'lucide-react';
 import FloatingChatWindow from './components/chat/FloatingChatWindow';
+import * as platform from './utils/platform';
 
 const getNewAgentTemplate = (): Agent => ({
   id: 'new',
@@ -118,6 +119,18 @@ function App() {
       useAgentHubStore.getState().disconnectWS();
     };
   }, [initStore]);
+
+  // 注册系统通知点击回调：点击通知时跳转到对应会话
+  useEffect(() => {
+    platform.notification.onClicked((data: { conversationId?: string }) => {
+      if (data.conversationId) {
+        const store = useAgentHubStore.getState();
+        store.setActiveConversationId(data.conversationId);
+        store.setLeftSidebarViewMode('conversations');
+        store.setConfiguringAgentId(null);
+      }
+    });
+  }, []);
 
   const handleSelectConversation = useCallback((conversationId: string) => {
     setActiveConversationId(conversationId);
