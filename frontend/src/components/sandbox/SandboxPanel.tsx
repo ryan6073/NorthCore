@@ -270,7 +270,7 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
               </div>
             )}
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-start gap-2 flex-shrink-0 min-h-[32px]">
             {(activeRun.status === 'running' || activeRun.status === 'pending' || activeRun.status === 'conflict' || activeRun.status === 'queued') && (
               <button
                 onClick={() => activeRunId && cancelSandboxRun(activeRunId)}
