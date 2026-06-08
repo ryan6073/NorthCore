@@ -322,7 +322,8 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
               </span>
             )}
           </button>
-          <button
+          {/* 冲突合并暂时隐藏 */}
+          {/* <button
             onClick={() => setActiveTab('conflicts')}
             className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all relative ${activeTab === 'conflicts'
                 ? 'bg-slate-800 text-indigo-400 shadow-sm'
@@ -336,7 +337,7 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                 {openConflictsCount}
               </span>
             )}
-          </button>
+          </button> */}
           {workspaceId && (
             <button
               onClick={() => setActiveTab('deployment')}
