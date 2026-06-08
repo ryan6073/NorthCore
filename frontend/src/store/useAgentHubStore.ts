@@ -4262,6 +4262,17 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         const { runId, run, files, artifacts } = event.data;
         const targetConvId = run?.conversationId || get().activeConversationId;
 
+        // 收集此 run 涉及的所有 agentId，仅重置这些 agent 的状态
+        const getRunAgentIds = (state: any) => {
+          const targetRun = run || state.runDetailsById[runId];
+          if (!targetRun) return new Set<string>();
+          const ids = new Set<string>();
+          if (targetRun.agentId) ids.add(targetRun.agentId);
+          targetRun.steps?.forEach((s: any) => { if (s.agentId) ids.add(s.agentId); });
+          targetRun.dag?.nodes?.forEach((n: any) => { if (n.agentId) ids.add(n.agentId); });
+          return ids;
+        };
+
         if (run) {
           set(state => {
             const existingRun = state.runDetailsById[runId];
@@ -4270,8 +4281,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               ...run,
               steps: mergedSteps
             };
+            const runAgentIds = getRunAgentIds(state);
             const updatedAgents = state.agents.map(a =>
-              a.status === 'thinking' ? { ...a, status: 'online' as const } : a
+              runAgentIds.has(a.id) ? { ...a, status: 'online' as const } : a
             );
 
             const artifactsState = updateArtifactsInState(state, targetConvId || '', artifacts || [], runId);
@@ -4288,8 +4300,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           });
         } else {
           set(state => {
+            const runAgentIds = getRunAgentIds(state);
             const updatedAgents = state.agents.map(a =>
-              a.status === 'thinking' ? { ...a, status: 'online' as const } : a
+              runAgentIds.has(a.id) ? { ...a, status: 'online' as const } : a
             );
             const targetRun = state.runDetailsById[runId];
 
@@ -4343,6 +4356,17 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         const { runId, run, artifacts } = event.data;
         const targetConvId = run?.conversationId || get().activeConversationId;
 
+        // 收集此 run 涉及的所有 agentId，仅重置这些 agent 的状态
+        const getRunAgentIds = (state: any) => {
+          const targetRun = run || state.runDetailsById[runId];
+          if (!targetRun) return new Set<string>();
+          const ids = new Set<string>();
+          if (targetRun.agentId) ids.add(targetRun.agentId);
+          targetRun.steps?.forEach((s: any) => { if (s.agentId) ids.add(s.agentId); });
+          targetRun.dag?.nodes?.forEach((n: any) => { if (n.agentId) ids.add(n.agentId); });
+          return ids;
+        };
+
         if (run) {
           set(state => {
             const existingRun = state.runDetailsById[runId];
@@ -4351,8 +4375,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               ...run,
               steps: mergedSteps
             };
+            const runAgentIds = getRunAgentIds(state);
             const updatedAgents = state.agents.map(a =>
-              a.status === 'thinking' ? { ...a, status: 'online' as const } : a
+              runAgentIds.has(a.id) ? { ...a, status: 'online' as const } : a
             );
 
             const artifactsState = updateArtifactsInState(state, targetConvId || '', artifacts || [], runId);
@@ -4369,8 +4394,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           });
         } else {
           set(state => {
+            const runAgentIds = getRunAgentIds(state);
             const updatedAgents = state.agents.map(a =>
-              a.status === 'thinking' ? { ...a, status: 'online' as const } : a
+              runAgentIds.has(a.id) ? { ...a, status: 'online' as const } : a
             );
             const targetRun = state.runDetailsById[runId];
 
@@ -4461,6 +4487,20 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
                 },
               };
             }
+          }
+
+          // 4. Agent 状态同步：
+          //    - planning.started → 将 orchestrator（agent-orchestrator）设为 thinking
+          //    - planning.completed / planning.failed → 将 orchestrator 恢复为 online
+          //    仅针对 group_orchestrator_dag 模式
+          if (payload.phase === 'started') {
+            updates.agents = state.agents.map(a =>
+              a.id === 'agent-orchestrator' ? { ...a, status: 'thinking' as const } : a
+            );
+          } else if (payload.phase === 'completed' || payload.phase === 'failed') {
+            updates.agents = state.agents.map(a =>
+              a.id === 'agent-orchestrator' ? { ...a, status: 'online' as const } : a
+            );
           }
 
           return updates;
