@@ -1085,7 +1085,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                   onClick={() => {
                     const agentId = conversation.agentIds?.[0];
                     if (agentId) {
-                      setConfiguringAgentId(agentId);
+                      setConfiguringAgentId(agentId, true);
                     }
                   }}
                   className="p-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-slate-50 dark:hover:bg-slate-800/45 rounded-lg transition-all flex items-center gap-1.5 shadow-sm active:scale-95"
