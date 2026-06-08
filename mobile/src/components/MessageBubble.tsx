@@ -6,20 +6,23 @@ import MarkdownRenderer from './MarkdownRenderer';
 import ArtifactMessage from './ArtifactMessage';
 import AttachmentCard from './AttachmentCard';
 import AuthImage from './AuthImage';
+import TaskPlanCard from './TaskPlanCard';
 
 interface MessageBubbleProps {
   message: Message;
   agents?: Agent[];
   onOpenArtifactFullScreen?: (artifact: Artifact, version?: ArtifactVersion) => void;
+  onImagePress?: (url: string, name?: string) => void;
 }
 
-export default function MessageBubble({ message, agents = [], onOpenArtifactFullScreen }: MessageBubbleProps) {
+export default function MessageBubble({ message, agents = [], onOpenArtifactFullScreen, onImagePress }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const isThinking = message.type === 'status' && message.content === '正在思考...';
 
+  const isBlockType = message.type === 'task-plan';
   const isRichContent = useMemo(() => {
-    if (message.type === 'code' || message.type === 'task-plan' || message.type === 'artifact') {
+    if (message.type === 'code' || message.type === 'artifact') {
       return true;
     }
     const markdownRegex = /(^\s*#+\s)|(^\s*[-*+]\s)|(^\s*\d+\.\s)|([*_`~])|(\[.+\]\(.+\))|(\!\[.+\]\(.+\))|(^\s*>\s)|(\|)/m;
@@ -81,17 +84,10 @@ export default function MessageBubble({ message, agents = [], onOpenArtifactFull
       );
     }
 
-    // 2. Task plan message
+    // 2. Task plan message — 1:1 复刻 frontend TaskPlanCard 设计
+    // 在 renderMessageContent 中返回 null，由外层直接渲染 TaskPlanCard
     if (message.type === 'task-plan') {
-      return (
-        <View style={styles.taskPlanContainer}>
-          <View style={styles.blockHeader}>
-            <Ionicons name="git-network-outline" size={14} color="#3370ff" />
-            <Text style={[styles.blockHeaderTitle, { color: '#3370ff' }]}>执行规划</Text>
-          </View>
-          <MarkdownRenderer content={message.content} maxHeight={250} />
-        </View>
-      );
+      return null;
     }
 
     // 3. Artifact message — use interactive ArtifactMessage component
@@ -153,47 +149,58 @@ export default function MessageBubble({ message, agents = [], onOpenArtifactFull
         </View>
       )}
 
-      {/* Message & Name Container */}
-      <View style={[
-        styles.bubbleWrapper,
-        isRichContent ? styles.richBubbleWrapper : styles.plainBubbleWrapper,
-        isUser ? styles.userBubbleWrapper : styles.agentBubbleWrapper
-      ]}>
-        {!isUser && (
-          <Text style={styles.senderNameOutside}>
-            {message.senderName || '智能助手'}
-          </Text>
-        )}
-        {isUser && (
-          <Text style={styles.senderNameOutsideUser}>我</Text>
-        )}
-        
-        {/* Only show bubble if has message content or is rich content */}
-        {(isRichContent || (message.content && message.content.trim().length > 0)) && (
-          <View style={[
-            styles.bubble,
-            isUser ? styles.userBubble : styles.agentBubble,
-            isRichContent ? styles.richBubble : styles.plainBubble
-          ]}>
-            {renderMessageContent()}
-            {message.isPinned && (
-              <View style={styles.pinnedIndicator}>
-                <Ionicons name="pin" size={10} color="#d97706" style={{ transform: [{ rotate: '45deg' }] }} />
-                <Text style={styles.pinnedIndicatorText}>长期记忆</Text>
-              </View>
-            )}
-          </View>
-        )}
+      {/* task-plan 是块级类型，不需要气泡包裹 */}
+      {isBlockType ? (
+        <View style={[styles.bubbleWrapper, styles.richBubbleWrapper, isUser ? styles.userBubbleWrapper : styles.agentBubbleWrapper]}>
+          {!isUser && (
+            <Text style={styles.senderNameOutside}>
+              {message.senderName || '智能助手'}
+            </Text>
+          )}
+          <TaskPlanCard content={message.content} stepsData={message.metadata?.taskPlan as any} />
+        </View>
+      ) : (
+        <View style={[
+          styles.bubbleWrapper,
+          isRichContent ? styles.richBubbleWrapper : styles.plainBubbleWrapper,
+          isUser ? styles.userBubbleWrapper : styles.agentBubbleWrapper
+        ]}>
+          {!isUser && (
+            <Text style={styles.senderNameOutside}>
+              {message.senderName || '智能助手'}
+            </Text>
+          )}
+          {isUser && (
+            <Text style={styles.senderNameOutsideUser}>我</Text>
+          )}
 
-        {/* Attachment Cards list */}
-        {message.attachments && message.attachments.length > 0 && (
-          <View style={[styles.attachmentsContainer, isUser ? styles.userAttachments : styles.agentAttachments]}>
-            {message.attachments.map((attach) => (
-              <AttachmentCard key={attach.id} attachment={attach} isUser={isUser} />
-            ))}
-          </View>
-        )}
-      </View>
+          {/* Only show bubble if has message content or is rich content */}
+          {(isRichContent || (message.content && message.content.trim().length > 0)) && (
+            <View style={[
+              styles.bubble,
+              isUser ? styles.userBubble : styles.agentBubble,
+              isRichContent ? styles.richBubble : styles.plainBubble
+            ]}>
+              {renderMessageContent()}
+              {message.isPinned && (
+                <View style={styles.pinnedIndicator}>
+                  <Ionicons name="pin" size={10} color="#d97706" style={{ transform: [{ rotate: '45deg' }] }} />
+                  <Text style={styles.pinnedIndicatorText}>长期记忆</Text>
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Attachment Cards list */}
+          {message.attachments && message.attachments.length > 0 && (
+            <View style={[styles.attachmentsContainer, isUser ? styles.userAttachments : styles.agentAttachments]}>
+              {message.attachments.map((attach) => (
+                <AttachmentCard key={attach.id} attachment={attach} isUser={isUser} onImagePress={onImagePress} />
+              ))}
+            </View>
+          )}
+        </View>
+      )}
 
       {/* User Avatar */}
       {isUser && (
@@ -368,29 +375,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
 
-  // ── Task plan ──
-  blockHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 6,
-    paddingBottom: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eff0f1',
-  },
-  blockHeaderTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#646a73',
-  },
-  taskPlanContainer: {
-    backgroundColor: '#f6f9ff',
-    borderColor: '#c8dcff',
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    marginTop: 4,
-  },
 
   pinnedIndicator: {
     flexDirection: 'row',

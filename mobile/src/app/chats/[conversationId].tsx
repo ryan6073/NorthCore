@@ -21,6 +21,7 @@ import { useConversationStore } from '@/stores/useConversationStore';
 import { useAgentStore } from '@/stores/useAgentStore';
 import MessageBubble from '@/components/MessageBubble';
 import ArtifactFullScreenModal from '@/components/ArtifactFullScreenModal';
+import ImageViewer from '@/components/ImageViewer';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { conversationApi } from '@/api/conversationApi';
 import ContextRing from '@/components/ContextRing';
@@ -133,6 +134,7 @@ export default function ConversationScreen() {
   const [artifactSearch, setArtifactSearch] = useState('');
   const [showContextDialog, setShowContextDialog] = useState(false);
   const [compressing, setCompressing] = useState(false);
+  const [imageViewer, setImageViewer] = useState<{ visible: boolean; url: string; name?: string }>({ visible: false, url: '' });
   const [memoryTab, setMemoryTab] = useState<'pins' | 'memories'>('pins');
   // Context popover position
   const contextBtnRef = useRef<any>(null);
@@ -737,7 +739,9 @@ export default function ConversationScreen() {
                 message={item}
                 agents={agents}
                 onOpenArtifactFullScreen={(artifact, version) =>
-                  setArtifactPreview({ visible: true, artifact, version })
+                  setArtifactPreview({ visible: true, artifact, version })}
+                onImagePress={(url, name) =>
+                  setImageViewer({ visible: true, url, name })
                 }
               />
             </TouchableOpacity>
@@ -973,6 +977,13 @@ export default function ConversationScreen() {
         artifact={artifactPreview.artifact}
         initialVersion={artifactPreview.version}
         onClose={() => setArtifactPreview({ visible: false, artifact: null })}
+      />
+
+      <ImageViewer
+        visible={imageViewer.visible}
+        imageUrl={imageViewer.url}
+        imageName={imageViewer.name}
+        onClose={() => setImageViewer({ visible: false, url: '' })}
       />
 
       {/* Context usage popover - aligned with frontend */}

@@ -225,17 +225,12 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-900 border-l border-slate-800 text-slate-200 overflow-hidden font-sans">
-      <div className="p-4 border-b border-slate-800 bg-slate-950/60 backdrop-blur-md">
+    <div className="flex flex-col h-full bg-slate-900/80 backdrop-blur-2xl rounded-2xl border border-slate-800/60 text-slate-200 overflow-hidden font-sans shadow-2xl mx-2 my-2">
+      <div className="p-4 border-b border-slate-800/50 bg-slate-950/40">
         <div className="flex items-start justify-between">
           <div>
             <div className="flex items-center space-x-2">
               <span className="text-xs uppercase tracking-wider font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded">Docker Sandbox V1</span>
-              {activeRun.runMode && (
-                <span className="text-[10px] font-semibold text-slate-350 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700/50">
-                  {activeRun.runMode === 'write' ? '写入模式' : activeRun.runMode === 'deploy' ? '部署模式' : '只读模式'}
-                </span>
-              )}
               {activeRun.status === 'queued' && activeRun.queuePosition !== undefined && activeRun.queuePosition !== null && (
                 <span className="text-[10px] font-semibold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 animate-pulse">
                   队列第 {activeRun.queuePosition} 位
@@ -260,46 +255,48 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
               </div>
             )}
           </div>
-          {(activeRun.status === 'running' || activeRun.status === 'pending' || activeRun.status === 'conflict' || activeRun.status === 'queued') && (
-            <button
-              onClick={() => activeRunId && cancelSandboxRun(activeRunId)}
-              className="text-xs flex items-center space-x-1 px-2.5 py-1.5 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-all font-medium"
-            >
-              <Ban className="w-3.5 h-3.5 mr-1" />
-              终止
-            </button>
-          )}
-          {(activeRun.status === 'completed' || activeRun.status === 'failed') && (
-            <button
-              onClick={handleRollback}
-              disabled={isRollingBack}
-              className="text-xs flex items-center space-x-1 px-2.5 py-1.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 disabled:bg-slate-800 disabled:text-slate-500 text-indigo-400 border border-indigo-500/20 transition-all font-medium"
-            >
-              {isRollingBack ? (
-                <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-              ) : (
-                <Undo className="w-3.5 h-3.5 mr-1" />
-              )}
-              撤销更改
-            </button>
-          )}
-          {(activeRun.status === 'failed' || activeRun.status === 'conflict' || activeRun.status === 'cancelled') && (
-            <button
-              onClick={handleRetry}
-              disabled={isRetrying}
-              className="text-xs flex items-center space-x-1 px-2.5 py-1.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 disabled:bg-slate-800 disabled:text-slate-500 text-emerald-400 border border-emerald-500/20 transition-all font-medium shadow-lg hover:shadow-emerald-500/10"
-            >
-              {isRetrying ? (
-                <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-              ) : (
-                <RotateCw className="w-3.5 h-3.5 mr-1" />
-              )}
-              重试
-            </button>
-          )}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {(activeRun.status === 'running' || activeRun.status === 'pending' || activeRun.status === 'conflict' || activeRun.status === 'queued') && (
+              <button
+                onClick={() => activeRunId && cancelSandboxRun(activeRunId)}
+                className="whitespace-nowrap text-xs flex items-center gap-1 px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-all font-semibold"
+              >
+                <Ban className="w-3.5 h-3.5" />
+                终止
+              </button>
+            )}
+            {(activeRun.status === 'completed' || activeRun.status === 'failed') && (
+              <button
+                onClick={handleRollback}
+                disabled={isRollingBack}
+                className="whitespace-nowrap text-xs flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-700/40 hover:bg-slate-700/60 disabled:bg-slate-800 disabled:text-slate-600 text-slate-300 border border-slate-600/30 transition-all font-semibold"
+              >
+                {isRollingBack ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Undo className="w-3.5 h-3.5" />
+                )}
+                撤销更改
+              </button>
+            )}
+            {(activeRun.status === 'failed' || activeRun.status === 'conflict' || activeRun.status === 'cancelled') && (
+              <button
+                onClick={handleRetry}
+                disabled={isRetrying}
+                className="whitespace-nowrap text-xs flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 disabled:bg-slate-800 disabled:text-slate-600 text-emerald-400 border border-emerald-500/20 transition-all font-semibold"
+              >
+                {isRetrying ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <RotateCw className="w-3.5 h-3.5" />
+                )}
+                重试
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="flex space-x-1 mt-4 p-0.5 bg-slate-900/80 rounded-lg border border-slate-800/80">
+        <div className="flex space-x-1 mt-4 p-1 bg-slate-800/50 backdrop-blur-lg rounded-xl border border-slate-700/40">
           <button
             onClick={() => setActiveTab('workflow')}
             className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === 'workflow'
@@ -325,7 +322,8 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
               </span>
             )}
           </button>
-          <button
+          {/* 冲突合并暂时隐藏 */}
+          {/* <button
             onClick={() => setActiveTab('conflicts')}
             className={`flex-1 flex items-center justify-center space-x-1 py-1.5 rounded-md text-xs font-medium transition-all relative ${activeTab === 'conflicts'
                 ? 'bg-slate-800 text-indigo-400 shadow-sm'
@@ -339,7 +337,7 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                 {openConflictsCount}
               </span>
             )}
-          </button>
+          </button> */}
           {workspaceId && (
             <button
               onClick={() => setActiveTab('deployment')}
@@ -391,7 +389,7 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
               </div>
             ) : (
               <>
-                <div className="p-4 border-b border-slate-800/60 bg-slate-950/20 max-h-[260px] overflow-y-auto flex-shrink-0 select-none">
+                <div className="p-4 border-b border-slate-800/50 bg-slate-950/40 max-h-[260px] overflow-y-auto flex-shrink-0 select-none">
               <div className="text-[11px] uppercase text-slate-500 font-bold tracking-wider mb-2">
                 {activeRun.dag?.strategy === 'platform_single_step'
                   ? '平台任务执行 (单步)'
@@ -546,9 +544,9 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                     <div
                       key={step.id}
                       onClick={() => setSelectedStepId(step.id)}
-                      className={`flex items-start space-x-3 p-2.5 rounded-lg border transition-all cursor-pointer ${isSelected
-                          ? 'border-indigo-500 bg-indigo-500/5 text-indigo-200'
-                          : 'border-slate-800 bg-slate-900/50 hover:bg-slate-800/40 text-slate-300'
+                      className={`flex items-start space-x-3 p-3 rounded-xl border transition-all cursor-pointer ${isSelected
+                          ? 'border-indigo-500/60 bg-indigo-500/10 text-indigo-200'
+                          : 'border-slate-800/60 bg-slate-900/60 hover:bg-slate-800/50 text-slate-300'
                         }`}
                     >
                       <div className="mt-0.5">{icon}</div>
@@ -576,8 +574,8 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
               </div>
             </div>
 
-            <div className="flex-1 flex flex-col min-h-0 bg-slate-950">
-              <div className="flex items-center justify-between px-4 py-2 border-b border-slate-850 bg-slate-900/40">
+            <div className="flex-1 flex flex-col min-h-0 bg-slate-950/60 backdrop-blur-lg rounded-xl border border-slate-800/50 mx-2 mb-2 overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800/50 bg-slate-900/40">
                 <div className="flex items-center space-x-2 text-xs text-slate-400 font-mono">
                   <Terminal className="w-3.5 h-3.5 text-indigo-400" />
                   <span>step-log: {selectedStep ? `${selectedStep.agentName}` : 'none'}</span>
@@ -596,13 +594,14 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                   );
                 })()}
               </div>
-              <div className="flex-1 overflow-auto p-4 font-mono text-xs text-slate-300 space-y-1 select-text selection:bg-indigo-500/30">
+              <div className="flex-1 overflow-auto p-3 font-mono text-xs text-slate-300 space-y-0.5 select-text selection:bg-indigo-500/30 bg-slate-950/30">
                 {selectedStep && (() => {
                   const errorText = selectedStep.error || '';
                   const status = selectedStep.status;
                   
                   const isLockLost = status === 'mutation_lock_lost' || errorText.includes('workspace mutation lock 已失效');
                   const isOutsidePaths = status === 'outside_declared_target_paths' || (selectedStep.output?.outsideDeclaredTargetPaths && selectedStep.output.outsideDeclaredTargetPaths.length > 0) || (selectedStep.output?.extraChangedFiles && selectedStep.output.extraChangedFiles.length > 0);
+                  const isReadOnlyPlatformRuntimeRejected = errorText.includes('只读 platform runtime 产生了 workspace 修改，已拒绝提交');
                   const isToolBlocked = status === 'dynamic_workspace_tool_blocked' || errorText.includes('dynamic_workspace_tool_blocked');
 
                   if (isLockLost) {
@@ -652,6 +651,27 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                     );
                   }
 
+                  if (isReadOnlyPlatformRuntimeRejected) {
+                    return (
+                      <div className="mb-3 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-300 text-xs">
+                        <div className="font-semibold flex items-center gap-1.5 mb-1 text-amber-400">
+                          <ShieldAlert className="w-4 h-4" /> 只读 Platform Runtime 写入已拒绝
+                        </div>
+                        该 Runtime 配置为只读模式，所有文件修改都被安全拒绝。
+                        {selectedStep.output?.rejectedFiles && selectedStep.output.rejectedFiles.length > 0 && (
+                          <div className="mt-2 p-2 bg-slate-950/60 rounded border border-slate-800 font-mono text-[10px] space-y-1">
+                            <div className="text-slate-400 font-semibold uppercase tracking-wider">被拒绝的文件路径:</div>
+                            {selectedStep.output.rejectedFiles.map((path: string, fIdx: number) => (
+                              <div key={fIdx} className="text-slate-350">
+                                • <span className="text-amber-400">{path}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+
                   if (errorText) {
                     return (
                       <div className="mb-3 p-3 bg-rose-500/10 border border-rose-500/20 rounded-lg text-rose-300 text-xs">
@@ -666,13 +686,35 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                   return null;
                 })()}
 
-                {selectedStep?.log ? (
-                  selectedStep.log.split('\n').map((line: string, i: number) => (
-                    <div key={i} className="whitespace-pre-wrap break-all leading-relaxed">
-                      {line}
-                    </div>
-                  ))
-                ) : (
+                {selectedStep?.log ? (() => {
+                  const stripAnsi = (str: string) => str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
+                  const lines = selectedStep.log.split('\n');
+                  return lines.map((line: string, i: number) => {
+                    const clean = stripAnsi(line);
+                    // 错误/警告/成功 关键词高亮
+                    let lineColor = 'text-slate-300';
+                    if (/error|Error|ERROR|❌|失败/.test(clean)) {
+                      lineColor = 'text-rose-300';
+                    } else if (/warn|Warn|WARN|warning|Warning|WARNING|⚠️/.test(clean)) {
+                      lineColor = 'text-amber-300';
+                    } else if (/✓|✔|success|Success|SUCCESS|完成/.test(clean)) {
+                      lineColor = 'text-emerald-300';
+                    }
+                    // 时间戳行高亮
+                    const tsMatch = clean.match(/^(\[\d{2}:\d{2}:\d{2}\])\s*/);
+                    const dtMatch = clean.match(/^(\d{4}-\d{2}-\d{2}\s*\d{2}:\d{2}:\d{2})\s*/);
+                    const timestamp = tsMatch?.[1] || dtMatch?.[1] || null;
+                    const content = timestamp ? clean.slice(timestamp.length) : clean;
+                    return (
+                      <div key={i} className={`whitespace-pre-wrap break-all leading-relaxed ${lineColor}`}>
+                        {timestamp && (
+                          <span className="text-slate-500 select-none mr-2">{timestamp}</span>
+                        )}
+                        {content || (timestamp ? '' : clean)}
+                      </div>
+                    );
+                  });
+                })() : (
                   <div className="text-slate-600 italic">没有获取到当前步骤的日志记录</div>
                 )}
                 <div ref={logEndRef} />
@@ -716,6 +758,25 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
             ) : (
               <div className="p-4 space-y-2">
                 <div className="text-[11px] uppercase text-slate-500 font-bold tracking-wider mb-2">沙箱环境生成的文件</div>
+                {(() => {
+                  const allSkippedFiles: string[] = activeRun.steps?.flatMap((step: AgentRunStep) => step.output?.skippedFiles || []) || [];
+                  if (allSkippedFiles.length === 0) return null;
+                  return (
+                    <div className="mb-3 p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-lg text-indigo-300 text-xs">
+                      <div className="font-semibold flex items-center gap-1.5 mb-1 text-indigo-400">
+                        <ShieldAlert className="w-4 h-4" /> 敏感文件未发布为产物
+                      </div>
+                      以下 .env / key / 密钥类敏感文件已自动跳过，不会发布为公开产物。
+                      <div className="mt-2 p-2 bg-slate-950/60 rounded border border-slate-800 font-mono text-[10px] space-y-1">
+                        {allSkippedFiles.map((path: string, fIdx: number) => (
+                          <div key={fIdx} className="text-slate-350">
+                            • <span className="text-indigo-400">{path}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
                 {runFiles.length === 0 ? (
                   <div className="text-center py-8 text-slate-500 text-xs">
                     当前尚未生成任何文件

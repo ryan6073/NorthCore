@@ -41,7 +41,7 @@ declare global {
         artifactCreated: (artifactName: string) => Promise<{ success: boolean; error?: string }>;
         artifactApplied: (filePath: string) => Promise<{ success: boolean; error?: string }>;
         checkSupport: () => Promise<{ supported: boolean }>;
-        onNotificationClicked: (callback: (callbackId: string) => void) => void;
+        onNotificationClicked: (callback: (data: { callbackId?: string; conversationId?: string }) => void) => void;
       };
       agentProcess: {
         list: () => Promise<{ success: boolean; agents: any[]; error?: string }>;
@@ -353,7 +353,7 @@ export const platform = {
 
   // Notification APIs
   notification: {
-    show: async (options: { title: string; body: string; silent?: boolean }) => {
+    show: async (options: { title: string; body: string; silent?: boolean; conversationId?: string }) => {
       if (platform.isDesktop()) return window.northcoreDesktop!.notification.show(options);
       
       if (!webState.settings.enableNotifications) return { success: false, error: 'Notifications disabled' };
@@ -397,6 +397,13 @@ export const platform = {
     checkSupport: async () => {
       if (platform.isDesktop()) return window.northcoreDesktop!.notification.checkSupport();
       return Promise.resolve({ supported: 'Notification' in window });
+    },
+    onClicked: (callback: (data: { callbackId?: string; conversationId?: string }) => void) => {
+      if (platform.isDesktop()) {
+        window.northcoreDesktop!.notification.onNotificationClicked(callback);
+        return;
+      }
+      // Web fallback: no-op
     }
   },
 

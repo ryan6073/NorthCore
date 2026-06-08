@@ -571,6 +571,8 @@ export interface AgentRunStep {
       targetPaths?: string[];
     }>;
     outsideDeclaredTargetPaths?: string[];
+    rejectedFiles?: string[];
+    skippedFiles?: string[];
   };
 }
 
@@ -1080,4 +1082,12 @@ export interface WebSearchMetadata {
   cacheHit: boolean;
   results: WebSearchResult[];
   error: string | null;
+}
+
+export interface UserInfo {
+  id?: string;
+  name: string;
+  email: string;
+  avatar: string;
+  role?: 'guest' | 'user' | 'admin';
 }

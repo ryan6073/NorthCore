@@ -6,6 +6,7 @@ export interface UserInfo {
   name: string;
   email: string;
   avatar: string;
+  role?: 'guest' | 'user' | 'admin';
 }
 
 export interface AuthResponseData {

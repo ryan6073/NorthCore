@@ -3837,7 +3837,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           '工作流任务已全部完成',
           '所有 Agent 的规划任务均已成功执行完成。',
           'success',
-          'task'
+          'task',
+          conversationId
         );
       });
 
@@ -4318,11 +4319,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           get().loadSandboxFiles(runId);
           get().loadSandboxFileTree(runId);
         }
+        const completedConvId = run?.conversationId || get().activeConversationId;
         get().addDesktopNotification(
           '沙箱运行已完成',
           `沙箱任务 (ID: ${runId}) 已成功执行完成。`,
           'success',
-          'task'
+          'task',
+          completedConvId
         );
       });
 
@@ -4382,11 +4385,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           });
           get().loadSandboxRunDetail(runId);
         }
+        const failedConvId = run?.conversationId || targetConvId || get().activeConversationId;
         get().addDesktopNotification(
           '沙箱运行失败',
           `沙箱任务 (ID: ${runId}) 执行失败。`,
           'error',
-          'error'
+          'error',
+          failedConvId
         );
       });
 
@@ -4537,7 +4542,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       });
 
       const unsubRunStepToolStarted = wsClient.on('run.step.tool.started', (event: any) => {
-        const { runId, stepId, toolName, args } = event.data;
+        const { runId, stepId, toolCall } = event.data;
+        const toolName = toolCall?.name || toolCall?.tool || 'unknown';
+        const args = toolCall?.arguments || toolCall?.args || {};
         set(state => {
           const targetRun = state.runDetailsById[runId];
           if (!targetRun) return {};
@@ -4567,7 +4574,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       });
 
       const unsubRunStepToolCompleted = wsClient.on('run.step.tool.completed', (event: any) => {
-        const { runId, stepId, toolName } = event.data;
+        const { runId, stepId, toolCall } = event.data;
+        const toolName = toolCall?.name || toolCall?.tool || 'unknown';
         set(state => {
           const targetRun = state.runDetailsById[runId];
           if (!targetRun) return {};
@@ -4597,7 +4605,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       });
 
       const unsubRunStepToolFailed = wsClient.on('run.step.tool.failed', (event: any) => {
-        const { runId, stepId, toolName, error } = event.data;
+        const { runId, stepId, toolCall, error } = event.data;
+        const toolName = toolCall?.name || toolCall?.tool || 'unknown';
         set(state => {
           const targetRun = state.runDetailsById[runId];
           if (!targetRun) return {};
@@ -6057,42 +6066,45 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
                 [runId]: res.data
               }
             };
-
-            if (res.data.artifactChanges && Array.isArray(res.data.artifactChanges)) {
-              const revokedIds = res.data.artifactChanges
-                .filter((change: any) => change.action === 'revoked')
-                .map((change: any) => change.artifactId);
-
-              if (revokedIds.length > 0) {
-                updates.artifacts = state.artifacts.filter(
-                  art => !revokedIds.includes(art.id) && !revokedIds.includes(art.artifactId)
-                );
-              }
-
-              const revertedChanges = res.data.artifactChanges.filter(
-                (change: any) => change.action === 'version_reverted'
-              );
-              if (revertedChanges.length > 0 && !updates.artifacts) {
-                updates.artifacts = [...state.artifacts];
-              }
-              revertedChanges.forEach((change: any) => {
-                if (updates.artifacts) {
-                  updates.artifacts = updates.artifacts.map((art: any) => {
-                    if (art.id === change.artifactId || art.artifactId === change.artifactId) {
-                      return {
-                        ...art,
-                        latestVersion: change.currentVersion,
-                        updatedAt: getCurrentFullTime()
-                      };
-                    }
-                    return art;
-                  });
-                }
-              });
-            }
-
             return updates;
           });
+
+          // 完全重新从服务器拉取 workspace artifact list，不依赖本地缓存的增量计算
+          const runDetail = res.data;
+          const workspaceId = runDetail?.workspaceId;
+          const conversationId = runDetail?.conversationId || activeConversationId;
+
+          if (workspaceId) {
+            try {
+              const wsArtifactsRes = await getWorkspaceArtifacts(workspaceId);
+              if (wsArtifactsRes.code === 0 && wsArtifactsRes.data) {
+                set(state => ({
+                  workspaceArtifacts: {
+                    ...state.workspaceArtifacts,
+                    [workspaceId]: wsArtifactsRes.data
+                  }
+                }));
+              }
+            } catch (e) {
+              console.warn('[Store] 刷新 workspace artifacts 失败', e);
+            }
+          }
+
+          if (conversationId) {
+            try {
+              const convArtifactsRes = await getArtifactMetaList(conversationId);
+              if (convArtifactsRes.code === 0 && convArtifactsRes.data) {
+                set(state => ({
+                  conversationArtifacts: {
+                    ...state.conversationArtifacts,
+                    [conversationId]: convArtifactsRes.data
+                  }
+                }));
+              }
+            } catch (e) {
+              console.warn('[Store] 刷新 conversation artifacts 失败', e);
+            }
+          }
         }
       } catch (e) {
         console.error('[Store] 撤销沙箱更改失败', e);
@@ -6836,7 +6848,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     }
   },
 
-  addDesktopNotification: (title, body, type, eventType) => {
+  addDesktopNotification: (title, body, type, eventType, conversationId) => {
     const newNotification = {
       id: createId('notif'),
       title,
@@ -6860,7 +6872,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       // 1. Electron Desktop Native Bridge Notification
       try {
         if (platform.isDesktop() && platform.notification?.show) {
-          platform.notification.show({ title, body });
+          platform.notification.show({ title, body, conversationId });
           return;
         }
       } catch (err) {
