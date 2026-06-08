@@ -1,5 +1,16 @@
 const { ipcMain, Notification, app, BrowserWindow } = require('electron')
 
+/** 获取主窗口（无论是否聚焦/最小化），唤起并聚焦 */
+function activateMainWindow() {
+  const windows = BrowserWindow.getAllWindows()
+  if (windows.length > 0) {
+    const mainWin = windows[0]
+    if (mainWin.isMinimized()) mainWin.restore()
+    mainWin.show()
+    mainWin.focus()
+  }
+}
+
 function registerNotificationHandlers() {
   ipcMain.handle('notification:show', async (event, options) => {
     try {
@@ -15,16 +26,16 @@ function registerNotificationHandlers() {
       })
 
       notification.on('click', () => {
-        const focusedWindow = BrowserWindow.getFocusedWindow()
-        if (focusedWindow) {
-          focusedWindow.show()
-          focusedWindow.focus()
-        }
+        // 先唤起窗口（无论最小化/后台状态），再发送 IPC
+        activateMainWindow()
         // 将 conversationId 传回 renderer，用于点击通知后跳转到对应会话
-        event.sender.send('notification:clicked', {
-          callbackId: options.callbackId,
-          conversationId: options.conversationId || null
-        })
+        const windows = BrowserWindow.getAllWindows()
+        if (windows.length > 0) {
+          windows[0].webContents.send('notification:clicked', {
+            callbackId: options.callbackId,
+            conversationId: options.conversationId || null
+          })
+        }
       })
 
       notification.show()

@@ -49,6 +49,8 @@ contextBridge.exposeInMainWorld('northcoreDesktop', {
     artifactApplied: (filePath) => ipcRenderer.invoke('notification:artifact-applied', filePath),
     checkSupport: () => ipcRenderer.invoke('notification:check-support'),
     onNotificationClicked: (callback) => {
+      // 移除旧监听避免重复注册
+      ipcRenderer.removeAllListeners('notification:clicked')
       ipcRenderer.on('notification:clicked', (event, data) => callback(data))
     }
   },
