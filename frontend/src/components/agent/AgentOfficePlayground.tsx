@@ -283,7 +283,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
   };
 
   if (isCollapsed) {
-    // 收起态：只显示 Agent 状态圆点，一行排列
+    // 收起态：显示 Agent emoji + 状态标签，一行紧凑排列
     return (
       <div className="w-full px-4 py-2 bg-white/90 dark:bg-slate-900/90 border-b border-slate-200/70 dark:border-slate-800/70 select-none overflow-hidden">
         <div className="flex items-center justify-between">
@@ -298,27 +298,30 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
               <ChevronRight className="w-3 h-3" />
             </button>
           </div>
-          <div className="flex items-center gap-1.5">
-            {displayAgents.map((agent) => (
-              <div
-                key={agent.id}
-                className="relative group"
-              >
-                <div
-                  className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white transition-all ${
-                    agent.status === 'thinking'
-                      ? 'bg-indigo-500 shadow-[0_0_6px_rgba(99,102,241,0.5)]'
-                      : 'bg-emerald-500/80'
-                  }`}
-                  title={`${agent.name}: ${agent.status === 'thinking' ? '工作中' : '待命中'}`}
-                >
-                  {agent.name.charAt(0)}
+          <div className="flex items-center gap-3">
+            {displayAgents.map((agent) => {
+              const isWorking = agent.status === 'thinking';
+              const leisureState = leisureStates[agent.id];
+              const activityLabel = isWorking
+                ? '处理中'
+                : leisureState?.type === 'gym'
+                  ? '状态热身'
+                  : leisureState?.type === 'sleep'
+                    ? '低功耗待机'
+                    : '待命巡检';
+              return (
+                <div key={agent.id} className="flex items-center gap-1.5 group relative">
+                  <div className={`flex items-center gap-1 text-[11px] ${isWorking ? 'text-indigo-600 dark:text-indigo-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                    <span>{agent.name}</span>
+                    <span className="text-base leading-none">🐴</span>
+                    <span className="text-[10px] opacity-80">{activityLabel}</span>
+                  </div>
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-30 bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
+                    {agent.name}: {isWorking ? '正在处理当前任务' : `当前${activityLabel}`}
+                  </div>
                 </div>
-                <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-white dark:border-slate-900"
-                  style={{ backgroundColor: agent.status === 'thinking' ? '#6366f1' : '#10b981' }}
-                />
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
