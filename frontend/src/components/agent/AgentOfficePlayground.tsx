@@ -290,7 +290,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={handleToggle}
-              className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+              className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors whitespace-nowrap"
               title="展开办公室"
             >
               <Monitor className="w-3.5 h-3.5" />
@@ -298,7 +298,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
               <ChevronRight className="w-3 h-3" />
             </button>
           </div>
-          <div className="flex items-center gap-3 overflow-x-auto pl-2">
+          <div className="flex items-center gap-2 pl-2 flex-wrap justify-end">
             {displayAgents.map((agent) => {
               const isWorking = agent.status === 'thinking';
               const leisureState = leisureStates[agent.id];
@@ -311,22 +311,19 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
                     ? '低功耗待机'
                     : '待命巡检';
               return (
-                <div key={agent.id} className="flex items-center gap-2 px-2 py-1 rounded-xl bg-white/85 dark:bg-slate-950/45 border border-slate-200/80 dark:border-slate-800/80 group relative hover:shadow-md transition-all" style={{ overflow: 'visible' }}>
-                  <div className="flex items-center gap-1.5">
-                    <div className="flex-shrink-0" style={{ width: 28, height: 36 }}>
-                      {styleMode === 'emoji' ? (
-                        <HorseAgent agent={agent} activityType={activityType} />
-                      ) : (
-                        <HorseAgentV2 agent={agent} activityType={activityType} />
-                      )}
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-[9px] font-semibold text-slate-700 dark:text-slate-300 leading-tight">{agent.name}</span>
-                      <span className={`text-[8px] font-medium ${isWorking ? 'text-indigo-500' : 'text-emerald-500'}`}>{activityLabel}</span>
-                    </div>
+                <div key={agent.id} className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-lg bg-white/85 dark:bg-slate-950/45 border border-slate-200/80 dark:border-slate-800/80 group relative" style={{ overflow: 'visible' }}>
+                  <div className="flex-shrink-0">
+                    {styleMode === 'emoji' ? (
+                      <HorseAgent agent={agent} activityType={activityType} />
+                    ) : (
+                      <HorseAgentV2 agent={agent} activityType={activityType} />
+                    )}
                   </div>
-                  {/* tooltip 放在卡片外层的 group 上，不会被 overflow 裁剪 */}
-                  <div className="absolute -top-1 left-1/2 -translate-x-1/2 -translate-y-full hidden group-hover:block z-50 bg-slate-900 text-white text-[9px] px-2 py-1 rounded shadow-lg whitespace-nowrap pointer-events-none">
+                  <div className="flex flex-col leading-tight">
+                    <span className="text-[9px] font-semibold text-slate-700 dark:text-slate-300">{agent.name}</span>
+                    <span className={`text-[7px] font-medium ${isWorking ? 'text-indigo-500' : 'text-emerald-500'}`}>{activityLabel}</span>
+                  </div>
+                  <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-full mt-[-4px] hidden group-hover:flex z-[9999] bg-slate-900 text-white text-[9px] px-2 py-1 rounded shadow-lg whitespace-nowrap pointer-events-none">
                     {agent.name}: {isWorking ? '正在处理当前任务' : `当前${activityLabel}`}
                   </div>
                 </div>
