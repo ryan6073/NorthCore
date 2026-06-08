@@ -4266,6 +4266,15 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         );
       });
 
+      // 重置 agent 状态前检查：如果该 agent 在其他 run 中仍然活跃，不重置为 online
+      const shouldResetAgent = (state: any, agentId: string, excludeRunId: string) => {
+        return !Object.values(state.runDetailsById).some(
+          (r: any) => r.id !== excludeRunId &&
+            (r.agentId === agentId || r.steps?.some((s: any) => s.agentId === agentId) || r.dag?.nodes?.some((n: any) => n.agentId === agentId)) &&
+            (r.status === 'running' || r.status === 'pending' || r.status === 'queued')
+        );
+      };
+
       const unsubRunCompleted = wsClient.on('run.completed', (event: any) => {
         const { runId, run, files, artifacts } = event.data;
         const targetConvId = run?.conversationId || get().activeConversationId;
@@ -4291,7 +4300,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             };
             const runAgentIds = getRunAgentIds(state);
             const updatedAgents = state.agents.map(a =>
-              runAgentIds.has(a.id) ? { ...a, status: 'online' as const } : a
+              runAgentIds.has(a.id) && shouldResetAgent(state, a.id, runId)
+                ? { ...a, status: 'online' as const }
+                : a
             );
 
             const artifactsState = updateArtifactsInState(state, targetConvId || '', artifacts || [], runId);
@@ -4310,7 +4321,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           set(state => {
             const runAgentIds = getRunAgentIds(state);
             const updatedAgents = state.agents.map(a =>
-              runAgentIds.has(a.id) ? { ...a, status: 'online' as const } : a
+              runAgentIds.has(a.id) && shouldResetAgent(state, a.id, runId)
+                ? { ...a, status: 'online' as const }
+                : a
             );
             const targetRun = state.runDetailsById[runId];
 
@@ -4385,7 +4398,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             };
             const runAgentIds = getRunAgentIds(state);
             const updatedAgents = state.agents.map(a =>
-              runAgentIds.has(a.id) ? { ...a, status: 'online' as const } : a
+              runAgentIds.has(a.id) && shouldResetAgent(state, a.id, runId)
+                ? { ...a, status: 'online' as const }
+                : a
             );
 
             const artifactsState = updateArtifactsInState(state, targetConvId || '', artifacts || [], runId);
@@ -4404,7 +4419,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           set(state => {
             const runAgentIds = getRunAgentIds(state);
             const updatedAgents = state.agents.map(a =>
-              runAgentIds.has(a.id) ? { ...a, status: 'online' as const } : a
+              runAgentIds.has(a.id) && shouldResetAgent(state, a.id, runId)
+                ? { ...a, status: 'online' as const }
+                : a
             );
             const targetRun = state.runDetailsById[runId];
 
