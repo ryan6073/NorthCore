@@ -4542,7 +4542,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       });
 
       const unsubRunStepToolStarted = wsClient.on('run.step.tool.started', (event: any) => {
-        const { runId, stepId, toolName, args } = event.data;
+        const { runId, stepId, toolCall } = event.data;
+        const toolName = toolCall?.name || toolCall?.tool || 'unknown';
+        const args = toolCall?.arguments || toolCall?.args || {};
         set(state => {
           const targetRun = state.runDetailsById[runId];
           if (!targetRun) return {};
@@ -4572,7 +4574,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       });
 
       const unsubRunStepToolCompleted = wsClient.on('run.step.tool.completed', (event: any) => {
-        const { runId, stepId, toolName } = event.data;
+        const { runId, stepId, toolCall } = event.data;
+        const toolName = toolCall?.name || toolCall?.tool || 'unknown';
         set(state => {
           const targetRun = state.runDetailsById[runId];
           if (!targetRun) return {};
@@ -4602,7 +4605,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       });
 
       const unsubRunStepToolFailed = wsClient.on('run.step.tool.failed', (event: any) => {
-        const { runId, stepId, toolName, error } = event.data;
+        const { runId, stepId, toolCall, error } = event.data;
+        const toolName = toolCall?.name || toolCall?.tool || 'unknown';
         set(state => {
           const targetRun = state.runDetailsById[runId];
           if (!targetRun) return {};
