@@ -574,8 +574,8 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
               </div>
             </div>
 
-            <div className="flex-1 flex flex-col min-h-0 bg-slate-950/60 backdrop-blur-lg rounded-xl border border-slate-800/50 mx-2 mb-2 overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800/50 bg-slate-900/40">
+            <div className="flex-1 flex flex-col min-h-0 bg-slate-950/60 backdrop-blur-lg rounded-xl border border-slate-800/50 mx-2 mb-2 overflow-hidden" style={{ minHeight: 120 }}>
+              <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800/50 bg-slate-900/40 flex-shrink-0">
                 <div className="flex items-center space-x-2 text-xs text-slate-400 font-mono">
                   <Terminal className="w-3.5 h-3.5 text-indigo-400" />
                   <span>step-log: {selectedStep ? `${selectedStep.agentName}` : 'none'}</span>
@@ -689,31 +689,49 @@ export const SandboxPanel: React.FC<SandboxPanelProps> = ({ customConversationId
                 {selectedStep?.log ? (() => {
                   const stripAnsi = (str: string) => str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
                   const lines = selectedStep.log.split('\n');
-                  return lines.map((line: string, i: number) => {
-                    const clean = stripAnsi(line);
-                    // 错误/警告/成功 关键词高亮
-                    let lineColor = 'text-slate-300';
-                    if (/error|Error|ERROR|❌|失败/.test(clean)) {
-                      lineColor = 'text-rose-300';
-                    } else if (/warn|Warn|WARN|warning|Warning|WARNING|⚠️/.test(clean)) {
-                      lineColor = 'text-amber-300';
-                    } else if (/✓|✔|success|Success|SUCCESS|完成/.test(clean)) {
-                      lineColor = 'text-emerald-300';
-                    }
-                    // 时间戳行高亮
-                    const tsMatch = clean.match(/^(\[\d{2}:\d{2}:\d{2}\])\s*/);
-                    const dtMatch = clean.match(/^(\d{4}-\d{2}-\d{2}\s*\d{2}:\d{2}:\d{2})\s*/);
-                    const timestamp = tsMatch?.[1] || dtMatch?.[1] || null;
-                    const content = timestamp ? clean.slice(timestamp.length) : clean;
-                    return (
-                      <div key={i} className={`whitespace-pre-wrap break-all leading-relaxed ${lineColor}`}>
-                        {timestamp && (
-                          <span className="text-slate-500 select-none mr-2">{timestamp}</span>
-                        )}
-                        {content || (timestamp ? '' : clean)}
-                      </div>
-                    );
-                  });
+
+                  // 检测是否包含 tool call 失败信息，注入到日志中展示
+                  const toolCalls = (selectedStep as any).output?.toolCalls || [];
+                  const failedTools = toolCalls.filter((tc: any) => tc.status === 'failed');
+
+                  return (
+                    <>
+                      {failedTools.length > 0 && failedTools.map((tc: any, fi: number) => (
+                        <div key={fi} className="mb-2 p-2 bg-rose-500/10 border border-rose-500/20 rounded-lg text-rose-300 text-[10px]">
+                          <div className="font-semibold flex items-center gap-1 mb-1 text-rose-400">
+                            <AlertTriangle className="w-3 h-3" /> Tool Call 失败: {tc.name || tc.tool}
+                          </div>
+                          <div className="text-rose-200/80">{tc.error || tc.result?.error || '未知错误'}</div>
+                          {tc.result?.status && (
+                            <div className="mt-1 text-rose-400/70">状态: {tc.result.status}</div>
+                          )}
+                        </div>
+                      ))}
+                      {lines.map((line: string, i: number) => {
+                        const clean = stripAnsi(line);
+                        let lineColor = 'text-slate-300';
+                        if (/error|Error|ERROR|❌|失败/.test(clean)) {
+                          lineColor = 'text-rose-300';
+                        } else if (/warn|Warn|WARN|warning|Warning|WARNING|⚠️/.test(clean)) {
+                          lineColor = 'text-amber-300';
+                        } else if (/✓|✔|success|Success|SUCCESS|完成/.test(clean)) {
+                          lineColor = 'text-emerald-300';
+                        }
+                        const tsMatch = clean.match(/^(\[\d{2}:\d{2}:\d{2}\])\s*/);
+                        const dtMatch = clean.match(/^(\d{4}-\d{2}-\d{2}\s*\d{2}:\d{2}:\d{2})\s*/);
+                        const timestamp = tsMatch?.[1] || dtMatch?.[1] || null;
+                        const content = timestamp ? clean.slice(timestamp.length) : clean;
+                        return (
+                          <div key={i} className={`whitespace-pre-wrap break-all leading-relaxed ${lineColor}`}>
+                            {timestamp && (
+                              <span className="text-slate-500 select-none mr-2">{timestamp}</span>
+                            )}
+                            {content || (timestamp ? '' : clean)}
+                          </div>
+                        );
+                      })}
+                    </>
+                  );
                 })() : (
                   <div className="text-slate-600 italic">没有获取到当前步骤的日志记录</div>
                 )}

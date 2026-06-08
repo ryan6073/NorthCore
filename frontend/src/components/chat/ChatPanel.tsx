@@ -169,7 +169,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   }, [conversation?.id]);
   const [isApplyToLocal, setIsApplyToLocal] = useState(false);
   const [showMemoryPanel, setShowMemoryPanel] = useState(false);
-  const [officeMode, setOfficeMode] = useState<'expanded' | 'collapsed' | 'hidden'>('expanded');
+  const [officeMode, setOfficeMode] = useState<'expanded' | 'collapsed' | 'hidden'>('collapsed');
   const [memoryTab, setMemoryTab] = useState<'pins' | 'memories'>('pins');
 
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
