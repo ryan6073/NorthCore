@@ -678,6 +678,18 @@ export interface SandboxConflict {
   resolvedAt?: string | null;
 }
 
+export interface ArtifactMessageMetadata {
+  source?: string;
+  action?: 'created' | 'updated' | string;
+  artifactId?: string;
+  artifactVersionId?: string;
+  artifactVersion?: number;
+  currentVersionId?: string;
+  sourceRunId?: string;
+  sourceConversationId?: string;
+  sourceWorkspaceId?: string;
+}
+
 export interface AgentRunDetail {
   id: string;
   sandboxId?: string | null;

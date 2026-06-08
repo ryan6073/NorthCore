@@ -14,11 +14,11 @@ const ArtifactMessage: React.FC<ArtifactMessageProps> = ({ message }) => {
   const setSelectedArtifactVersion = useAgentHubStore(state => state.setSelectedArtifactVersion);
   const setIsFullScreenOpen = useAgentHubStore(state => state.setIsFullScreenOpen);
 
-  const conversationMessages = useAgentHubStore(state => 
+  const conversationMessages = useAgentHubStore(state =>
     state.conversationMessages[message.conversationId] || state.messages
   );
 
-  const conversationArtifacts = useAgentHubStore(state => 
+  const conversationArtifacts = useAgentHubStore(state =>
     state.conversationArtifacts[message.conversationId] || []
   );
 
@@ -33,66 +33,35 @@ const ArtifactMessage: React.FC<ArtifactMessageProps> = ({ message }) => {
   let artifact: Artifact | undefined = undefined;
   if (sourceRunId) {
     // Search in conversation-level artifacts
-    artifact = conversationArtifacts.find(a => 
-      (a.id === message.artifactId || a.artifactId === message.artifactId) && 
+    artifact = conversationArtifacts.find(a =>
+      (a.id === message.artifactId || a.artifactId === message.artifactId) &&
       (a.runId === sourceRunId || (a as any).versionMetadata?.sourceRunId === sourceRunId)
-    ) || conversationArtifacts.find(a => 
+    ) || conversationArtifacts.find(a =>
       a.id === message.artifactId || a.artifactId === message.artifactId
-    ) || allArtifacts.find(a => 
+    ) || allArtifacts.find(a =>
       a.id === message.artifactId || a.artifactId === message.artifactId
     );
   } else {
     artifact = allArtifacts.find(a => a.id === message.artifactId || a.artifactId === message.artifactId);
   }
 
-  // Determine the version number
-  let resolvedVersion: number | undefined = undefined;
+  // 优先使用 metadata 中的 versionId 精确匹配
+  const resolvedVersionId =
+    message.metadata?.artifactVersionId ||
+    message.metadata?.currentVersionId ||
+    undefined;
 
-  // 1. Try to get version from message metadata
-  if (message.metadata?.version !== undefined && message.metadata?.version !== null) {
-    resolvedVersion = Number(message.metadata.version);
-  } else if (message.metadata?.artifactVersion !== undefined && message.metadata?.artifactVersion !== null) {
-    resolvedVersion = Number(message.metadata.artifactVersion);
-  }
+  // 版本号从 metadata 中提取
+  let resolvedVersion: number | undefined =
+    message.metadata?.artifactVersion !== undefined
+      ? Number(message.metadata.artifactVersion)
+      : message.metadata?.version !== undefined
+        ? Number(message.metadata.version)
+        : undefined;
 
-  // 2. Try to get version from conversationArtifacts matching runId / versionMetadata
-  if (resolvedVersion === undefined && sourceRunId) {
-    const matchedArt = conversationArtifacts.find(a =>
-      (a.id === message.artifactId || a.artifactId === message.artifactId) &&
-      (a.runId === sourceRunId || (a as any).versionMetadata?.sourceRunId === sourceRunId)
-    );
-    if (matchedArt) {
-      resolvedVersion = (matchedArt as any).versionMetadata?.sourceFileVersion || matchedArt.latestVersion;
-    }
-  }
-
-  // 3. Try to search in versions history list in store
-  if (resolvedVersion === undefined && sourceRunId && message.artifactId) {
-    const versions = useAgentHubStore.getState().artifactVersions[message.artifactId] || [];
-    const matchedVer = versions.find((v: any) =>
-      v.metadata?.sourceRunId === sourceRunId ||
-      v.sourceRunId === sourceRunId ||
-      v.metadata?.runId === sourceRunId
-    );
-    if (matchedVer) {
-      resolvedVersion = matchedVer.version;
-    }
-  }
-
-  // 4. Fallback: use matched artifact's latestVersion if sourceRunId matched
-  if (resolvedVersion === undefined && sourceRunId && artifact && (artifact.runId === sourceRunId || (artifact as any).versionMetadata?.sourceRunId === sourceRunId)) {
-    resolvedVersion = (artifact as any).versionMetadata?.sourceFileVersion || artifact.latestVersion;
-  }
-
-  // 5. Fallback: use artifact's latestVersion (most reliable for old messages without metadata)
+  // 旧数据 fallback: 使用 artifact 的 latestVersion
   if (resolvedVersion === undefined && artifact) {
     resolvedVersion = artifact.latestVersion;
-  }
-
-  // 6. Fallback: use sequential index if no other version matches
-  if (resolvedVersion === undefined) {
-    const msgIndex = artifactMessages.findIndex(m => m.id === message.id);
-    resolvedVersion = msgIndex !== -1 ? msgIndex + 1 : undefined;
   }
 
   if (artifact) {
@@ -101,8 +70,10 @@ const ArtifactMessage: React.FC<ArtifactMessageProps> = ({ message }) => {
         <ArtifactPreview
           artifact={artifact}
           initialVersion={resolvedVersion}
-          onOpenFullScreen={(artId, verNum) => {
+          initialVersionId={resolvedVersionId}
+          onOpenFullScreen={(artId, verNum, verId) => {
             setSelectedArtifactId(artId);
+            useAgentHubStore.getState().setSelectedArtifactVersionId(verId || resolvedVersionId || null);
             setSelectedArtifactVersion(verNum || resolvedVersion || null);
             setIsFullScreenOpen(true);
           }}

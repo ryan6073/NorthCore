@@ -17,8 +17,9 @@ import { ZoomableContainer } from '../common/ZoomableContainer';
 
 interface ArtifactPreviewProps {
   artifact: Artifact | null;
-  onOpenFullScreen?: (artifactId: string, versionNumber?: number) => void;
+  onOpenFullScreen?: (artifactId: string, versionNumber?: number, versionId?: string) => void;
   initialVersion?: number;
+  initialVersionId?: string;
 }
 
 mermaid.initialize({
@@ -103,7 +104,7 @@ const MermaidRenderer: React.FC<{ chart: string }> = ({ chart }) => {
   );
 };
 
-const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullScreen, initialVersion }) => {
+const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullScreen, initialVersion, initialVersionId }) => {
   const [activeTab, setActiveTab] = useState<'preview' | 'source' | 'diff'>('preview');
   const [copied, setCopied] = useState(false);
   const [splitView, setSplitView] = useState(true);
@@ -179,6 +180,9 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   const [localVersionNumber, setLocalVersionNumber] = useState<number | null>(
     initialVersion !== undefined ? initialVersion : null
   );
+  const [localVersionId, setLocalVersionId] = useState<string | null>(
+    initialVersionId ?? null
+  );
 
   // Floating Selection Popover states
   const [selectionBox, setSelectionBox] = useState<{ x: number; y: number; text: string; startLine?: number; endLine?: number } | null>(null);
@@ -191,6 +195,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   const setQuoteArtifactRef = useAgentHubStore(state => state.setQuoteArtifactRef);
 
   const selectedArtifactId = useAgentHubStore(state => state.selectedArtifactId);
+  const selectedArtifactVersionId = useAgentHubStore(state => state.selectedArtifactVersionId);
   const selectedArtifactVersion = useAgentHubStore(state => state.selectedArtifactVersion);
 
   const currentArtifact = artifact;
@@ -204,20 +209,32 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
   // Reset local version when artifact changes or initialVersion changes
   useEffect(() => {
+    setLocalVersionId(initialVersionId ?? null);
     setLocalVersionNumber(initialVersion !== undefined ? initialVersion : null);
-  }, [artifact?.id, initialVersion]);
+  }, [artifact?.id, initialVersion, initialVersionId]);
 
   // Active version that is currently selected or default currentVersionId
   const currentVersion: ArtifactVersion | null = useMemo(() => {
     if (!versions.length) return null;
+    // 1. localVersionId 精确匹配
+    if (localVersionId) {
+      return versions.find(v => v.id === localVersionId) || versions[versions.length - 1];
+    }
+    // 2. localVersionNumber 匹配
     if (localVersionNumber !== null) {
       return versions.find(v => v.version === localVersionNumber) || versions[versions.length - 1];
     }
+    // 3. Store 层 versionId
+    if (selectedArtifactId && artifact && selectedArtifactId === artifact.id && selectedArtifactVersionId) {
+      return versions.find(v => v.id === selectedArtifactVersionId) || versions[versions.length - 1];
+    }
+    // 4. Store 层 version number
     if (selectedArtifactId && artifact && selectedArtifactId === artifact.id && selectedArtifactVersion !== null) {
       return versions.find(v => v.version === selectedArtifactVersion) || versions[versions.length - 1];
     }
+    // 5. 默认使用 currentVersionId
     return versions.find(v => v.id === currentArtifact?.currentVersionId) || versions[versions.length - 1];
-  }, [versions, selectedArtifactId, selectedArtifactVersion, currentArtifact, localVersionNumber]);
+  }, [versions, localVersionId, localVersionNumber, selectedArtifactId, selectedArtifactVersionId, selectedArtifactVersion, currentArtifact]);
 
   const currentVersionIndex = useMemo(() => {
     if (!currentVersion || !versions.length) return -1;
@@ -1044,8 +1061,10 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
               onChange={(e) => {
                 const selectedVer = versions.find(v => v.id === e.target.value);
                 if (selectedVer) {
+                  setLocalVersionId(selectedVer.id);
                   setLocalVersionNumber(selectedVer.version);
                   if (selectedArtifactId && artifact && selectedArtifactId === artifact.id) {
+                    useAgentHubStore.getState().setSelectedArtifactVersionId(selectedVer.id);
                     useAgentHubStore.getState().setSelectedArtifactVersion(selectedVer.version);
                   }
                 }
@@ -1163,7 +1182,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
             </button>
             {onOpenFullScreen && (
               <button
-                onClick={() => onOpenFullScreen(currentArtifact.id, currentVersion?.version)}
+                onClick={() => onOpenFullScreen(currentArtifact.id, currentVersion?.version, currentVersion?.id)}
                 className="p-1.5 rounded-lg hover:bg-lark-bg-hover dark:hover:bg-slate-800 text-lark-text-secondary dark:text-slate-350 hover:text-lark-primary dark:hover:text-violet-400 transition-all border border-lark-border dark:border-slate-800 shadow-sm bg-white dark:bg-slate-900"
                 title="放大全屏预览"
               >

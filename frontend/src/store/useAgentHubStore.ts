@@ -606,7 +606,13 @@ const updateArtifactsInState = (state: any, conversationId: string, artifactsLis
 
   const updatedVersions = { ...state.artifactVersions };
   artifactsList.forEach((art: any) => {
-    delete updatedVersions[art.id];
+    if (art.currentVersion) {
+      const existing = updatedVersions[art.id] || [];
+      if (!existing.some((v: any) => v.id === art.currentVersion.id)) {
+        updatedVersions[art.id] = [...existing, art.currentVersion]
+          .sort((a: any, b: any) => a.version - b.version);
+      }
+    }
   });
 
   return {
@@ -637,6 +643,7 @@ interface AgentHubStore {
   memories: MemoryItem[];
   activeConversationId: string | null;
   selectedArtifactId: string | null;
+  selectedArtifactVersionId: string | null;
   selectedArtifactVersion: number | null;
   isNewConversationOpen: boolean;
   preselectedAgentId: string | null;
@@ -710,6 +717,7 @@ interface AgentHubStore {
   setUseMockMode: (mode: boolean) => Promise<void>;
   setActiveConversationId: (id: string | null) => Promise<void>;
   setSelectedArtifactId: (id: string | null) => void;
+  setSelectedArtifactVersionId: (versionId: string | null) => void;
   setSelectedArtifactVersion: (version: number | null) => void;
   setIsNewConversationOpen: (open: boolean) => void;
   setPreselectedAgentId: (id: string | null) => void;
@@ -790,7 +798,7 @@ interface AgentHubStore {
   renameConversation: (id: string, newTitle: string) => Promise<void>;
   togglePinConversation: (id: string) => Promise<void>;
   toggleArchiveConversation: (id: string) => Promise<void>;
-  loadArtifactContent: (artifactId: string) => Promise<void>;
+  loadArtifactContent: (artifactId: string, options?: { force?: boolean }) => Promise<void>;
   getContextUsage: () => Promise<void>;
   setContextUsage: (usage: ContextUsage) => void;
   
@@ -928,6 +936,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   memories: [],
   activeConversationId: null,
   selectedArtifactId: null,
+  selectedArtifactVersionId: null,
   selectedArtifactVersion: null,
   isNewConversationOpen: false,
   preselectedAgentId: null,
@@ -1626,12 +1635,13 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
 
   setSelectedArtifactId: (id) => {
-    set({ selectedArtifactId: id, selectedArtifactVersion: null });
+    set({ selectedArtifactId: id, selectedArtifactVersionId: null, selectedArtifactVersion: null });
     if (id) {
       get().loadArtifactContent(id);
     }
   },
 
+  setSelectedArtifactVersionId: (versionId) => set({ selectedArtifactVersionId: versionId }),
   setSelectedArtifactVersion: (version) => set({ selectedArtifactVersion: version }),
   setIsNewConversationOpen: (open) => set({
     isNewConversationOpen: open,
@@ -3409,9 +3419,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     }
   },
 
-  loadArtifactContent: async (artifactId) => {
+  loadArtifactContent: async (artifactId, options) => {
     const { useMockMode, artifactVersions } = get();
-    if (artifactVersions[artifactId]?.length > 0) return;
+    if (!options?.force && artifactVersions[artifactId]?.length > 0) return;
 
     if (useMockMode) {
       const versions = mockArtifactVersions.filter(v => v.artifactId === artifactId);

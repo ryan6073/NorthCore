@@ -241,6 +241,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
 
   const allArtifacts = useAgentHubStore(state => state.artifacts);
   const artifactVersions = useAgentHubStore(state => state.artifactVersions);
+  const selectedArtifactVersionId = useAgentHubStore(state => state.selectedArtifactVersionId);
   const selectedArtifactVersion = useAgentHubStore(state => state.selectedArtifactVersion);
   const loadArtifactContent = useAgentHubStore(state => state.loadArtifactContent);
   const saveEditedArtifact = useAgentHubStore(state => state.saveEditedArtifact);
@@ -268,11 +269,14 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
   // Active version that is currently selected or default currentVersionId
   const currentVersion: ArtifactVersion | null = useMemo(() => {
     if (!versions.length) return null;
+    if (selectedArtifactVersionId) {
+      return versions.find(v => v.id === selectedArtifactVersionId) || versions[versions.length - 1];
+    }
     if (selectedArtifactVersion !== null) {
       return versions.find(v => v.version === selectedArtifactVersion) || versions[versions.length - 1];
     }
     return versions.find(v => v.id === artifact?.currentVersionId) || versions[versions.length - 1];
-  }, [versions, selectedArtifactVersion, artifact]);
+  }, [versions, selectedArtifactVersionId, selectedArtifactVersion, artifact]);
 
   const currentVersionIndex = useMemo(() => {
     if (!currentVersion || !versions.length) return -1;
@@ -912,6 +916,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
                 onChange={(e) => {
                   const selectedVer = versions.find(v => v.id === e.target.value);
                   if (selectedVer) {
+                    useAgentHubStore.getState().setSelectedArtifactVersionId(selectedVer.id);
                     useAgentHubStore.getState().setSelectedArtifactVersion(selectedVer.version);
                   }
                 }}
