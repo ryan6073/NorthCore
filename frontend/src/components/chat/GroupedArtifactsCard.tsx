@@ -162,6 +162,8 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
     return 'text-slate-500 dark:text-slate-400';
   };
 
+  // 是否有任何产物已撤销
+  const hasAnyRevoked = fileStats.some(f => f.artifactId && revokedMap[f.artifactId]);
   const title = message.content || `本次生成/更新了 ${message.metadata?.artifactCount || fileStats.length} 个产物`;
 
   return (
@@ -183,16 +185,16 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
           </div>
         </div>
 
-        {/* Action Controls */}
+        {/* Action Controls — 有已撤销产物时禁用 */}
         <div className="flex items-center gap-3">
           <button
             onClick={handleUndo}
             className={`flex items-center gap-1 text-[11px] font-medium transition-colors select-none ${
-              isUndone
+              isUndone || hasAnyRevoked
                 ? 'text-slate-400 dark:text-slate-500 cursor-not-allowed'
                 : 'text-slate-500 hover:text-lark-primary dark:text-slate-400 dark:hover:text-violet-400'
             }`}
-            disabled={isUndone}
+            disabled={isUndone || hasAnyRevoked}
           >
             <RotateCcw className="w-3 h-3" />
             <span>{isUndone ? '已撤销' : '撤销'}</span>
@@ -201,10 +203,13 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
           <button
             onClick={handleAudit}
             className={`px-3 py-1 text-[11px] font-semibold rounded-lg border shadow-xs transition-all flex items-center gap-1.5 select-none ${
-              auditStatus === 'approved'
-                ? 'bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-900 text-green-700 dark:text-green-400'
-                : 'bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
+              hasAnyRevoked
+                ? 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 cursor-not-allowed opacity-60'
+                : auditStatus === 'approved'
+                  ? 'bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-900 text-green-700 dark:text-green-400'
+                  : 'bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
             }`}
+            disabled={hasAnyRevoked}
           >
             {auditStatus === 'approved' && <Check className="w-3 h-3" />}
             <span>{auditStatus === 'approved' ? '已确认' : '确认'}</span>
