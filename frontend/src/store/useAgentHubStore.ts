@@ -3847,6 +3847,20 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       const unsubStatusChanged = wsClient.on('agent.status.changed', (event: any) => {
         const { agentId, newStatus } = event.data;
         set(state => {
+          // 当后端想把 agent 设为 online 时，检查该 agent 是否还有活跃的 run
+          // 避免 tool call 失败等中间状态错误地让 agent 退出工作状态
+          if (newStatus === 'online') {
+            // 检查该 agent 是否有活跃的 run（包括 DAG 中分配给该 agent 的节点）
+            const hasActiveRun = Object.values(state.runDetailsById).some(
+              (r: any) => (r.agentId === agentId ||
+                r.dag?.nodes?.some((n: any) => n.agentId === agentId) ||
+                r.steps?.some((s: any) => s.agentId === agentId && (s.status === 'running' || s.status === 'pending' || s.status === 'queued'))
+              ) && (r.status === 'running' || r.status === 'pending' || r.status === 'queued')
+            );
+            if (hasActiveRun) {
+              return {};
+            }
+          }
           const updatedAgents = state.agents.map(a =>
             a.id === agentId ? { ...a, status: newStatus } : a
           );
