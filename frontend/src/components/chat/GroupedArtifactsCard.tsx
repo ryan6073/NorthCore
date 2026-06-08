@@ -30,26 +30,31 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
     state.artifacts ||
     []
   );
-  // 缓存中已有的 artifact ID 集合（已加载完成的产物）
-  const storeArtifactIds = React.useMemo(() => new Set(storeArtifacts.map(a => a.id || a.artifactId).filter(Boolean)), [storeArtifacts]);
+  // 缓存中已有的 (artifactId + runId) 复合 key 集合（已加载完成的产物）
+  const storeArtifactKeys = React.useMemo(
+    () => new Set(storeArtifacts.map(a => `${a.id || a.artifactId}::${a.runId || ''}`).filter(Boolean)),
+    [storeArtifacts]
+  );
 
   const artifactItems: Message[] = message.metadata?.items || message.metadata?.groupedMessages || [];
   if (artifactItems.length === 0) {
     return null;
   }
 
-  // 检查每个 artifactItem 在 store 产物列表中是否存在
+  // 检查每个 artifactItem 在 store 产物列表中是否存在（artifactId + runId 都匹配）
   const revokedMap = React.useMemo(() => {
     const map: Record<string, boolean> = {};
     artifactItems.forEach((item) => {
       const aid = item.artifactId;
-      // 如果 store 中已有产物数据，但找不到这个 artifactId → 已撤销
-      if (aid && storeArtifactIds.size > 0 && !storeArtifactIds.has(aid)) {
+      const runId = message.metadata?.sourceRunId || (item as any).runId || '';
+      const key = `${aid}::${runId}`;
+      // 如果 store 中已有产物数据，但找不到这个 (artifactId + runId) → 已撤销
+      if (aid && storeArtifactKeys.size > 0 && !storeArtifactKeys.has(key)) {
         map[aid] = true;
       }
     });
     return map;
-  }, [artifactItems, storeArtifactIds]);
+  }, [artifactItems, storeArtifactKeys, message.metadata?.sourceRunId]);
 
   const getFileDiff = (path: string, action: string): { additions: number; deletions: number } => {
     let additions = 15;
