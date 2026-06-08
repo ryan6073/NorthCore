@@ -24,10 +24,32 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
   const setIsFullScreenOpen = useAgentHubStore(state => state.setIsFullScreenOpen);
   const conversationMessages = useAgentHubStore(state => state.conversationMessages[message.conversationId] || state.messages || []);
 
+  // 从 store 中获取当前会话的产物列表，用于判断产物是否已被撤销
+  const storeArtifacts = useAgentHubStore(state =>
+    state.conversationArtifacts[message.conversationId] ||
+    state.artifacts ||
+    []
+  );
+  // 缓存中已有的 artifact ID 集合（已加载完成的产物）
+  const storeArtifactIds = React.useMemo(() => new Set(storeArtifacts.map(a => a.id || a.artifactId).filter(Boolean)), [storeArtifacts]);
+
   const artifactItems: Message[] = message.metadata?.items || message.metadata?.groupedMessages || [];
   if (artifactItems.length === 0) {
     return null;
   }
+
+  // 检查每个 artifactItem 在 store 产物列表中是否存在
+  const revokedMap = React.useMemo(() => {
+    const map: Record<string, boolean> = {};
+    artifactItems.forEach((item) => {
+      const aid = item.artifactId;
+      // 如果 store 中已有产物数据，但找不到这个 artifactId → 已撤销
+      if (aid && storeArtifactIds.size > 0 && !storeArtifactIds.has(aid)) {
+        map[aid] = true;
+      }
+    });
+    return map;
+  }, [artifactItems, storeArtifactIds]);
 
   const getFileDiff = (path: string, action: string): { additions: number; deletions: number } => {
     let additions = 15;
@@ -161,8 +183,8 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
           <button
             onClick={handleUndo}
             className={`flex items-center gap-1 text-[11px] font-medium transition-colors select-none ${
-              isUndone 
-                ? 'text-slate-400 dark:text-slate-500 cursor-not-allowed' 
+              isUndone
+                ? 'text-slate-400 dark:text-slate-500 cursor-not-allowed'
                 : 'text-slate-500 hover:text-lark-primary dark:text-slate-400 dark:hover:text-violet-400'
             }`}
             disabled={isUndone}
@@ -170,7 +192,7 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
             <RotateCcw className="w-3 h-3" />
             <span>{isUndone ? '已撤销' : '撤销'}</span>
           </button>
-          
+
           <button
             onClick={handleAudit}
             className={`px-3 py-1 text-[11px] font-semibold rounded-lg border shadow-xs transition-all flex items-center gap-1.5 select-none ${
@@ -187,26 +209,37 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
 
       {/* File List */}
       <div className="px-4 py-2 flex flex-col bg-slate-50/50 dark:bg-slate-900/30">
-        {visibleStats.map((file, idx) => (
-          <div 
+        {visibleStats.map((file, idx) => {
+          const isRevoked = file.artifactId ? revokedMap[file.artifactId] : false;
+          return (
+          <div
             key={idx}
-            onClick={() => handleFileClick(file.artifactId, file.msgId)}
-            className={`flex items-center justify-between py-2.5 text-xs border-b border-slate-100 dark:border-slate-800 last:border-0 hover:bg-white dark:hover:bg-slate-800/40 rounded-lg px-2 -mx-2 transition-colors cursor-pointer group`}
+            onClick={() => !isRevoked && handleFileClick(file.artifactId, file.msgId)}
+            className={`flex items-center justify-between py-2.5 text-xs border-b border-slate-100 dark:border-slate-800 last:border-0 rounded-lg px-2 -mx-2 transition-colors ${isRevoked ? 'opacity-50 cursor-default' : 'hover:bg-white dark:hover:bg-slate-800/40 cursor-pointer group'}`}
           >
             <div className="flex items-center gap-2 flex-1 min-w-0">
-              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${getFileIconColor(file.action)} flex-shrink-0`}>
-                {getActionText(file.action)}
-              </span>
-              <span className="text-slate-600 dark:text-slate-350 font-mono truncate group-hover:text-lark-primary dark:group-hover:text-violet-400">
+              {isRevoked ? (
+                <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-rose-50 dark:bg-rose-950/20 text-rose-500 dark:text-rose-400 flex-shrink-0">
+                  已撤销
+                </span>
+              ) : (
+                <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${getFileIconColor(file.action)} flex-shrink-0`}>
+                  {getActionText(file.action)}
+                </span>
+              )}
+              <span className={`font-mono truncate ${isRevoked ? 'text-slate-400 dark:text-slate-500 line-through' : 'text-slate-600 dark:text-slate-350 group-hover:text-lark-primary dark:group-hover:text-violet-400'}`}>
                 {file.path}
               </span>
             </div>
+            {!isRevoked && (
             <div className="flex items-center gap-1.5 text-[10px] font-mono select-none flex-shrink-0">
               <span className="text-green-600 dark:text-green-400 font-bold">+{file.additions}</span>
               <span className="text-red-500 dark:text-red-400 font-bold">-{file.deletions}</span>
             </div>
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Expand/Collapse Footer */}
