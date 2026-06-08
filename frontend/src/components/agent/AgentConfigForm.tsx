@@ -30,14 +30,15 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
   }, [toolCatalog.length, loadToolCatalog]);
 
   const handleSyncToGlobal = async () => {
-    if (!onSyncToGlobal) return;
+    if (!activeConversationId) return;
     setSyncing(true);
     try {
-      await onSyncToGlobal(form);
+      await agentService.syncConversationAgentConfigToGlobal(activeConversationId, agent.id);
       setSynced(true);
       setTimeout(() => setSynced(false), 2000);
     } catch (e) {
       console.error('Failed to sync config to global', e);
+      alert('同步失败，请重试');
     } finally {
       setSyncing(false);
     }
@@ -101,36 +102,54 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
 
   const providers: AgentProvider[] = ['mock', 'claude-code', 'codex', 'opencode', 'local-qwen', 'custom'];
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitting(true);
 
-    if (form.runtime !== 'native' && !form.modelConfigId) {
-      alert('建议您为当前运行模式选择一个模型配置（Model Config）。');
-    }
+    try {
+      if (form.runtime !== 'native' && !form.modelConfigId) {
+        alert('建议您为当前运行模式选择一个模型配置（Model Config）。');
+      }
 
-    if (form.runtime === 'claude_code') {
-      const selectedConfig = modelConfigs.find(c => c.id === form.modelConfigId);
-      if (!selectedConfig || (selectedConfig.provider !== 'anthropic' && selectedConfig.provider !== 'anthropic_compatible')) {
-        const confirmSave = window.confirm('检测到您选择的模型配置不是 Anthropic 或 Anthropic-compatible，Claude Code 可能无法在此配置下正常运行。是否确认保存？');
-        if (!confirmSave) {
-          return;
+      if (form.runtime === 'claude_code') {
+        const selectedConfig = modelConfigs.find(c => c.id === form.modelConfigId);
+        if (!selectedConfig || (selectedConfig.provider !== 'anthropic' && selectedConfig.provider !== 'anthropic_compatible')) {
+          const confirmSave = window.confirm('检测到您选择的模型配置不是 Anthropic 或 Anthropic-compatible，Claude Code 可能无法在此配置下正常运行。是否确认保存？');
+          if (!confirmSave) {
+            return;
+          }
         }
       }
+
+      const cleanRuntimeConfig = { ...(form.runtimeConfig || {}) };
+      delete (cleanRuntimeConfig as any).apiKey;
+      delete (cleanRuntimeConfig as any).baseUrl;
+      delete (cleanRuntimeConfig as any).modelName;
+      delete (cleanRuntimeConfig as any).provider;
+      delete (cleanRuntimeConfig as any).opencode_bin;
+      delete (cleanRuntimeConfig as any).codex_bin;
+      delete (cleanRuntimeConfig as any).claude_code_bin;
+
+      const updatedAgent = {
+        ...form,
+        runtimeConfig: cleanRuntimeConfig
+      };
+
+      if (isSessionLevel && activeConversationId) {
+        await agentService.updateConversationAgentConfig(activeConversationId, agent.id, updatedAgent);
+      } else {
+        await agentService.updateAgentDetail(agent.id, updatedAgent);
+      }
+
+      onSave(updatedAgent);
+    } catch (error) {
+      console.error('Failed to save agent config:', error);
+      alert('保存失败，请重试');
+    } finally {
+      setSubmitting(false);
     }
-
-    const cleanRuntimeConfig = { ...(form.runtimeConfig || {}) };
-    delete (cleanRuntimeConfig as any).apiKey;
-    delete (cleanRuntimeConfig as any).baseUrl;
-    delete (cleanRuntimeConfig as any).modelName;
-    delete (cleanRuntimeConfig as any).provider;
-    delete (cleanRuntimeConfig as any).opencode_bin;
-    delete (cleanRuntimeConfig as any).codex_bin;
-    delete (cleanRuntimeConfig as any).claude_code_bin;
-
-    onSave({
-      ...form,
-      runtimeConfig: cleanRuntimeConfig
-    });
   };
 
   const toggleTool = (toolId: string) => {
@@ -933,15 +952,15 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
 
           {/* Persistent Floating Save action footer */}
           <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-t border-slate-200/60 dark:border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center sm:justify-end gap-2.5 flex-shrink-0 bg-white dark:bg-slate-900 shadow-md">
-            {isSessionLevel && onSyncToGlobal && (
+            {isSessionLevel && (
               <button
                 type="button"
                 onClick={handleSyncToGlobal}
                 disabled={syncing}
                 className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-550 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/10 active:scale-95 disabled:opacity-50 w-full sm:w-auto animate-fade-in"
               >
-                {synced ? <Check className="w-3.5 h-3.5" /> : <Globe className="w-3.5 h-3.5" />}
-                <span>{synced ? '已同步到全局' : '同步为全局配置'}</span>
+                {synced ? <Check className="w-3.5 h-3.5" /> : syncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Globe className="w-3.5 h-3.5" />}
+                <span>{synced ? '已同步到全局' : syncing ? '同步中...' : '同步为全局配置'}</span>
               </button>
             )}
             <button
@@ -954,10 +973,11 @@ const AgentConfigForm: React.FC<AgentConfigFormProps> = ({ agent, globalAgent, o
             <button
               type="submit"
               form="agent-config-form"
-              className="px-6 py-2.5 bg-violet-600 hover:bg-violet-550 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md shadow-violet-600/10 active:scale-95 w-full sm:w-auto"
+              disabled={submitting}
+              className="px-6 py-2.5 bg-violet-600 hover:bg-violet-550 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md shadow-violet-600/10 active:scale-95 w-full sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Save className="w-3.5 h-3.5" />
-              <span>保存修改</span>
+              {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              <span>{submitting ? '保存中...' : '保存修改'}</span>
             </button>
           </div>
         </div>

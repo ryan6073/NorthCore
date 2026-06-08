@@ -6045,17 +6045,54 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
 
   rollbackSandboxRun: async (runId) => {
-    const { useMockMode } = get();
+    const { useMockMode, activeConversationId } = get();
     if (!useMockMode) {
       try {
         const res = await sandboxService.rollbackSandboxRun(runId);
         if (res.code === 0 && res.data) {
-          set(state => ({
-            runDetailsById: {
-              ...state.runDetailsById,
-              [runId]: res.data
+          set(state => {
+            let updates: any = {
+              runDetailsById: {
+                ...state.runDetailsById,
+                [runId]: res.data
+              }
+            };
+
+            if (res.data.artifactChanges && Array.isArray(res.data.artifactChanges)) {
+              const revokedIds = res.data.artifactChanges
+                .filter((change: any) => change.action === 'revoked')
+                .map((change: any) => change.artifactId);
+
+              if (revokedIds.length > 0) {
+                updates.artifacts = state.artifacts.filter(
+                  art => !revokedIds.includes(art.id) && !revokedIds.includes(art.artifactId)
+                );
+              }
+
+              const revertedChanges = res.data.artifactChanges.filter(
+                (change: any) => change.action === 'version_reverted'
+              );
+              if (revertedChanges.length > 0 && !updates.artifacts) {
+                updates.artifacts = [...state.artifacts];
+              }
+              revertedChanges.forEach((change: any) => {
+                if (updates.artifacts) {
+                  updates.artifacts = updates.artifacts.map((art: any) => {
+                    if (art.id === change.artifactId || art.artifactId === change.artifactId) {
+                      return {
+                        ...art,
+                        latestVersion: change.currentVersion,
+                        updatedAt: getCurrentFullTime()
+                      };
+                    }
+                    return art;
+                  });
+                }
+              });
             }
-          }));
+
+            return updates;
+          });
         }
       } catch (e) {
         console.error('[Store] 撤销沙箱更改失败', e);

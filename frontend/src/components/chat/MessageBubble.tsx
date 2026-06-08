@@ -126,6 +126,31 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     }
   }
 
+  const sourceRunId = message.metadata?.sourceRunId || message.metadata?.runId;
+  if (message.type === 'artifact' && sourceRunId) {
+    const runArtifactMessages = allMessages.filter(
+      m => 
+        m.type === 'artifact' && 
+        (m.metadata?.sourceRunId === sourceRunId || m.metadata?.runId === sourceRunId)
+    );
+    
+    if (runArtifactMessages.length > 1) {
+      const filePath = message.metadata?.sourceFilePath || message.content;
+      const lowerPath = filePath.toLowerCase();
+      
+      if (lowerPath.endsWith('.css') || lowerPath.endsWith('.js') || lowerPath.endsWith('.ts') || lowerPath.endsWith('.tsx')) {
+        const hasHtmlInGroup = runArtifactMessages.some(m => {
+          const path = m.metadata?.sourceFilePath || m.content;
+          return path.toLowerCase().endsWith('.html');
+        });
+        
+        if (hasHtmlInGroup) {
+          return null;
+        }
+      }
+    }
+  }
+
   const handleRefClick = () => {
     if (!message.artifactRef) return;
     (window as any).__ag_from_message_bubble_click = true;
@@ -203,6 +228,9 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
   const renderContent = () => {
     if (message.metadata?.source === 'chatDeployment') {
       return <DeploymentCard metadata={message.metadata as any} />;
+    }
+    if (message.type === 'artifacts') {
+      return <GroupedArtifactsCard message={message} />;
     }
     if (message.metadata?.isGroupedArtifacts) {
       return <GroupedArtifactsCard message={message} />;
@@ -294,7 +322,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
     );
   };
 
-  const isBlockType = message.type === 'code' || message.type === 'task-plan' || message.type === 'artifact' || message.metadata?.isGroupedArtifacts || message.metadata?.summary === true || message.metadata?.source === 'chatDeployment';
+  const isBlockType = message.type === 'code' || message.type === 'task-plan' || message.type === 'artifact' || message.type === 'artifacts' || message.metadata?.isGroupedArtifacts || message.metadata?.summary === true || message.metadata?.source === 'chatDeployment';
   const hasContent = message.content && message.content.trim().length > 0;
   const hasAttachments = message.attachments && message.attachments.length > 0;
   const shouldShowBubble = isBlockType || hasContent;

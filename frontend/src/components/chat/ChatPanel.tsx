@@ -624,45 +624,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const canSend = (inputValue.trim() || pendingAttachments.length > 0 || (workspaceContextFiles && workspaceContextFiles.length > 0)) && !isUploadingAny;
 
   const renderMessageList = () => {
-    // Group artifact messages by senderId (starts with run-)
-    const groupedMessagesList: Message[] = [];
-    const runGroups: Record<string, Message[]> = {};
-    
-    messages.forEach(msg => {
-      if (msg.senderId && msg.senderId.startsWith('run-') && msg.type === 'artifact') {
-        if (!runGroups[msg.senderId]) {
-          runGroups[msg.senderId] = [];
-        }
-        runGroups[msg.senderId].push(msg);
-      }
-    });
-    
-    const processedRunIds = new Set<string>();
-    messages.forEach(msg => {
-      if (msg.senderId && msg.senderId.startsWith('run-') && msg.type === 'artifact') {
-        if (!processedRunIds.has(msg.senderId)) {
-          processedRunIds.add(msg.senderId);
-          const group = runGroups[msg.senderId];
-          if (group.length > 1) {
-            groupedMessagesList.push({
-              ...msg,
-              metadata: {
-                ...msg.metadata,
-                isGroupedArtifacts: true,
-                groupedMessages: group,
-              }
-            });
-          } else {
-            groupedMessagesList.push(msg);
-          }
-        }
-      } else {
-        groupedMessagesList.push(msg);
-      }
-    });
-
-    return groupedMessagesList.map((msg, index) => {
-      const previousMsg = index > 0 ? groupedMessagesList[index - 1] : undefined;
+    return messages.map((msg, index) => {
+      const previousMsg = index > 0 ? messages[index - 1] : undefined;
       const showDivider = shouldShowTimeDivider(msg.createdAt, previousMsg?.createdAt);
       const friendlyLabel = showDivider ? formatMessageTimeDivider(msg.createdAt) : '';
 
@@ -797,7 +760,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
             </span>
           )}
 
-          {conversation && conversation.mode !== 'agent' && (
+          {conversation && (
             <div className="relative flex items-center flex-shrink-0" ref={workspaceDropdownRef}>
               <button
                 type="button"

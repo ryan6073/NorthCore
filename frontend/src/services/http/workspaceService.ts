@@ -129,6 +129,13 @@ export function getDownloadUrl(workspaceId: string, path: string): string {
   return `${baseURL}/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(path)}`;
 }
 
+export async function updateConversationWorkspace(
+  conversationId: string,
+  workspaceId: string | null
+): Promise<BaseApiResponse<any>> {
+  return await http.put(`/conversations/${conversationId}`, { workspaceId });
+}
+
 const workspaceService = {
   getWorkspaces,
   createWorkspace,
@@ -141,6 +148,7 @@ const workspaceService = {
   saveFileContent,
   uploadFile,
   getDownloadUrl,
+  updateConversationWorkspace,
 };
 
 export default workspaceService;

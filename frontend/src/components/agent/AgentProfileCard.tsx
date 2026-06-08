@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, MessageSquarePlus, UserPlus, Edit2, Trash2, Circle, CircleDot, CircleDotDashed, ChevronDown, ChevronUp, Wrench, Settings as SettingsIcon } from 'lucide-react';
+import { X, MessageSquarePlus, Edit2, Trash2, Circle, CircleDot, CircleDotDashed, ChevronDown, ChevronUp, Wrench, Settings as SettingsIcon } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 import type { Agent } from '@/types';
 import ConfirmModal from '../modal/ConfirmModal';
@@ -259,20 +259,14 @@ const AgentProfileCard: React.FC<AgentProfileCardProps> = ({ agent, onClose, onG
             </div>
 
 
-            {/* 底部操作双按钮 */}
+            {/* 底部操作按钮 */}
             <div className="flex items-stretch gap-3 pt-2">
               <button
                 onClick={handleGoChat}
-                className="flex-1 flex items-center justify-center gap-1.5 py-3 bg-lark-primary text-white rounded-xl hover:bg-lark-primary-hover transition-all shadow-sm active:scale-[0.985] font-semibold text-sm"
+                className="w-full flex items-center justify-center gap-1.5 py-3 bg-lark-primary text-white rounded-xl hover:bg-lark-primary-hover transition-all shadow-sm active:scale-[0.985] font-semibold text-sm"
               >
                 <MessageSquarePlus className="w-4 h-4" />
                 发消息
-              </button>
-              <button
-                className="flex-1 flex items-center justify-center gap-1.5 py-3 bg-slate-100 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-800/90 transition-all shadow-sm active:scale-[0.985] font-medium text-sm border border-slate-200 dark:border-slate-700/50"
-              >
-                <UserPlus className="w-4 h-4" />
-                邀请入会话
               </button>
             </div>
           </div>

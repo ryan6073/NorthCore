@@ -53,6 +53,28 @@ export async function getAgentToolCatalog(): Promise<BaseApiResponse<AgentToolCa
   return await http.get('/agent-tools');
 }
 
+export async function getConversationAgentConfig(
+  conversationId: string,
+  agentId: string
+): Promise<BaseApiResponse<AgentDetail>> {
+  return await http.get(`/conversations/${conversationId}/agents/${agentId}/config`);
+}
+
+export async function updateConversationAgentConfig(
+  conversationId: string,
+  agentId: string,
+  payload: Partial<AgentDetail>
+): Promise<BaseApiResponse<AgentDetail>> {
+  return await http.put(`/conversations/${conversationId}/agents/${agentId}/config`, payload);
+}
+
+export async function syncConversationAgentConfigToGlobal(
+  conversationId: string,
+  agentId: string
+): Promise<BaseApiResponse<boolean>> {
+  return await http.post(`/conversations/${conversationId}/agents/${agentId}/config/sync-to-agent`);
+}
+
 export interface AgentContactResponse {
   contactId: string;
   conversationId: string;
@@ -74,6 +96,9 @@ const agentService = {
   deleteAgent,
   getAgentContact,
   getAgentToolCatalog,
+  getConversationAgentConfig,
+  updateConversationAgentConfig,
+  syncConversationAgentConfigToGlobal,
 };
 
 export default agentService;

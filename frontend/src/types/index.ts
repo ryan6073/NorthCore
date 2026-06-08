@@ -6,6 +6,7 @@ export type MessageType =
   | 'text'
   | 'code'
   | 'artifact'
+  | 'artifacts'
   | 'task-plan'
   | 'status'
   | 'image'
@@ -605,6 +606,18 @@ export interface RunFileDetail extends RunFile {
   content: string;
 }
 
+export type ArtifactStatus = 'active' | 'revoked';
+
+export type ArtifactChangeAction = 'revoked' | 'version_reverted';
+
+export interface ArtifactChange {
+  action: ArtifactChangeAction;
+  artifactId: string;
+  title?: string;
+  previousVersion?: number;
+  currentVersion?: number | null;
+}
+
 export interface Artifact {
   id: string;
   artifactId?: string;
@@ -630,6 +643,7 @@ export interface Artifact {
   contentPreview?: string;
   downloadUrl?: string;
   previewable?: boolean;
+  status?: ArtifactStatus;
 }
 
 export interface SandboxFileVersion {
@@ -691,6 +705,8 @@ export interface AgentRunDetail {
   queuedReason?: string | null;
   queuePosition?: number | null;
   lockOwnerId?: string | null;
+  artifactChanges?: ArtifactChange[];
+  artifacts?: Artifact[];
 }
 
 export type AgentRunStepStatus =

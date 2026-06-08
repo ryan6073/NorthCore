@@ -24,12 +24,11 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
   const setIsFullScreenOpen = useAgentHubStore(state => state.setIsFullScreenOpen);
   const conversationMessages = useAgentHubStore(state => state.conversationMessages[message.conversationId] || state.messages || []);
 
-  const groupedMessages: Message[] = message.metadata?.groupedMessages || [];
-  if (groupedMessages.length === 0) {
+  const artifactItems: Message[] = message.metadata?.items || message.metadata?.groupedMessages || [];
+  if (artifactItems.length === 0) {
     return null;
   }
 
-  // Generate deterministic premium stats for each file based on its name/path
   const getFileDiff = (path: string, action: string): { additions: number; deletions: number } => {
     let additions = 15;
     let deletions = 0;
@@ -58,7 +57,7 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
     return { additions, deletions };
   };
 
-  const fileStats: (FileDiffStat & { msgId: string })[] = groupedMessages.map(msg => {
+  const fileStats: (FileDiffStat & { msgId: string })[] = artifactItems.map(msg => {
     const filePath = msg.metadata?.sourceFilePath || msg.content.replace(/^(生成产物|更新产物)\s*/, '');
     const action = msg.metadata?.action || 'created';
     const { additions, deletions } = getFileDiff(filePath, action);
@@ -100,7 +99,7 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
       
       let resolvedVersion = null;
       if (msgId) {
-        const msg = groupedMessages.find(m => m.id === msgId);
+        const msg = artifactItems.find(m => m.id === msgId);
         if (msg) {
           if (msg.metadata?.version !== undefined && msg.metadata?.version !== null) {
             resolvedVersion = Number(msg.metadata.version);
@@ -124,20 +123,32 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
     }
   };
 
+  const getActionText = (action: string) => {
+    if (action === 'created') return '新生成';
+    if (action === 'updated') return '已更新';
+    return action;
+  };
+
+  const getActionColor = (action: string) => {
+    if (action === 'created') return 'text-green-600 dark:text-green-400';
+    if (action === 'updated') return 'text-blue-600 dark:text-blue-400';
+    return 'text-slate-500 dark:text-slate-400';
+  };
+
+  const title = message.content || `本次生成/更新了 ${message.metadata?.artifactCount || fileStats.length} 个产物`;
+
   return (
     <div className="w-full bg-[#fcfcfd] dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm my-2 flex flex-col transition-all">
       {/* Header Container */}
       <div className="p-4 flex items-center justify-between border-b border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
         <div className="flex items-center gap-3 min-w-0">
-          {/* Custom document / diff icon inside a premium container */}
           <div className="w-10 h-10 rounded-xl bg-slate-50 dark:bg-slate-800 flex items-center justify-center border border-slate-100 dark:border-slate-700 flex-shrink-0">
             <FileCode className="w-5 h-5 text-slate-500 dark:text-slate-400" />
           </div>
           <div className="min-w-0">
             <h3 className="text-xs font-semibold text-slate-800 dark:text-slate-250 flex items-center gap-2">
-              已编辑 {fileStats.length} 个文件
+              {title}
             </h3>
-            {/* Diff indicators */}
             <div className="flex items-center gap-1.5 mt-0.5 text-[10px] font-mono select-none">
               <span className="text-green-600 dark:text-green-400 font-bold">+{totalAdditions}</span>
               <span className="text-red-500 dark:text-red-400 font-bold">-{totalDeletions}</span>
@@ -169,7 +180,7 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
             }`}
           >
             {auditStatus === 'approved' && <Check className="w-3 h-3" />}
-            <span>{auditStatus === 'approved' ? '已审核' : '审核'}</span>
+            <span>{auditStatus === 'approved' ? '已确认' : '确认'}</span>
           </button>
         </div>
       </div>
@@ -182,9 +193,14 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
             onClick={() => handleFileClick(file.artifactId, file.msgId)}
             className={`flex items-center justify-between py-2.5 text-xs border-b border-slate-100 dark:border-slate-800 last:border-0 hover:bg-white dark:hover:bg-slate-800/40 rounded-lg px-2 -mx-2 transition-colors cursor-pointer group`}
           >
-            <span className="text-slate-600 dark:text-slate-350 font-mono truncate flex-1 pr-4 group-hover:text-lark-primary dark:group-hover:text-violet-400">
-              {file.path}
-            </span>
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${getFileIconColor(file.action)} flex-shrink-0`}>
+                {getActionText(file.action)}
+              </span>
+              <span className="text-slate-600 dark:text-slate-350 font-mono truncate group-hover:text-lark-primary dark:group-hover:text-violet-400">
+                {file.path}
+              </span>
+            </div>
             <div className="flex items-center gap-1.5 text-[10px] font-mono select-none flex-shrink-0">
               <span className="text-green-600 dark:text-green-400 font-bold">+{file.additions}</span>
               <span className="text-red-500 dark:text-red-400 font-bold">-{file.deletions}</span>
@@ -205,6 +221,12 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
       )}
     </div>
   );
+};
+
+const getFileIconColor = (action: string) => {
+  if (action === 'created') return 'bg-green-50 dark:bg-green-950/20 text-green-600 dark:text-green-400';
+  if (action === 'updated') return 'bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400';
+  return 'bg-slate-50 dark:bg-slate-950/20 text-slate-500 dark:text-slate-400';
 };
 
 export default GroupedArtifactsCard;

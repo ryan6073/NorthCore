@@ -176,8 +176,7 @@ const HorseAgentV2: React.FC<{ agent: Agent; activityType: 'work' | 'game' | 'gy
 };
 
 export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ agents, agentIds, onClose }) => {
-  // Toggle between classic emoji and realistic dynamic styles
-  const [styleMode, setStyleMode] = React.useState<'emoji' | 'dynamic'>('dynamic');
+  const styleMode: 'emoji' = 'emoji';
 
   // Filter agents by the active conversation's assigned agents
   const displayAgents = agentIds && agentIds.length > 0
@@ -544,29 +543,6 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Style Mode Selector Switch */}
-          <div className="flex bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl text-[9px] font-bold select-none border border-slate-200/80 dark:border-slate-700/60 mr-1 shadow-inner">
-            <button
-              onClick={() => setStyleMode('emoji')}
-              className={`px-2 py-1 rounded-lg transition-all ${
-                styleMode === 'emoji' 
-                  ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-350'
-              }`}
-            >
-              简洁
-            </button>
-            <button
-              onClick={() => setStyleMode('dynamic')}
-              className={`px-2 py-1 rounded-lg transition-all ${
-                styleMode === 'dynamic' 
-                  ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-350'
-              }`}
-            >
-              动态
-            </button>
-          </div>
           <div className="hidden sm:flex items-center gap-1.5 text-[10px] font-semibold">
             <span className="px-2 py-1 rounded-full bg-indigo-50 dark:bg-indigo-950/35 text-indigo-650 dark:text-indigo-350 border border-indigo-100 dark:border-indigo-900/45">
               工作 {workingAgents.length}
