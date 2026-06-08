@@ -277,6 +277,84 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
     }
   });
 
+  /** 共享的 CSS keyframes，展开态和收起态都需要注入 */
+  const officeStyles = (
+    <style>{`
+      @keyframes office-typing {
+        0%, 100% { transform: translateY(0) rotate(0deg); }
+        25% { transform: translateY(-2px) rotate(-5deg); }
+        75% { transform: translateY(-1.5px) rotate(5deg); }
+      }
+      @keyframes office-glow {
+        0%, 100% { box-shadow: 0 0 4px rgba(99, 102, 241, 0.15); }
+        50% { box-shadow: 0 0 10px rgba(99, 102, 241, 0.5); }
+      }
+      @keyframes office-jog {
+        0%, 100% { transform: translateY(0) scaleY(1); }
+        40% { transform: translateY(-4px) scaleY(0.92); }
+        80% { transform: translateY(0.5px) scaleY(1.02); }
+      }
+      @keyframes office-game {
+        0%, 100% { transform: rotate(-8deg) translateY(0); }
+        50% { transform: rotate(8deg) translateY(-2px) scale(1.04); }
+      }
+      @keyframes office-zzz {
+        0% { transform: translate(0, 0) scale(0.5); opacity: 0; }
+        40% { opacity: 0.85; }
+        100% { transform: translate(8px, -18px) scale(1.3); opacity: 0; }
+      }
+      .animate-office-typing { animation: office-typing 0.28s infinite ease-in-out; }
+      .animate-office-glow { animation: office-glow 2.5s infinite ease-in-out; }
+      .animate-office-jog { animation: office-jog 0.38s infinite ease-in-out; }
+      .animate-office-game { animation: office-game 0.55s infinite ease-in-out; }
+      .animate-office-zzz { animation: office-zzz 1.8s infinite ease-in-out; }
+
+      @keyframes treadmill-belt {
+        0% { transform: translateX(0); }
+        100% { transform: translateX(-16px); }
+      }
+      .animate-treadmill-belt { animation: treadmill-belt 0.4s infinite linear; width: 200%; }
+
+      /* V2 keyframes */
+      @keyframes v2-typing {
+        0% { transform: rotate(-55deg) translateY(-0.5px); }
+        100% { transform: rotate(-65deg) translateY(0.5px); }
+      }
+      @keyframes v2-typing-alt {
+        0% { transform: rotate(-80deg) translateY(0.5px); }
+        100% { transform: rotate(-70deg) translateY(-0.5px); }
+      }
+      @keyframes v2-gaming {
+        0% { transform: rotate(-40deg); }
+        100% { transform: rotate(-50deg); }
+      }
+      @keyframes v2-gaming-alt {
+        0% { transform: rotate(-50deg); }
+        100% { transform: rotate(-40deg); }
+      }
+      @keyframes v2-running-arm {
+        0%, 100% { transform: rotate(-50deg); }
+        50% { transform: rotate(40deg); }
+      }
+      @keyframes v2-running-arm-alt {
+        0%, 100% { transform: rotate(40deg); }
+        50% { transform: rotate(-50deg); }
+      }
+      @keyframes v2-running-leg {
+        0%, 100% { transform: rotate(-45deg); }
+        50% { transform: rotate(35deg); }
+      }
+      @keyframes v2-running-leg-alt {
+        0%, 100% { transform: rotate(35deg); }
+        50% { transform: rotate(-45deg); }
+      }
+      @keyframes v2-breathing {
+        0%, 100% { transform: translate(4px, 10px) rotate(-90deg) scaleX(1); }
+        50% { transform: translate(4px, 10px) rotate(-90deg) scaleX(1.05); }
+      }
+    `}</style>
+  );
+
   const handleToggle = () => {
     const next = isCollapsed ? 'expanded' : 'collapsed';
     onToggle?.(next);
@@ -286,6 +364,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
     // 收起态：使用与展开态相同的 HorseAgent 组件，保留动画，只是隐藏工位和休闲区
     return (
       <div className="w-full px-4 py-3 bg-white/90 dark:bg-slate-900/90 border-b border-slate-200/70 dark:border-slate-800/70 select-none">
+        {officeStyles}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
@@ -338,249 +417,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
   return (
     <div className="w-full p-4 bg-white/90 dark:bg-slate-900/90 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 shadow-[0_18px_45px_rgba(15,23,42,0.08)] dark:shadow-[0_18px_45px_rgba(0,0,0,0.22)] mb-3 select-none animate-slide-down overflow-hidden relative">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-gradient-to-b from-indigo-50/80 via-cyan-50/30 to-transparent dark:from-indigo-950/30 dark:via-cyan-950/10" />
-      {/* Self-contained CSS Keyframes for Animations */}
-      <style>{`
-        @keyframes office-typing {
-          0%, 100% { transform: translateY(0) rotate(0deg); }
-          25% { transform: translateY(-2px) rotate(-5deg); }
-          75% { transform: translateY(-1.5px) rotate(5deg); }
-        }
-        @keyframes office-glow {
-          0%, 100% { box-shadow: 0 0 4px rgba(99, 102, 241, 0.15); }
-          50% { box-shadow: 0 0 10px rgba(99, 102, 241, 0.5); }
-        }
-        @keyframes office-jog {
-          0%, 100% { transform: translateY(0) scaleY(1); }
-          40% { transform: translateY(-4px) scaleY(0.92); }
-          80% { transform: translateY(0.5px) scaleY(1.02); }
-        }
-        @keyframes office-game {
-          0%, 100% { transform: rotate(-8deg) translateY(0); }
-          50% { transform: rotate(8deg) translateY(-2px) scale(1.04); }
-        }
-        @keyframes office-zzz {
-          0% { transform: translate(0, 0) scale(0.5); opacity: 0; }
-          40% { opacity: 0.85; }
-          100% { transform: translate(8px, -18px) scale(1.3); opacity: 0; }
-        }
-        .animate-office-typing {
-          animation: office-typing 0.28s infinite ease-in-out;
-        }
-        .animate-office-glow {
-          animation: office-glow 2.5s infinite ease-in-out;
-        }
-        .animate-office-jog {
-          animation: office-jog 0.38s infinite ease-in-out;
-        }
-        .animate-office-game {
-          animation: office-game 0.55s infinite ease-in-out;
-        }
-        .animate-office-zzz {
-          animation: office-zzz 1.8s infinite ease-in-out;
-        }
-
-        /* V2 Realistic Character Posturing styles */
-        .v2-character {
-          width: 64px;
-          height: 80px;
-          position: relative;
-        }
-        .v2-character * {
-          transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        /* State Positions Default (Constant Attachments) */
-        .v2-character .head-joint {
-          left: 18px;
-          top: 6px;
-          width: 28px;
-          height: 28px;
-          transform-origin: center bottom;
-          position: absolute;
-          z-index: 15;
-        }
-        .v2-character .torso-joint {
-          left: 24px;
-          top: 32px;
-          width: 16px;
-          height: 28px;
-          transform-origin: center top;
-          position: absolute;
-          z-index: 10;
-        }
-        .v2-character .arm-left {
-          left: 22px;
-          top: 34px;
-          width: 4px;
-          height: 22px;
-          transform-origin: center 2px;
-          position: absolute;
-          z-index: 5;
-        }
-        .v2-character .arm-right {
-          left: 38px;
-          top: 34px;
-          width: 4px;
-          height: 22px;
-          transform-origin: center 2px;
-          position: absolute;
-          z-index: 12;
-        }
-        .v2-character .leg-left {
-          left: 25px;
-          top: 56px;
-          width: 4px;
-          height: 24px;
-          transform-origin: center 2px;
-          position: absolute;
-          z-index: 8;
-        }
-        .v2-character .leg-right {
-          left: 35px;
-          top: 56px;
-          width: 4px;
-          height: 24px;
-          transform-origin: center 2px;
-          position: absolute;
-          z-index: 8;
-        }
-
-        /* 1. Work State Posture */
-        .v2-character.work {
-          transform: translate(-2px, 2px);
-        }
-        .v2-character.work .head-joint {
-          transform: rotate(6deg) translate(0.5px, 0.5px);
-        }
-        .v2-character.work .torso-joint {
-          transform: rotate(8deg);
-          background-color: #3b82f6;
-        }
-        .v2-character.work .arm-left {
-          transform: rotate(-60deg);
-          animation: v2-typing 0.12s infinite alternate ease-in-out;
-        }
-        .v2-character.work .arm-right {
-          transform: rotate(-75deg);
-          animation: v2-typing-alt 0.12s infinite alternate ease-in-out;
-        }
-        .v2-character.work .leg-left {
-          transform: rotate(75deg) translate(2px, -3px);
-        }
-        .v2-character.work .leg-right {
-          transform: rotate(80deg) translate(2px, -3px);
-        }
-        .v2-character.gym {
-          transform: translate(-4px, -1px);
-        }
-        .v2-character.gym .head-joint {
-          transform: rotate(8deg);
-        }
-        .v2-character.gym .torso-joint {
-          transform: rotate(12deg);
-        }
-        .v2-character.gym .arm-left {
-          animation: v2-running-arm 0.38s infinite linear;
-        }
-        .v2-character.gym .arm-right {
-          animation: v2-running-arm-alt 0.38s infinite linear;
-        }
-        .v2-character.gym .leg-left {
-          animation: v2-running-leg 0.38s infinite linear;
-        }
-        .v2-character.gym .leg-right {
-          animation: v2-running-leg-alt 0.38s infinite linear;
-        }
-        .v2-character.game {
-          transform: translate(0px, 2px);
-        }
-        .v2-character.game .head-joint {
-          transform: rotate(3deg);
-        }
-        .v2-character.game .torso-joint {
-          transform: rotate(-4deg);
-        }
-        .v2-character.game .arm-left {
-          transform: rotate(-45deg);
-          animation: v2-gaming 0.2s infinite alternate ease-in-out;
-        }
-        .v2-character.game .arm-right {
-          transform: rotate(-50deg);
-          animation: v2-gaming-alt 0.2s infinite alternate ease-in-out;
-        }
-        .v2-character.game .leg-left {
-          transform: rotate(75deg) translate(1px, -2px);
-        }
-        .v2-character.game .leg-right {
-          transform: rotate(75deg) translate(1px, -2px);
-        }
-        .v2-character.sleep {
-          transform: translate(4px, 10px) rotate(-90deg);
-          animation: v2-breathing 2s infinite ease-in-out;
-        }
-        .v2-character.sleep .head-joint {
-          transform: rotate(-4deg);
-        }
-        .v2-character.sleep .torso-joint {
-          background-color: #6366f1;
-        }
-        .v2-character.sleep .arm-left {
-          transform: rotate(5deg);
-        }
-        .v2-character.sleep .arm-right {
-          transform: rotate(-5deg);
-        }
-        .v2-character.sleep .leg-left {
-          transform: rotate(2deg);
-        }
-        .v2-character.sleep .leg-right {
-          transform: rotate(-2deg);
-        }
-        @keyframes v2-typing {
-          0% { transform: rotate(-55deg) translateY(-0.5px); }
-          100% { transform: rotate(-65deg) translateY(0.5px); }
-        }
-        @keyframes v2-typing-alt {
-          0% { transform: rotate(-80deg) translateY(0.5px); }
-          100% { transform: rotate(-70deg) translateY(-0.5px); }
-        }
-        @keyframes v2-gaming {
-          0% { transform: rotate(-40deg); }
-          100% { transform: rotate(-50deg); }
-        }
-        @keyframes v2-gaming-alt {
-          0% { transform: rotate(-50deg); }
-          100% { transform: rotate(-40deg); }
-        }
-        @keyframes v2-running-arm {
-          0%, 100% { transform: rotate(-50deg); }
-          50% { transform: rotate(40deg); }
-        }
-        @keyframes v2-running-arm-alt {
-          0%, 100% { transform: rotate(40deg); }
-          50% { transform: rotate(-50deg); }
-        }
-        @keyframes v2-running-leg {
-          0%, 100% { transform: rotate(-45deg); }
-          50% { transform: rotate(35deg); }
-        }
-        @keyframes v2-running-leg-alt {
-          0%, 100% { transform: rotate(35deg); }
-          50% { transform: rotate(-45deg); }
-        }
-        @keyframes v2-breathing {
-          0%, 100% { transform: translate(4px, 10px) rotate(-90deg) scaleX(1); }
-          50% { transform: translate(4px, 10px) rotate(-90deg) scaleX(1.05); }
-        }
-        @keyframes treadmill-belt {
-          0% { transform: translateX(0); }
-          100% { transform: translateX(-16px); }
-        }
-        .animate-treadmill-belt {
-          animation: treadmill-belt 0.4s infinite linear;
-          width: 200%;
-        }
-      `}</style>
+      {officeStyles}
 
       {/* Header Info */}
       <div className="relative flex items-center justify-between mb-4 pb-3 border-b border-slate-200/70 dark:border-slate-800/70">
