@@ -101,27 +101,23 @@ const AgentProfileCard: React.FC<AgentProfileCardProps> = ({ agent, onClose, onG
           <div className="flex items-center gap-2">
             {!isEditing ? (
               <>
-                {isEditable && (
-                  <>
-                    <button
-                      onClick={() => setShowDeleteConfirm(true)}
-                      className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-955/20 text-slate-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 transition-all border border-transparent"
-                      title="删除 Agent"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        setConfiguringAgentId(agent.id);
-                        onClose();
-                      }}
-                      className="p-1.5 rounded-lg hover:bg-lark-bg-hover dark:hover:bg-slate-800 text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 transition-all border border-transparent"
-                      title="编辑配置"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-                  </>
-                )}
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-955/20 text-slate-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 transition-all border border-transparent"
+                  title="删除 Agent"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => {
+                    setConfiguringAgentId(agent.id);
+                    onClose();
+                  }}
+                  className="p-1.5 rounded-lg hover:bg-lark-bg-hover dark:hover:bg-slate-800 text-slate-400 hover:text-lark-primary dark:hover:text-violet-400 transition-all border border-transparent"
+                  title="编辑配置（全局）"
+                >
+                  <Edit2 className="w-3.5 h-3.5" />
+                </button>
               </>
             ) : (
               <div className="flex items-center gap-2">
