@@ -31,9 +31,11 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
   const [showTouchActions, setShowTouchActions] = useState(false);
   const isUser = message.role === 'user';
   const isOrchestrator = message.role === 'orchestrator';
-  const agentInfo = !isUser && message.senderName 
-    ? agents.find(a => a.name === message.senderName) 
+  const agentInfo = !isUser && message.senderName
+    ? agents.find(a => a.name === message.senderName)
     : null;
+  const currentUser = useAgentHubStore(state => state.currentUser);
+  const userAvatar = currentUser?.avatar || currentUser?.picture || '';
 
   const allMessages = useAgentHubStore(state => 
     state.conversationMessages[message.conversationId] || state.messages
@@ -352,7 +354,15 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
           }}
         >
           {isUser ? (
-            <User className="w-4 h-4 text-white" />
+            userAvatar ? (
+              <img
+                src={userAvatar}
+                alt="用户"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <User className="w-4 h-4 text-white" />
+            )
           ) : agentInfo ? (
             <img
               src={agentInfo.avatar}
