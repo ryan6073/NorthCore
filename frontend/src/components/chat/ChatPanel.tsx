@@ -648,6 +648,15 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
 
   // 拖拽 Agent 到群聊的 drop 处理
   const [isDragOver, setIsDragOver] = useState(false);
+  const [dropFeedback, setDropFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const dropFeedbackTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  const showDropFeedback = (type: 'success' | 'error' | 'info', message: string) => {
+    setDropFeedback({ type, message });
+    if (dropFeedbackTimer.current) clearTimeout(dropFeedbackTimer.current);
+    dropFeedbackTimer.current = setTimeout(() => setDropFeedback(null), 2500);
+  };
+
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (conversation?.mode === 'group' && (window as any).__dragging_agent_id) {
       e.preventDefault();
@@ -663,18 +672,24 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     setIsDragOver(false);
     const agentId = (window as any).__dragging_agent_id || e.dataTransfer.getData('text/plain');
     if (!agentId || !conversation || conversation.mode !== 'group') return;
-    if (conversation.agentIds?.includes(agentId)) return; // 已在群中
+    if (conversation.agentIds?.includes(agentId)) {
+      showDropFeedback('info', '该 Agent 已在群聊中');
+      return;
+    }
     try {
       await useAgentHubStore.getState().addAgentToConversation(conversation.id, agentId);
+      showDropFeedback('success', 'Agent 已成功加入群聊');
     } catch (err) {
-      console.error('Failed to add agent to conversation', err);
+      showDropFeedback('error', '添加 Agent 失败，请重试');
     }
   }, [conversation]);
 
   return (
     <div
-      className={`flex-grow h-full flex flex-col bg-white dark:bg-slate-900 relative z-0 transition-colors ${
-        isDragOver ? 'ring-2 ring-indigo-400/60 ring-inset' : ''
+      className={`flex-grow h-full flex flex-col bg-white dark:bg-slate-900 relative z-0 transition-all duration-200 ${
+        isDragOver
+          ? 'ring-[3px] ring-violet-400 ring-inset bg-violet-50/40 dark:bg-violet-950/20 shadow-[inset_0_0_40px_rgba(139,92,246,0.08)]'
+          : ''
       }`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -685,6 +700,22 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
           setShowEmojiPicker(false);
           setShowMentionPopup(false);
         }} />
+      )}
+
+      {/* 拖拽反馈 Toast */}
+      {dropFeedback && (
+        <div className={`absolute top-4 left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-xl shadow-2xl text-xs font-semibold animate-slide-down flex items-center gap-2 pointer-events-none ${
+          dropFeedback.type === 'success'
+            ? 'bg-emerald-600 text-white'
+            : dropFeedback.type === 'error'
+              ? 'bg-rose-600 text-white'
+              : 'bg-indigo-600 text-white'
+        }`}>
+          {dropFeedback.type === 'success' && <Check className="w-3.5 h-3.5" />}
+          {dropFeedback.type === 'error' && <AlertTriangle className="w-3.5 h-3.5" />}
+          {dropFeedback.type === 'info' && <AlertTriangle className="w-3.5 h-3.5" />}
+          {dropFeedback.message}
+        </div>
       )}
 
       {showEmojiPicker && (
