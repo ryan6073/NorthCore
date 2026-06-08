@@ -480,51 +480,52 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   useEffect(() => {
     let active = true;
     if (
-      currentArtifact?.type === 'html' && 
+      currentArtifact?.type === 'html' &&
       activeTab === 'preview' &&
       currentVersion?.content
     ) {
       const { useMockMode } = useAgentHubStore.getState();
+
+      // 1. 始终以 currentVersion.content 为基础（artifact 版本存储 = 源码 tab 显示的内容）
+      // 确保预览与源码一致
+      let baseContent = currentVersion.content;
+
       if (useMockMode) {
-        const fullyIntegrated = buildIntegratedHtml(currentVersion.content);
+        // Mock mode: 内联 CSS/JS 资源
+        const fullyIntegrated = buildIntegratedHtml(baseContent);
         setIntegratedHtml(fullyIntegrated);
         setServerPreviewHtml(null);
       } else {
-        const runId = currentArtifact.runId && currentArtifact.runId !== 'direct' 
-          ? currentArtifact.runId 
+        // 非 mock mode: 仅重写相对路径（指向后端 API 预览端点）
+        const runId = currentArtifact.runId && currentArtifact.runId !== 'direct'
+          ? currentArtifact.runId
           : useAgentHubStore.getState().getActiveRunId(useAgentHubStore.getState().activeConversationId);
-        
+
         if (runId) {
-          if (currentVersion.version !== currentArtifact.latestVersion) {
-            const resolvedHtml = rewriteRelativeUrls(currentVersion.content, runId);
-            setServerPreviewHtml(resolvedHtml);
-          } else {
+          // 先设置基于 currentVersion.content 的预览（确保内容和源码一致）
+          setServerPreviewHtml(rewriteRelativeUrls(baseContent, runId));
+
+          // 对于最新版本，额外尝试从后端获取增强版预览（含内联资源）
+          // 但即使失败也不影响内容一致性，因为已有基础内容
+          if (currentVersion.version === currentArtifact.latestVersion) {
             setIsPreviewLoading(true);
             sandboxService.getSandboxHtmlPreview(runId, currentArtifact.title)
               .then(res => {
-                if (active) {
-                  if (res.code === 0 && res.data) {
-                    const resolvedHtml = rewriteRelativeUrls(res.data.html, runId);
-                    setServerPreviewHtml(resolvedHtml);
-                  } else {
-                    const resolvedHtml = rewriteRelativeUrls(currentVersion.content, runId);
-                    setServerPreviewHtml(resolvedHtml);
-                  }
+                if (active && res.code === 0 && res.data) {
+                  // 后端返回的 HTML 以 currentVersion.content 为基础，仅增强资源处理
+                  // 因此可以直接替换
+                  setServerPreviewHtml(rewriteRelativeUrls(res.data.html, runId));
                 }
               })
               .catch(err => {
-                console.error('Failed to get sandbox html preview:', err);
-                if (active) {
-                  const resolvedHtml = rewriteRelativeUrls(currentVersion.content, runId);
-                  setServerPreviewHtml(resolvedHtml);
-                }
+                console.warn('Sandbox preview enhancement failed, using base content:', err);
               })
               .finally(() => {
                 if (active) setIsPreviewLoading(false);
               });
           }
         } else {
-          setServerPreviewHtml(currentVersion.content);
+          setServerPreviewHtml(baseContent);
         }
       }
     } else {

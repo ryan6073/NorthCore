@@ -494,42 +494,42 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
     let active = true;
     if (
       open &&
-      artifact?.type === 'html' && 
+      artifact?.type === 'html' &&
       activeTab === 'preview' &&
       currentVersion?.content
     ) {
       const { useMockMode } = useAgentHubStore.getState();
+      let baseContent = currentVersion.content;
+
       if (useMockMode) {
-        const fullyIntegrated = buildIntegratedHtml(currentVersion.content);
+        const fullyIntegrated = buildIntegratedHtml(baseContent);
         setIntegratedHtml(fullyIntegrated);
         setServerPreviewHtml(null);
       } else {
-        const runId = artifact.runId && artifact.runId !== 'direct' 
-          ? artifact.runId 
+        const runId = artifact.runId && artifact.runId !== 'direct'
+          ? artifact.runId
           : useAgentHubStore.getState().getActiveRunId(useAgentHubStore.getState().activeConversationId);
-        
+
         if (runId) {
+          // 始终以 currentVersion.content 为基础，确保与源码一致
+          setServerPreviewHtml(rewriteRelativeUrls(baseContent, runId));
+
+          // 后端增强预览（仅增强资源路径，不影响内容一致性）
           setIsPreviewLoading(true);
           getSandboxHtmlPreview(runId, artifact.title)
             .then(res => {
-              if (active) {
-                if (res.code === 0 && res.data) {
-                  const resolvedHtml = rewriteRelativeUrls(res.data.html, runId);
-                  setServerPreviewHtml(resolvedHtml);
-                } else {
-                  setServerPreviewHtml(null);
-                }
+              if (active && res.code === 0 && res.data) {
+                setServerPreviewHtml(rewriteRelativeUrls(res.data.html, runId));
               }
             })
             .catch(err => {
-              console.error('Failed to get sandbox html preview:', err);
-              if (active) setServerPreviewHtml(null);
+              console.warn('Sandbox preview enhancement failed, using base content:', err);
             })
             .finally(() => {
               if (active) setIsPreviewLoading(false);
             });
         } else {
-          setServerPreviewHtml(null);
+          setServerPreviewHtml(baseContent);
         }
       }
     } else {
