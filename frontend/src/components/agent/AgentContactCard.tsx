@@ -34,6 +34,15 @@ const AgentContactCard: React.FC<AgentContactCardProps> = ({
 
   return (
     <div
+      draggable={!disabled}
+      onDragStart={(e) => {
+        e.dataTransfer.setData('text/plain', agent.id);
+        e.dataTransfer.effectAllowed = 'copy';
+        (window as any).__dragging_agent_id = agent.id;
+      }}
+      onDragEnd={() => {
+        (window as any).__dragging_agent_id = undefined;
+      }}
       onClick={() => {
         if (disabled) return;
         if (showSelect && onSelect) {

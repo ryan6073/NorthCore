@@ -646,8 +646,40 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     });
   };
 
+  // 拖拽 Agent 到群聊的 drop 处理
+  const [isDragOver, setIsDragOver] = useState(false);
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (conversation?.mode === 'group' && (window as any).__dragging_agent_id) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      setIsDragOver(true);
+    }
+  }, [conversation?.mode]);
+  const handleDragLeave = useCallback(() => {
+    setIsDragOver(false);
+  }, []);
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const agentId = (window as any).__dragging_agent_id || e.dataTransfer.getData('text/plain');
+    if (!agentId || !conversation || conversation.mode !== 'group') return;
+    if (conversation.agentIds?.includes(agentId)) return; // 已在群中
+    try {
+      await useAgentHubStore.getState().addAgentToConversation(conversation.id, agentId);
+    } catch (err) {
+      console.error('Failed to add agent to conversation', err);
+    }
+  }, [conversation]);
+
   return (
-    <div className="flex-grow h-full flex flex-col bg-white dark:bg-slate-900 relative z-0 transition-colors">
+    <div
+      className={`flex-grow h-full flex flex-col bg-white dark:bg-slate-900 relative z-0 transition-colors ${
+        isDragOver ? 'ring-2 ring-indigo-400/60 ring-inset' : ''
+      }`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       {(showEmojiPicker || showMentionPopup) && (
         <div className="fixed inset-0 z-50 bg-transparent" onClick={() => {
           setShowEmojiPicker(false);
