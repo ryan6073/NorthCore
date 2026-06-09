@@ -1,11 +1,69 @@
 import React, { useState, useRef, useEffect } from 'react';
+import ReactDOM from 'react-dom';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
-import { 
-  Folder, FileText, ChevronDown, ChevronRight, Search, 
+import {
+  Folder, FileText, ChevronDown, ChevronRight, Search,
   Plus, ExternalLink, MoreVertical, Copy, Upload, Download, AlertTriangle, RefreshCw, Cloud, Laptop
 } from 'lucide-react';
 import { getDownloadUrl } from '@/services/http/workspaceService';
 import { platform } from '@/utils/platform';
+
+/** 三点菜单 Portal 组件 — 渲染到 body，不受父级 opacity/hover 影响 */
+const MenuPortal: React.FC<{
+  node: any;
+  viewMode: string;
+  isDirectory: boolean;
+  menuPosition: { top: number; left: number } | null;
+  onClose: () => void;
+  triggerUpload: (path: string) => void;
+  handleDownload: (path: string) => void;
+  handleCopyPath: (path: string) => void;
+  currentWorkspace: any;
+}> = ({ node, viewMode, isDirectory, menuPosition, onClose, triggerUpload, handleDownload, handleCopyPath, currentWorkspace }) => {
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuPosition) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose();
+    };
+    setTimeout(() => document.addEventListener('click', handler), 0);
+    return () => { setTimeout(() => document.removeEventListener('click', handler), 0); };
+  }, [menuPosition, onClose]);
+  return ReactDOM.createPortal(
+    <div ref={menuRef} data-menu-panel={node.path}
+      className="fixed z-[9999] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl py-1.5 text-left w-36 flex flex-col gap-0.5 animate-scale-in text-[11px]"
+      style={{ top: menuPosition ? `${menuPosition.top}px` : '0px', left: menuPosition ? `${menuPosition.left}px` : '0px' }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {viewMode === 'local' ? (
+        <button type="button" onClick={async () => { if (currentWorkspace) await platform.file.revealInFolder(`${currentWorkspace.path}/${node.path}`); onClose(); }}
+          className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-300">
+          <ExternalLink className="w-3.5 h-3.5 text-slate-400" /><span>在管理器中定位</span>
+        </button>
+      ) : (
+        <>
+          {isDirectory && (
+            <button type="button" onClick={() => { triggerUpload(node.path); onClose(); }}
+              className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-350">
+              <Upload className="w-3.5 h-3.5 text-slate-400" /><span>上传文件</span>
+            </button>
+          )}
+          {!isDirectory && (
+            <button type="button" onClick={() => { handleDownload(node.path); onClose(); }}
+              className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-350">
+              <Download className="w-3.5 h-3.5 text-slate-400" /><span>下载文件</span>
+            </button>
+          )}
+        </>
+      )}
+      <button type="button" onClick={() => { handleCopyPath(node.path); onClose(); }}
+        className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-300">
+        <Copy className="w-3.5 h-3.5 text-slate-400" /><span>复制相对路径</span>
+      </button>
+    </div>,
+    document.body
+  );
+};
 
 export const FileTreePanel: React.FC = () => {
   const {
@@ -295,78 +353,23 @@ export const FileTreePanel: React.FC = () => {
               </>
             )}
 
-            {/* Context Actions Dropdown Popover — 在容器外部通过 fixed 定位 */}
-            {activeMenuPath === node.path && (
-              <>
-                <div className="fixed inset-0 z-40 pointer-events-none" />
-                <div data-menu-panel={node.path}
-                  className="fixed z-[9999] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl py-1.5 text-left w-36 flex flex-col gap-0.5 animate-scale-in text-[11px]"
-                  style={{
-                    top: menuPosition ? `${menuPosition.top}px` : '0px',
-                    left: menuPosition ? `${menuPosition.left}px` : '0px',
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {viewMode === 'local' ? (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (currentWorkspace) {
-                          await platform.file.revealInFolder(`${currentWorkspace.path}/${node.path}`);
-                        }
-                        setActiveMenuPath(null);
-                      }}
-                      className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-300"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-                      <span>在管理器中定位</span>
-                    </button>
-                  ) : (
-                    <>
-                      {isDirectory && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            triggerUpload(node.path);
-                            setActiveMenuPath(null);
-                          }}
-                          className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-350"
-                        >
-                          <Upload className="w-3.5 h-3.5 text-slate-400" />
-                          <span>上传文件</span>
-                        </button>
-                      )}
-                      {!isDirectory && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            handleDownload(node.path);
-                            setActiveMenuPath(null);
-                          }}
-                          className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-350"
-                        >
-                          <Download className="w-3.5 h-3.5 text-slate-400" />
-                          <span>下载文件</span>
-                        </button>
-                      )}
-                    </>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      handleCopyPath(node.path);
-                      setActiveMenuPath(null);
-                    }}
-                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800/80 text-slate-700 dark:text-slate-300"
-                  >
-                    <Copy className="w-3.5 h-3.5 text-slate-400" />
-                    <span>复制相对路径</span>
-                  </button>
-                </div>
-              </>
-            )}
           </div>
         </div>
+
+        {/* 三点菜单 — 在文件行外部，portal 到 body，不受父级 opaity/hover 影响 */}
+        {activeMenuPath === node.path && (
+          <MenuPortal
+            node={node}
+            viewMode={viewMode}
+            isDirectory={isDirectory}
+            menuPosition={menuPosition}
+            onClose={() => setActiveMenuPath(null)}
+            triggerUpload={triggerUpload}
+            handleDownload={handleDownload}
+            handleCopyPath={handleCopyPath}
+            currentWorkspace={currentWorkspace}
+          />
+        )}
 
         {isDirectory && isExpanded && node.children && node.children.length > 0 && (
           <div className="mt-0.5">
