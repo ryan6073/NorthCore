@@ -6936,7 +6936,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       if (res.success) {
         await get().loadLocalAgents();
         const agent = get().localAgentProcesses.find(a => a.id === id);
-        if (agent) {
+        if (agent && get().settings.enableNotifications) {
           await platform.notification.show({
             title: '本地 Agent 正在启动',
             body: `${agent.name} 正在后台启动中...`
@@ -7023,7 +7023,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       }
 
       const writeRes = await platform.file.writeText(absolutePath, version.content);
-      if (writeRes.success) {
+      if (writeRes.success && get().settings.enableNotifications) {
         await platform.notification.artifactApplied(targetPath);
         
         if (get().activeConversationId) {
