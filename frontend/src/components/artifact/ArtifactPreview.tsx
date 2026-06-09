@@ -1262,14 +1262,6 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
               定位
             </button>
             <button
-              onClick={handleSaveAsDirect}
-              className="px-2 py-1 text-[10px] rounded-lg border border-lark-border dark:border-slate-700 hover:bg-lark-bg-hover dark:hover:bg-slate-800 text-lark-text-secondary dark:text-slate-350 transition-all shadow-sm bg-white dark:bg-slate-900 flex items-center gap-1 active:scale-95"
-              title="另存为其他文件名"
-            >
-              <ArrowDownToLine className="w-3 h-3 text-slate-450" />
-              另存为
-            </button>
-            <button
               onClick={() => handleApplyToLocal(false)}
               className="px-2.5 py-1 text-[10px] rounded-lg bg-lark-primary hover:bg-lark-primary-hover text-white font-semibold flex items-center gap-1 transition-all active:scale-95 shadow-sm"
               title="将生成的代码写入本地工作区文件"
