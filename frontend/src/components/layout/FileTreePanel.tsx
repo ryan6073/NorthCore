@@ -256,11 +256,11 @@ export const FileTreePanel: React.FC = () => {
                 <button
                   type="button"
                   onClick={(e) => {
+                      e.stopPropagation();
                       const rect = e.currentTarget.getBoundingClientRect();
-                      setMenuPosition({ top: rect.top, left: rect.left - 152 });
+                      setMenuPosition({ top: rect.bottom + 4, left: rect.right - 144 });
                       setActiveMenuPath(activeMenuPath === node.path ? null : node.path);
                     }}
-                  data-path-menu={node.path}
                   className="p-1 rounded-md bg-white dark:bg-slate-800 text-slate-550 dark:text-slate-450 hover:text-slate-800 dark:hover:text-slate-200 border border-slate-205 dark:border-slate-750 active:scale-95 transition-all"
                   title="更多操作"
                 >
@@ -282,11 +282,11 @@ export const FileTreePanel: React.FC = () => {
                 <button
                   type="button"
                   onClick={(e) => {
+                      e.stopPropagation();
                       const rect = e.currentTarget.getBoundingClientRect();
-                      setMenuPosition({ top: rect.top, left: rect.left - 152 });
+                      setMenuPosition({ top: rect.bottom + 4, left: rect.right - 144 });
                       setActiveMenuPath(activeMenuPath === node.path ? null : node.path);
                     }}
-                  data-path-menu={node.path}
                   className="p-1 rounded-md bg-white dark:bg-slate-800 text-slate-505 dark:text-slate-450 hover:text-slate-800 dark:hover:text-slate-200 border border-slate-205 dark:border-slate-755 active:scale-95 transition-all"
                   title="更多操作"
                 >
@@ -295,12 +295,10 @@ export const FileTreePanel: React.FC = () => {
               </>
             )}
 
-            {/* Context Actions Dropdown Popover */}
+            {/* Context Actions Dropdown Popover — 在容器外部通过 fixed 定位 */}
             {activeMenuPath === node.path && (
               <>
-                <div
-                  className="fixed inset-0 z-40 pointer-events-none"
-                />
+                <div className="fixed inset-0 z-40 pointer-events-none" />
                 <div data-menu-panel={node.path}
                   className="fixed z-[9999] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl py-1.5 text-left w-36 flex flex-col gap-0.5 animate-scale-in text-[11px]"
                   style={{
@@ -308,7 +306,6 @@ export const FileTreePanel: React.FC = () => {
                     left: menuPosition ? `${menuPosition.left}px` : '0px',
                   }}
                   onClick={(e) => e.stopPropagation()}
-                  onMouseLeave={() => setActiveMenuPath(null)}
                 >
                   {viewMode === 'local' ? (
                     <button
