@@ -240,6 +240,7 @@ export const FileTreePanel: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setActiveMenuPath(activeMenuPath === node.path ? null : node.path)}
+                  data-path-menu={node.path}
                   className="p-1 rounded-md bg-white dark:bg-slate-800 text-slate-550 dark:text-slate-450 hover:text-slate-800 dark:hover:text-slate-200 border border-slate-205 dark:border-slate-750 active:scale-95 transition-all"
                   title="更多操作"
                 >
@@ -261,6 +262,7 @@ export const FileTreePanel: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setActiveMenuPath(activeMenuPath === node.path ? null : node.path)}
+                  data-path-menu={node.path}
                   className="p-1 rounded-md bg-white dark:bg-slate-800 text-slate-505 dark:text-slate-450 hover:text-slate-800 dark:hover:text-slate-200 border border-slate-205 dark:border-slate-755 active:scale-95 transition-all"
                   title="更多操作"
                 >
@@ -276,7 +278,22 @@ export const FileTreePanel: React.FC = () => {
                   className="fixed inset-0 z-40"
                   onClick={() => setActiveMenuPath(null)}
                 />
-                <div className="absolute right-0 top-7 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl py-1.5 z-50 text-left w-36 flex flex-col gap-0.5 animate-scale-in text-[11px]">
+                <div className="fixed z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl py-1.5 text-left w-36 flex flex-col gap-0.5 animate-scale-in text-[11px]"
+                  style={{
+                    top: (() => {
+                      const btn = document.querySelector(`[data-path-menu="${CSS.escape(node.path)}"]`);
+                      if (!btn) return '0px';
+                      const r = btn.getBoundingClientRect();
+                      return `${r.bottom + 4}px`;
+                    })(),
+                    left: (() => {
+                      const btn = document.querySelector(`[data-path-menu="${CSS.escape(node.path)}"]`);
+                      if (!btn) return '0px';
+                      const r = btn.getBoundingClientRect();
+                      return `${r.right - 144}px`;
+                    })()
+                  }}
+                >
                   {viewMode === 'local' ? (
                     <button
                       type="button"
