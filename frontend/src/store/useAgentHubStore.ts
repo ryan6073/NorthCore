@@ -3649,8 +3649,16 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             }
           }
 
+          // 仅当 Agent 无活跃 step/run 时才重置为 online，避免覆盖工作中的 Agent 状态
+          const agentIsBusy = (agentId: string) =>
+            Object.values(state.runDetailsById).some((r: any) =>
+              (r.agentId === agentId || r.steps?.some((s: any) => s.agentId === agentId)) &&
+              (r.status === 'running' || r.status === 'pending' || r.status === 'queued')
+            );
           const updatedAgents = state.agents.map(a =>
-            a.id === fullMessage.senderId ? { ...a, status: 'online' as const } : a
+            a.id === fullMessage.senderId && !agentIsBusy(fullMessage.senderId)
+              ? { ...a, status: 'online' as const }
+              : a
           );
 
           const nextState: any = {
@@ -3773,9 +3781,15 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             createdAt: getCurrentFullTime(),
           };
 
-          const updatedAgents = state.agents.map(a =>
-            a.status === 'thinking' ? { ...a, status: 'online' as const } : a
-          );
+          // all_tasks.completed 仅当 Agent 无活跃 step/run 时才重置为 online
+          const updatedAgents = state.agents.map(a => {
+            if (a.status !== 'thinking') return a;
+            const hasActiveRun = Object.values(state.runDetailsById).some((r: any) =>
+              (r.agentId === a.id || r.steps?.some((s: any) => s.agentId === a.id)) &&
+              (r.status === 'running' || r.status === 'pending' || r.status === 'queued')
+            );
+            return hasActiveRun ? a : { ...a, status: 'online' as const };
+          });
 
           // Update conversationArtifacts
           const updatedConversationArtifacts = { ...state.conversationArtifacts };
