@@ -246,16 +246,33 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
 
                 {showWsDropdown && (
                   <div className="absolute top-full left-0 mt-1 w-full bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800/80 rounded-xl shadow-xl backdrop-blur-md p-2 z-[99] animate-fade-in">
-                    {/* Search box */}
-                    <div className="relative mb-2">
-                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
-                      <input
-                        type="text"
-                        value={wsSearch}
-                        onChange={(e) => setWsSearch(e.target.value)}
-                        placeholder="搜索工作区..."
-                        className="w-full text-xs pl-8 pr-3 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-none focus:border-violet-500/80 dark:focus:border-violet-500/50 text-slate-800 dark:text-slate-100"
-                      />
+                    {/* Search + Create row */}
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                        <input
+                          type="text"
+                          value={wsSearch}
+                          onChange={(e) => setWsSearch(e.target.value)}
+                          placeholder="搜索工作区..."
+                          className="w-full text-xs pl-8 pr-3 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-none focus:border-violet-500/80 dark:focus:border-violet-500/50 text-slate-800 dark:text-slate-100"
+                        />
+                      </div>
+                      {!showCreateWorkspace && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowCreateWorkspace(true);
+                            setNewWorkspaceName('');
+                            setWsError(null);
+                          }}
+                          className="flex-shrink-0 px-2 py-1.5 bg-violet-600 hover:bg-violet-500 active:scale-95 text-[10px] text-white rounded-lg font-bold transition-all flex items-center gap-1"
+                          title="新建工作区"
+                        >
+                          <Plus className="w-3 h-3" />
+                          新建
+                        </button>
+                      )}
                     </div>
 
                     {/* Workspace list */}
@@ -295,12 +312,10 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
                       })()}
                     </div>
 
-                    {/* Separator */}
-                    <div className="h-px bg-slate-100 dark:bg-slate-850/80 my-1.5" />
-
-                    {/* Create area */}
-                    <div>
-                      {showCreateWorkspace ? (
+                    {/* Inline create form (shown below list when "新建" is clicked) */}
+                    {showCreateWorkspace && (
+                      <>
+                        <div className="h-px bg-slate-100 dark:bg-slate-850/80 my-1.5" />
                         <div className="flex flex-col gap-1.5 p-1 animate-scale-in">
                           <input
                             type="text"
@@ -368,21 +383,8 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
                             </button>
                           </div>
                         </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowCreateWorkspace(true);
-                            setNewWorkspaceName('');
-                            setWsError(null);
-                          }}
-                          className="w-full flex items-center justify-center gap-1.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-900/60 text-[11px] text-slate-550 dark:text-slate-450 hover:text-violet-600 dark:hover:text-violet-400 rounded-lg transition-all font-semibold border border-dashed border-slate-200 dark:border-slate-800/80 hover:border-violet-500/30"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>新建工作区</span>
-                        </button>
-                      )}
-                    </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
