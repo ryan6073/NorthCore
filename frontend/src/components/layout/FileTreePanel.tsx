@@ -278,19 +278,19 @@ export const FileTreePanel: React.FC = () => {
                   className="fixed inset-0 z-40"
                   onClick={() => setActiveMenuPath(null)}
                 />
-                <div className="fixed z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl py-1.5 text-left w-36 flex flex-col gap-0.5 animate-scale-in text-[11px]"
+                <div className="fixed z-[9999] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl py-1.5 text-left w-36 flex flex-col gap-0.5 animate-scale-in text-[11px]"
                   style={{
                     top: (() => {
                       const btn = document.querySelector(`[data-path-menu="${CSS.escape(node.path)}"]`);
                       if (!btn) return '0px';
                       const r = btn.getBoundingClientRect();
-                      return `${r.bottom + 4}px`;
+                      return `${r.top}px`;
                     })(),
                     left: (() => {
                       const btn = document.querySelector(`[data-path-menu="${CSS.escape(node.path)}"]`);
                       if (!btn) return '0px';
                       const r = btn.getBoundingClientRect();
-                      return `${r.right - 144}px`;
+                      return `${r.left - 152}px`;
                     })()
                   }}
                 >
