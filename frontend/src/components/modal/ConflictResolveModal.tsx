@@ -82,7 +82,7 @@ const ConflictResolveModal: React.FC<ConflictResolveModalProps> = ({
             </div>
           </div>
           {/* Diff Content */}
-          <div className="flex-1 min-h-0 overflow-hidden p-5">
+          <div className="flex-1 min-h-0 overflow-auto p-5">
             <CodeDiffViewer oldValue={localContent} newValue={artifactContent} splitView={splitView} />
           </div>
           {/* Footer */}
