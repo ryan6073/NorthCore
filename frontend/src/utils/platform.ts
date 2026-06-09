@@ -354,21 +354,19 @@ export const platform = {
   // Notification APIs
   notification: {
     show: async (options: { title: string; body: string; silent?: boolean; conversationId?: string }) => {
-      if (platform.isDesktop()) return window.northcoreDesktop!.notification.show(options);
-      
       if (!webState.settings.enableNotifications) return { success: false, error: 'Notifications disabled' };
-      
+      if (platform.isDesktop()) return window.northcoreDesktop!.notification.show(options);
+
       console.log(`Notification: [${options.title}] ${options.body}`);
-      // Fallback to browser notification if allowed, or standard alert/toast representation
       if (Notification.permission === 'granted') {
         new Notification(options.title, { body: options.body });
       }
       return Promise.resolve({ success: true });
     },
     taskCompleted: async (taskName: string) => {
+      if (!webState.settings.enableNotifications || !webState.settings.notifyOnTaskCompleted) return { success: false };
       if (platform.isDesktop()) return window.northcoreDesktop!.notification.taskCompleted(taskName);
-      if (!webState.settings.notifyOnTaskCompleted) return { success: false };
-      
+
       console.log(`Notification: Task Completed - ${taskName}`);
       if (Notification.permission === 'granted') {
         new Notification('任务完成', { body: taskName });
@@ -376,9 +374,9 @@ export const platform = {
       return Promise.resolve({ success: true });
     },
     artifactCreated: async (artifactName: string) => {
+      if (!webState.settings.enableNotifications || !webState.settings.notifyOnArtifactCreated) return { success: false };
       if (platform.isDesktop()) return window.northcoreDesktop!.notification.artifactCreated(artifactName);
-      if (!webState.settings.notifyOnArtifactCreated) return { success: false };
-      
+
       console.log(`Notification: Artifact Created - ${artifactName}`);
       if (Notification.permission === 'granted') {
         new Notification('Artifact 生成完成', { body: artifactName });
@@ -386,8 +384,9 @@ export const platform = {
       return Promise.resolve({ success: true });
     },
     artifactApplied: async (filePath: string) => {
+      if (!webState.settings.enableNotifications) return { success: false };
       if (platform.isDesktop()) return window.northcoreDesktop!.notification.artifactApplied(filePath);
-      
+
       console.log(`Notification: Artifact Applied - ${filePath}`);
       if (Notification.permission === 'granted') {
         new Notification('已应用到本地', { body: filePath });
