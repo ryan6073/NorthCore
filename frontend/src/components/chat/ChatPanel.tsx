@@ -275,11 +275,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     if (!conversationId) return;
 
     const isSameConv = lastScrolledConversationId.current === conversationId;
-    
+
     const prevLength = prevMessagesLengthRef.current;
-    prevMessagesLengthRef.current = messages.length;
 
     if (isLoadingHistoryRef.current) {
+      prevMessagesLengthRef.current = messages.length;
       return;
     }
 
@@ -287,6 +287,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
       lastScrolledConversationId.current = conversationId;
       justSwitchedRef.current = true;
       ignoreHistoryLoadUntilRef.current = Date.now() + 900;
+      prevMessagesLengthRef.current = messages.length;
       scheduleInitialBottomPin();
       const timer = setTimeout(() => {
         justSwitchedRef.current = false;
@@ -299,14 +300,19 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     }
 
     if (justSwitchedRef.current) {
+      prevMessagesLengthRef.current = messages.length;
       scheduleInitialBottomPin();
       return clearInitialBottomTimers;
     }
 
     const lastMsg = messages[messages.length - 1];
-    if (!lastMsg) return;
+    if (!lastMsg) {
+      prevMessagesLengthRef.current = messages.length;
+      return;
+    }
 
     if (messages.length > prevLength) {
+      prevMessagesLengthRef.current = messages.length;
       if (lastMsg.role === 'user') {
         scrollToBottom('smooth');
       } else {
@@ -315,6 +321,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         }
       }
     } else {
+      prevMessagesLengthRef.current = messages.length;
       if (isNearBottom() && lastMsg.role === 'agent' && lastMsg.type !== 'status') {
         scrollToBottom('instant');
       }
