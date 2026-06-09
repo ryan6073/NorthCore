@@ -696,6 +696,7 @@ interface AgentHubStore {
   replyContext: { id: string; senderName: string; content: string } | null;
   quoteArtifactRef: ArtifactReference | null;
   webSearchMode: 'auto' | 'force' | 'off';
+  conversationWebSearchMode: Record<string, 'auto' | 'force' | 'off'>;
 
   // ============ v4 新增：Agent 一对一专属对话系统 ============
   showAgentProfile: boolean;
@@ -729,7 +730,7 @@ interface AgentHubStore {
   // Phase 3 Actions
   setReplyContext: (reply: { id: string; senderName: string; content: string } | null) => void;
   setQuoteArtifactRef: (ref: ArtifactReference | null) => void;
-  setWebSearchMode: (mode: 'auto' | 'force' | 'off') => void;
+  setWebSearchMode: (mode: 'auto' | 'force' | 'off', conversationId?: string) => void;
 
   // User and Settings state
   currentUser: { id?: string; name: string; email: string; avatar: string; isLoggedIn: boolean } | null;
@@ -978,6 +979,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   replyContext: null,
   quoteArtifactRef: null,
   webSearchMode: 'auto',
+  conversationWebSearchMode: {},
 
   // v4 新增初始状态
   showAgentProfile: false,
@@ -2316,8 +2318,10 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
 
   sendMessage: async (content, attachments, targetAgentId, useSandbox, webSearchMode) => {
-    const { activeConversationId, useMockMode, conversations, agents, replyContext, quoteArtifactRef, workspaceContextFiles, webSearchMode: storeWebSearchMode } = get();
-    const finalWebSearchMode = webSearchMode !== undefined ? webSearchMode : storeWebSearchMode;
+    const { activeConversationId, useMockMode, conversations, agents, replyContext, quoteArtifactRef, workspaceContextFiles, webSearchMode: globalWebSearchMode, conversationWebSearchMode } = get();
+    // 优先使用 per-conversation 的 webSearchMode，其次参数传值，最后全局默认
+    const convWebSearch = activeConversationId ? conversationWebSearchMode[activeConversationId] : undefined;
+    const finalWebSearchMode = convWebSearch || (webSearchMode !== undefined ? webSearchMode : globalWebSearchMode);
     if (!activeConversationId) return;
 
     const activeConv = conversations.find(c => c.id === activeConversationId);
@@ -2920,10 +2924,16 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           }
 
           set(state => {
+            // 如果用户已切换到其他会话，则基于 conversationMessages 缓存操作，避免消息交叉污染
+            const useConvMessages = state.activeConversationId !== activeConversationId;
+            const baseMessages = useConvMessages
+              ? (state.conversationMessages[activeConversationId] || [])
+              : state.messages;
+
             // Replace the optimistic message with the actual user message, preserving local reply/citation fields
-            let updatedMessages = state.messages;
-            if (userMessage && state.messages.some(m => m.id === userMessage.id)) {
-              updatedMessages = state.messages.filter(m => m.id !== newUserMessage.id);
+            let updatedMessages = baseMessages;
+            if (userMessage && baseMessages.some(m => m.id === userMessage.id)) {
+              updatedMessages = baseMessages.filter(m => m.id !== newUserMessage.id);
             } else {
               updatedMessages = state.messages.map(m => {
                 if (m.id === newUserMessage.id) {
@@ -2985,14 +2995,23 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
                 : c
             );
 
-            return {
-              messages: finalMessages,
+            const result: any = {
               artifacts: currentArtifacts,
               workspaceArtifacts: updatedWorkspaceArtifacts,
               conversationArtifacts: updatedConversationArtifacts,
               conversations: updatedConversations,
               isProcessing: false,
             };
+            if (useConvMessages) {
+              // 用户已切换会话，只更新 conversationMessages 缓存，不污染 active messages
+              result.conversationMessages = {
+                ...state.conversationMessages,
+                [activeConversationId]: finalMessages
+              };
+            } else {
+              result.messages = finalMessages;
+            }
+            return result;
           });
         } else if (res.code === 40002) {
           alert(`❌ 发送失败：${res.message || '客户端不允许创建 system/status 消息'}`);
@@ -4857,7 +4876,18 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
 
   setReplyContext: (replyContext) => set({ replyContext }),
   setQuoteArtifactRef: (quoteArtifactRef) => set({ quoteArtifactRef }),
-  setWebSearchMode: (webSearchMode) => set({ webSearchMode }),
+  setWebSearchMode: (webSearchMode, conversationId) => {
+    if (conversationId) {
+      set(state => ({
+        conversationWebSearchMode: {
+          ...state.conversationWebSearchMode,
+          [conversationId]: webSearchMode
+        }
+      }));
+    } else {
+      set({ webSearchMode });
+    }
+  },
 
   login: async (email, password) => {
     const { useMockMode } = get();

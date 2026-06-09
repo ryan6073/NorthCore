@@ -115,8 +115,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const setReplyContext = useAgentHubStore(state => state.setReplyContext);
   const quoteArtifactRef = useAgentHubStore(state => state.quoteArtifactRef);
   const setQuoteArtifactRef = useAgentHubStore(state => state.setQuoteArtifactRef);
-  const webSearchMode = useAgentHubStore(state => state.webSearchMode);
+  const globalWebSearchMode = useAgentHubStore(state => state.webSearchMode);
+  const conversationWebSearchMode = useAgentHubStore(state => state.conversationWebSearchMode);
   const setWebSearchMode = useAgentHubStore(state => state.setWebSearchMode);
+  // 当前会话的独立 webSearchMode
+  const webSearchMode = conversation ? (conversationWebSearchMode[conversation.id] ?? globalWebSearchMode) : globalWebSearchMode;
 
   const pins = useAgentHubStore(state => state.pins);
   const memories = useAgentHubStore(state => state.memories);
@@ -1624,7 +1627,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                 onClick={() => {
                   const modes: ('auto' | 'force' | 'off')[] = ['auto', 'force', 'off'];
                   const nextIndex = (modes.indexOf(webSearchMode) + 1) % modes.length;
-                  setWebSearchMode(modes[nextIndex]);
+                  setWebSearchMode(modes[nextIndex], conversation?.id);
                 }}
                 disabled={conversation?.isArchived}
                 className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-bold transition-all border ${
