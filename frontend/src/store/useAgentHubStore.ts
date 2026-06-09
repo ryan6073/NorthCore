@@ -3131,7 +3131,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         const res = await createAgentApi(agentData);
         if (res.code === 0) {
           set(state => ({
-            agents: [...state.agents, res.data]
+            agents: [...state.agents, res.data],
+            allAgents: [...state.allAgents, res.data],
           }));
           return res.data.id;
         } else {
@@ -5358,7 +5359,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     const { conversations, agents, useMockMode, currentUser } = get();
     const targetAgent = agents.find(a => a.id === agentId) || get().allAgents.find(a => a.id === agentId);
 
-    if (targetAgent && (targetAgent.requiresWorkspace === true || targetAgent.supportsContactConversation === false)) {
+    if (targetAgent && (targetAgent.requiresWorkspace === true)) {
       set({ preselectedAgentId: agentId, isNewConversationOpen: true });
       alert(`智能体 "${targetAgent.name}" 仅能在工作区会话内使用，请选择或新建一个工作区开始。`);
       throw new Error("Direct contact conversation not supported for this platform agent");
