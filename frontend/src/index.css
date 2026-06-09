@@ -136,6 +136,40 @@ html.dark body {
   color: #f8fafc;
 }
 
+/* highlight.js dark theme */
+.hljs { color: #e2e8f0; }
+.hljs-keyword { color: #c084fc; }
+.hljs-string { color: #86efac; }
+.hljs-number { color: #fde68a; }
+.hljs-comment { color: #64748b; font-style: italic; }
+.hljs-built_in { color: #67e8f9; }
+.hljs-literal { color: #fdba74; }
+.hljs-type { color: #7dd3fc; }
+.hljs-attr { color: #f5a524; }
+.hljs-attribute { color: #c4b5fd; }
+.hljs-title { color: #93c5fd; }
+.hljs-title.class_, .hljs-title.class_.inherited__ { color: #a78bfa; }
+.hljs-title.function_ { color: #a78bfa; }
+.hljs-property { color: #a78bfa; }
+.hljs-selector-tag { color: #c084fc; }
+.hljs-selector-class { color: #fdba74; }
+.hljs-selector-id { color: #fca5a5; }
+.hljs-tag { color: #5eead4; }
+.hljs-name { color: #5eead4; }
+.hljs-section { color: #f9a8d4; }
+.hljs-meta { color: #94a3b8; }
+.hljs-subst { color: #e2e8f0; }
+.hljs-symbol { color: #f9a8d4; }
+.hljs-regexp { color: #fca5a5; }
+.hljs-link { color: #67e8f9; }
+.hljs-deletion { color: #fca5a5; background: #450a0a; }
+.hljs-addition { color: #86efac; background: #052e16; }
+.hljs-doctag { color: #c084fc; }
+.hljs-params { color: #e2e8f0; }
+.hljs-template-variable { color: #fca5a5; }
+.hljs-variable { color: #fca5a5; }
+.hljs-bullet { color: #86efac; }
+
 /* Custom selection styling for dark mode */
 .dark ::selection {
   background-color: rgba(124, 58, 237, 0.3);

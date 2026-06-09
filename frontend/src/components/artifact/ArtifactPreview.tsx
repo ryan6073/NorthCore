@@ -1,8 +1,9 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Artifact, ArtifactVersion } from '@/types';
 import { Copy, FileCode, FileText, Globe, Maximize2, GitCompare, RefreshCw, Edit3, Save, X, FolderOpen, ArrowDownToLine, History, Folder, Network, Presentation } from 'lucide-react';
+import hljs from 'highlight.js';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 import CodeDiffViewer from './CodeDiffViewer';
 import CodeEditorContainer from './CodeEditorContainer';
@@ -675,24 +676,49 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     }
   };
 
+  /** 根据文件名推断语言，传给 highlight.js */
+  const getCodeLanguage = (): string => {
+    if (!currentArtifact) return 'plaintext';
+    const name = currentArtifact.title || '';
+    const ext = name.split('.').pop()?.toLowerCase();
+    const langMap: Record<string, string> = {
+      js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
+      html: 'html', css: 'css', scss: 'scss', less: 'less',
+      py: 'python', rb: 'ruby', java: 'java', go: 'go', rs: 'rust',
+      c: 'c', cpp: 'cpp', cs: 'csharp', swift: 'swift', kt: 'kotlin',
+      php: 'php', sh: 'bash', bash: 'bash', zsh: 'bash',
+      json: 'json', xml: 'xml', yaml: 'yaml', yml: 'yaml', md: 'markdown',
+      sql: 'sql', graphql: 'graphql', dockerfile: 'dockerfile',
+    };
+    return langMap[ext || ''] || 'plaintext';
+  };
+
   const renderCodeLines = (content: string) => {
-    const lines = content.split('\n');
+    const lang = getCodeLanguage();
+    let highlighted: string;
+    try {
+      highlighted = hljs.highlight(content, { language: lang, ignoreIllegals: true }).value;
+    } catch {
+      highlighted = content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    const lines = highlighted.split('\n');
     return (
       <pre className="bg-slate-900/50 text-slate-100 p-4 rounded-xl text-xs overflow-x-auto font-mono leading-relaxed whitespace-pre-wrap break-words border border-slate-800 flex flex-col gap-0.5">
         {lines.map((line, idx) => {
           const lineNum = idx + 1;
           return (
-            <div 
-              key={lineNum} 
+            <div
+              key={lineNum}
               data-line-number={lineNum}
               className="flex hover:bg-slate-850 px-2 py-0.5 rounded transition-all duration-150 group relative"
             >
               <span className="w-8 select-none text-slate-500 text-right pr-3 font-mono border-r border-slate-850 mr-3 flex-shrink-0">
                 {lineNum}
               </span>
-              <span className="flex-1 whitespace-pre-wrap font-mono">
-                {line || ' '}
-              </span>
+              <span
+                className="flex-1 whitespace-pre-wrap font-mono"
+                dangerouslySetInnerHTML={{ __html: line || ' ' }}
+              />
             </div>
           );
         })}
