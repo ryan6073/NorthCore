@@ -6473,11 +6473,25 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   },
 
   createServerWorkspace: async (name) => {
-    const { useMockMode } = get();
+    const { useMockMode, serverWorkspaces } = get();
+    // 检查同名工作区
+    const trimmedName = name.trim();
+    const isDuplicate = serverWorkspaces.some(w => w.name === trimmedName);
+    if (isDuplicate) {
+      const err = {
+        response: {
+          data: {
+            data: { error: 'workspace_name_conflict' },
+            message: `工作区 "${trimmedName}" 已存在`
+          }
+        }
+      };
+      throw err;
+    }
     if (useMockMode) {
       const newWs: WorkspaceItem = {
         id: `ws-mock-${Date.now()}`,
-        name,
+        name: trimmedName,
         status: 'active',
         createdAt: getCurrentFullTime(),
         updatedAt: getCurrentFullTime(),
@@ -6490,7 +6504,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       }));
       return newWs;
     }
-    const res = await workspaceService.createWorkspace(name);
+    const res = await workspaceService.createWorkspace(trimmedName);
     if (res.code === 0 && res.data) {
       await get().fetchServerWorkspaces('active');
       return res.data;
