@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AlertTriangle, X, Check, Save, Edit, RefreshCw } from 'lucide-react';
+import CodeDiffViewer from '../artifact/CodeDiffViewer';
 
 export interface ConflictResolveModalProps {
   open: boolean;
@@ -9,6 +10,8 @@ export interface ConflictResolveModalProps {
   onOverwrite: () => void;
   onSaveAs: (newPath: string) => void;
   onViewDiff: () => void;
+  localContent?: string;
+  artifactContent?: string;
 }
 
 const ConflictResolveModal: React.FC<ConflictResolveModalProps> = ({
@@ -19,14 +22,19 @@ const ConflictResolveModal: React.FC<ConflictResolveModalProps> = ({
   onOverwrite,
   onSaveAs,
   onViewDiff,
+  localContent,
+  artifactContent,
 }) => {
   const [customPath, setCustomPath] = useState('');
   const [showSaveAsInput, setShowSaveAsInput] = useState(false);
+  const [showDiff, setShowDiff] = useState(false);
+  const [splitView, setSplitView] = useState(true);
 
   useEffect(() => {
     if (open) {
       setCustomPath(filePath);
       setShowSaveAsInput(false);
+      setShowDiff(false);
     }
   }, [open, filePath]);
 
@@ -40,9 +48,65 @@ const ConflictResolveModal: React.FC<ConflictResolveModalProps> = ({
     }
   };
 
+  // Diff 模式：全屏显示
+  if (showDiff && localContent !== undefined && artifactContent !== undefined) {
+    return (
+      <div className="fixed inset-0 z-[9999] flex flex-col bg-white dark:bg-slate-900 animate-fade-in">
+        {/* Diff header */}
+        <div className="flex items-center justify-between px-6 py-3 border-b border-slate-200 dark:border-slate-800 flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/30 text-amber-500">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">文件冲突对比</h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">本地文件 vs Artifact 产物 — {fileName}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSplitView(!splitView)}
+              className="px-3 py-1.5 text-[11px] font-semibold rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-all"
+            >
+              {splitView ? '单栏' : '双栏'}
+            </button>
+            <button
+              onClick={() => setShowDiff(false)}
+              className="px-3 py-1.5 text-[11px] font-semibold rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-all"
+            >
+              返回
+            </button>
+          </div>
+        </div>
+        {/* Diff content */}
+        <div className="flex-1 min-h-0 overflow-hidden p-3">
+          <CodeDiffViewer oldValue={localContent} newValue={artifactContent} splitView={splitView} />
+        </div>
+        {/* Diff footer */}
+        <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-slate-200 dark:border-slate-800 flex-shrink-0 bg-slate-50/50 dark:bg-slate-950/20">
+          <button
+            onClick={() => setShowDiff(false)}
+            className="px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 text-xs font-semibold rounded-xl transition-all bg-white dark:bg-slate-900"
+          >
+            取消
+          </button>
+          <button
+            onClick={() => {
+              onOverwrite();
+              onClose();
+            }}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-xl shadow-md shadow-red-500/10 transition-all active:scale-95 flex items-center gap-1.5"
+          >
+            <Save className="w-3.5 h-3.5" />
+            覆盖写入
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-      {/* Dialog box — 无遮罩，最高层级 */}
       <div className="bg-white dark:bg-slate-900 border border-lark-border dark:border-slate-800 rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden transform transition-all duration-300 animate-scale-in flex flex-col relative transition-colors"
         onClick={(e) => e.stopPropagation()}
       >
@@ -53,7 +117,7 @@ const ConflictResolveModal: React.FC<ConflictResolveModalProps> = ({
         >
           <X className="w-4 h-4" />
         </button>
- 
+
         <div className="p-6 flex flex-col gap-4">
           <div className="flex gap-4 items-start">
             <div className="p-3.5 rounded-2xl flex-shrink-0 bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400 border border-amber-150 dark:border-amber-900/40">
@@ -134,7 +198,13 @@ const ConflictResolveModal: React.FC<ConflictResolveModalProps> = ({
               取消
             </button>
             <button
-              onClick={onViewDiff}
+              onClick={() => {
+                if (localContent !== undefined && artifactContent !== undefined) {
+                  setShowDiff(true);
+                } else {
+                  onViewDiff();
+                }
+              }}
               className="px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-lark-primary dark:text-violet-400 text-xs font-semibold rounded-xl transition-all duration-150 active:scale-95 bg-white dark:bg-slate-900 flex items-center gap-1.5"
             >
               <RefreshCw className="w-3.5 h-3.5" />

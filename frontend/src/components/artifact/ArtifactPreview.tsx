@@ -120,6 +120,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   const [conflictModalOpen, setConflictModalOpen] = useState(false);
   const [conflictFileName, setConflictFileName] = useState('');
   const [conflictFilePath, setConflictFilePath] = useState('');
+  const [conflictLocalContent, setConflictLocalContent] = useState<string | undefined>(undefined);
 
   const currentWorkspace = useAgentHubStore(state => state.currentWorkspace);
   const applyArtifactToLocal = useAgentHubStore(state => state.applyArtifactToLocal);
@@ -167,6 +168,10 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       setConflictFileName(currentArtifact.title);
       setConflictFilePath(absolutePath);
       setConflictModalOpen(true);
+      // 读取本地文件内容供 diff 对比
+      platform.file.readText(absolutePath).then(r => {
+        if (r.success) setConflictLocalContent(r.content);
+      }).catch(() => {});
     } else if (res.success) {
       // Success is indicated by desktop notifications/system chat messages in store
     } else {
@@ -1366,6 +1371,8 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
           setActiveTab('diff');
           setConflictModalOpen(false);
         }}
+        localContent={conflictLocalContent}
+        artifactContent={currentVersion?.content}
       />
     </div>
   );
