@@ -680,8 +680,9 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
   const getCodeLanguage = (): string => {
     if (!currentArtifact) return 'plaintext';
     const name = currentArtifact.title || '';
+    // 1. 从文件名后缀推断
     const ext = name.split('.').pop()?.toLowerCase();
-    const langMap: Record<string, string> = {
+    const extMap: Record<string, string> = {
       js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
       html: 'html', css: 'css', scss: 'scss', less: 'less',
       py: 'python', rb: 'ruby', java: 'java', go: 'go', rs: 'rust',
@@ -690,7 +691,20 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       json: 'json', xml: 'xml', yaml: 'yaml', yml: 'yaml', md: 'markdown',
       sql: 'sql', graphql: 'graphql', dockerfile: 'dockerfile',
     };
-    return langMap[ext || ''] || 'plaintext';
+    if (ext && extMap[ext]) return extMap[ext];
+    // 2. 从 title 中直接匹配语言名（如 "python代码.py" → python）
+    const nameMap: Record<string, string> = {
+      python: 'python', javascript: 'javascript', typescript: 'typescript',
+      java: 'java', go: 'go', rust: 'rust', cpp: 'cpp', csharp: 'csharp',
+      ruby: 'ruby', php: 'php', swift: 'swift', kotlin: 'kotlin',
+      bash: 'bash', shell: 'bash', sql: 'sql', html: 'html', css: 'css',
+      json: 'json', xml: 'xml', yaml: 'yaml', markdown: 'markdown',
+    };
+    const lower = name.toLowerCase();
+    for (const [keyword, lang] of Object.entries(nameMap)) {
+      if (lower.includes(keyword)) return lang;
+    }
+    return 'plaintext';
   };
 
   const renderCodeLines = (content: string) => {
