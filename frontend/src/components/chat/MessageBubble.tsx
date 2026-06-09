@@ -408,7 +408,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
               >
                 <div className="flex items-center justify-between">
                   <span className={`font-semibold ${isUser ? 'text-white' : 'text-slate-700 dark:text-slate-350'}`}>回复 @{message.quotedMessage.senderName}：</span>
-                  <span className={`text-[9px] font-medium ${isUser ? 'text-blue-300' : 'text-indigo-500 dark:text-indigo-400'}`}>点击跳转</span>
+                  <span className={`text-[9px] font-medium ${isUser ? 'text-blue-600' : 'text-indigo-500 dark:text-indigo-400'}`}>点击跳转</span>
                 </div>
                 <span className={`truncate ${isUser ? 'text-white/90' : ''}`}>{message.quotedMessage.content}</span>
               </div>
