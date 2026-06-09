@@ -314,7 +314,8 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
           const state = next[id];
           const newSeconds = state.seconds + 1;
 
-          const threshold = 12;
+          const charSum = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+          const threshold = 10 + (charSum % 6);
 
           if (newSeconds >= threshold) {
             const remaining = activities.filter(t => t !== state.type);
@@ -344,8 +345,8 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
           const state = leisureStates[agent.id];
           if (!state) return;
 
-          // 8% chance per second to shout (~12s interval)
-          if (Math.random() < 0.08) {
+          // 16% chance per second to shout (~6s interval)
+          if (Math.random() < 0.16) {
             const shoutsList = state.type === 'gym' ? GYM_SHOUTS : GAME_SHOUTS;
             const shout = shoutsList[Math.floor(Math.random() * shoutsList.length)];
             if (next[agent.id] !== shout) {
