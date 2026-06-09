@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Message } from '@/types';
-import { FileCode, RotateCcw, Check, ChevronDown, ChevronUp, FileText } from 'lucide-react';
+import { FileCode, RotateCcw, ChevronDown, ChevronUp, FileText } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface GroupedArtifactsCardProps {
@@ -17,11 +17,12 @@ interface FileDiffStat {
 
 export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ message }) => {
   const [isExpanded, setIsExpanded] = useState(false);
-  const [isUndone, setIsUndone] = useState(false);
-  const [auditStatus, setAuditStatus] = useState<'pending' | 'approved'>('pending');
+  const [isUndoing, setIsUndoing] = useState(false);
+  const [undoResult, setUndoResult] = useState<'idle' | 'done' | 'error'>('idle');
   const setSelectedArtifactId = useAgentHubStore(state => state.setSelectedArtifactId);
   const setSelectedArtifactVersion = useAgentHubStore(state => state.setSelectedArtifactVersion);
   const setIsFullScreenOpen = useAgentHubStore(state => state.setIsFullScreenOpen);
+  const rollbackSandboxRun = useAgentHubStore(state => state.rollbackSandboxRun);
   const conversationMessages = useAgentHubStore(state => state.conversationMessages[message.conversationId] || state.messages || []);
 
   // 从 store 中获取当前会话的产物列表，用于判断产物是否已被撤销
@@ -106,24 +107,29 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
   const visibleStats = isExpanded ? fileStats : fileStats.slice(0, displayLimit);
   const hiddenCount = fileStats.length - displayLimit;
 
-  const handleUndo = (e: React.MouseEvent) => {
+  const handleUndo = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    setIsUndone(!isUndone);
-  };
-
-  const handleAudit = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (auditStatus === 'pending') {
-      setAuditStatus('approved');
-    } else {
-      setAuditStatus('pending');
+    if (isUndoing || undoResult === 'done') return;
+    const runId = message.metadata?.sourceRunId;
+    if (!runId) {
+      setUndoResult('error');
+      return;
+    }
+    setIsUndoing(true);
+    try {
+      await rollbackSandboxRun(runId);
+      setUndoResult('done');
+    } catch {
+      setUndoResult('error');
+    } finally {
+      setIsUndoing(false);
     }
   };
 
   const handleFileClick = (artifactId?: string, msgId?: string) => {
     if (artifactId) {
       setSelectedArtifactId(artifactId);
-      
+
       let resolvedVersion = null;
       if (msgId) {
         const msg = artifactItems.find(m => m.id === msgId);
@@ -185,34 +191,22 @@ export const GroupedArtifactsCard: React.FC<GroupedArtifactsCardProps> = ({ mess
           </div>
         </div>
 
-        {/* Action Controls — 有已撤销产物时禁用 */}
+        {/* Action Controls — 仅保留撤销按钮，调用沙箱 rollback API */}
         <div className="flex items-center gap-3">
           <button
             onClick={handleUndo}
+            disabled={isUndoing || undoResult === 'done' || hasAnyRevoked}
             className={`flex items-center gap-1 text-[11px] font-medium transition-colors select-none ${
-              isUndone || hasAnyRevoked
+              undoResult === 'done' || hasAnyRevoked
                 ? 'text-slate-400 dark:text-slate-500 cursor-not-allowed'
-                : 'text-slate-500 hover:text-lark-primary dark:text-slate-400 dark:hover:text-violet-400'
+                : isUndoing
+                  ? 'text-slate-400 dark:text-slate-500 cursor-wait'
+                  : 'text-slate-500 hover:text-lark-primary dark:text-slate-400 dark:hover:text-violet-400'
             }`}
-            disabled={isUndone || hasAnyRevoked}
+            title={!message.metadata?.sourceRunId ? '缺少 runId，无法撤销' : '撤销此沙箱运行的所有更改'}
           >
-            <RotateCcw className="w-3 h-3" />
-            <span>{isUndone ? '已撤销' : '撤销'}</span>
-          </button>
-
-          <button
-            onClick={handleAudit}
-            className={`px-3 py-1 text-[11px] font-semibold rounded-lg border shadow-xs transition-all flex items-center gap-1.5 select-none ${
-              hasAnyRevoked
-                ? 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 cursor-not-allowed opacity-60'
-                : auditStatus === 'approved'
-                  ? 'bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-900 text-green-700 dark:text-green-400'
-                  : 'bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
-            }`}
-            disabled={hasAnyRevoked}
-          >
-            {auditStatus === 'approved' && <Check className="w-3 h-3" />}
-            <span>{auditStatus === 'approved' ? '已确认' : '确认'}</span>
+            <RotateCcw className={`w-3 h-3 ${isUndoing ? 'animate-spin' : ''}`} />
+            <span>{isUndoing ? '撤销中…' : undoResult === 'done' ? '已撤销' : '撤销'}</span>
           </button>
         </div>
       </div>
