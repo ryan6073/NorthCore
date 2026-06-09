@@ -3730,19 +3730,45 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             updatedWorkspaceArtifacts[artWorkspaceId] = wsList;
           }
 
-          const updatedArtifacts = workspaceId 
-            ? (updatedWorkspaceArtifacts[workspaceId] || []) 
+          const updatedArtifacts = workspaceId
+            ? (updatedWorkspaceArtifacts[workspaceId] || [])
             : (updatedConversationArtifacts[activeId] || []);
 
           const updatedVersions = { ...state.artifactVersions };
           delete updatedVersions[artifactWithRunId.id];
+
+          // 创建对应的产物消息追加到消息列表，使产物卡片能实时显示在会话中
+          const isUserEdit = artifactWithRunId.createdByType === 'user' || !artifactWithRunId.conversationId;
+          let updatedMessages = state.messages;
+          let updatedConvMessages = { ...state.conversationMessages };
+          if (isUserEdit && !state.messages.some((m: any) => m.artifactId === artifactWithRunId.id)) {
+            const artifactMessage: Message = {
+              id: createId('msg'),
+              conversationId: artifactWithRunId.conversationId || activeId,
+              senderId: artifactWithRunId.createdBy || 'system',
+              senderName: artifactWithRunId.createdByName || (artifactWithRunId.createdByType === 'user' ? '用户' : '系统'),
+              role: artifactWithRunId.createdByType === 'user' ? 'user' as const : 'system' as const,
+              type: 'artifact' as const,
+              artifactId: artifactWithRunId.id,
+              content: `生成产物 ${artifactWithRunId.title || artifactWithRunId.name}`,
+              createdAt: artifactWithRunId.createdAt || getCurrentFullTime(),
+            };
+            updatedMessages = [...state.messages, artifactMessage];
+            const convId = artifactWithRunId.conversationId || activeId;
+            updatedConvMessages = {
+              ...state.conversationMessages,
+              [convId]: [...(state.conversationMessages[convId] || []), artifactMessage]
+            };
+          }
 
           return {
             artifacts: updatedArtifacts,
             conversationArtifacts: updatedConversationArtifacts,
             workspaceArtifacts: updatedWorkspaceArtifacts,
             selectedArtifactId: artifactWithRunId.id,
-            artifactVersions: updatedVersions
+            artifactVersions: updatedVersions,
+            messages: updatedMessages,
+            conversationMessages: updatedConvMessages,
           };
         });
         get().loadArtifactContent(artifactWithRunId.id);
