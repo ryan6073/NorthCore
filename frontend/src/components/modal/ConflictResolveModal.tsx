@@ -52,46 +52,50 @@ const ConflictResolveModal: React.FC<ConflictResolveModalProps> = ({
   // DIFF 独立全屏窗口 — 通过 portal 渲染到 document.body，彻底脱离消息 DOM 层级
   if (showDiff && localContent !== undefined && artifactContent !== undefined) {
     const diffContent = (
-      <div className="fixed inset-0 flex flex-col bg-white dark:bg-slate-900" style={{ zIndex: 2147483647 }}>
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-3 border-b border-slate-200 dark:border-slate-800 flex-shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/30 text-amber-500">
-              <AlertTriangle className="w-5 h-5" />
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[99999] p-4" onClick={() => setShowDiff(false)}>
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-scale-in"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex-shrink-0">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/30 text-amber-500">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">文件冲突对比</h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">本地文件 vs Artifact 产物 — {fileName}</p>
+              </div>
             </div>
-            <div>
-              <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">文件冲突对比</h3>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">本地文件 vs Artifact 产物 — {fileName}</p>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button onClick={() => setSplitView(!splitView)}
+                className="px-3 py-1.5 text-[11px] font-semibold rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-all">
+                {splitView ? '单栏' : '双栏'}
+              </button>
+              <button onClick={() => setShowDiff(false)}
+                className="px-3 py-1.5 text-[11px] font-semibold rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-all">
+                返回
+              </button>
+              <button onClick={onClose} className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors" title="关闭">
+                <X className="w-4 h-4" />
+              </button>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setSplitView(!splitView)}
-              className="px-3 py-1.5 text-[11px] font-semibold rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-all">
-              {splitView ? '单栏' : '双栏'}
-            </button>
+          {/* Diff Content */}
+          <div className="flex-1 min-h-0 overflow-hidden p-5">
+            <CodeDiffViewer oldValue={localContent} newValue={artifactContent} splitView={splitView} />
+          </div>
+          {/* Footer */}
+          <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-200 dark:border-slate-800 flex-shrink-0 bg-slate-50/50 dark:bg-slate-950/20">
             <button onClick={() => setShowDiff(false)}
-              className="px-3 py-1.5 text-[11px] font-semibold rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-all">
+              className="px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 text-xs font-semibold rounded-xl transition-all bg-white dark:bg-slate-900">
               返回
             </button>
-            <button onClick={onClose} className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors" title="关闭">
-              <X className="w-4 h-4" />
+            <button onClick={() => { onOverwrite(); onClose(); }}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-xl shadow-md shadow-red-500/10 transition-all active:scale-95 flex items-center gap-1.5">
+              <Save className="w-3.5 h-3.5" />覆盖写入
             </button>
           </div>
-        </div>
-        {/* Diff Content — 占剩余空间的 60% */}
-        <div className="flex-1 min-h-0 overflow-hidden p-4" style={{ maxHeight: '60vh' }}>
-          <CodeDiffViewer oldValue={localContent} newValue={artifactContent} splitView={splitView} />
-        </div>
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-slate-200 dark:border-slate-800 flex-shrink-0 bg-slate-50/50 dark:bg-slate-950/20">
-          <button onClick={() => setShowDiff(false)}
-            className="px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 text-xs font-semibold rounded-xl transition-all bg-white dark:bg-slate-900">
-            返回
-          </button>
-          <button onClick={() => { onOverwrite(); onClose(); }}
-            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-xl shadow-md shadow-red-500/10 transition-all active:scale-95 flex items-center gap-1.5">
-            <Save className="w-3.5 h-3.5" />覆盖写入
-          </button>
         </div>
       </div>
     );
