@@ -276,7 +276,7 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
                     </div>
 
                     {/* Workspace list */}
-                    <div className="max-h-40 overflow-y-auto space-y-1">
+                    <div className="max-h-28 overflow-y-auto space-y-1">
                       {(() => {
                         const filtered = workspaces.filter(w =>
                           w.name.toLowerCase().includes(wsSearch.toLowerCase())

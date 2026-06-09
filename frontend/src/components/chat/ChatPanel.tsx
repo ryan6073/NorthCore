@@ -872,7 +872,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                   </div>
 
                   {/* Workspace List Container */}
-                  <div className="flex-grow overflow-y-auto max-h-48 pr-0.5 space-y-1">
+                  <div className="flex-grow overflow-y-auto max-h-28 pr-0.5 space-y-1">
                     {/* Unbind option */}
                     <button
                       type="button"
