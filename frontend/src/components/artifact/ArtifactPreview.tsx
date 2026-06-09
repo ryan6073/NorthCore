@@ -695,13 +695,6 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     return currentVersion.content;
   }, [currentArtifact, currentVersion]);
 
-  // 内联多文件 HTML 资源：HTML 使用当前卡片的版本，CSS/JS/图片使用最新版本
-  const previewHtml = useMemo(() => {
-    if (!currentArtifact || currentArtifact.type !== 'html' || !currentVersion?.content) return undefined;
-    // 优先使用 integratedHtml（useEffect 中设置的异步版本），否则即时内联
-    return integratedHtml || buildIntegratedHtml(currentVersion.content);
-  }, [currentArtifact, currentVersion?.content, currentVersion?.version, allArtifacts, artifactVersions, integratedHtml]);
-
   if (!currentArtifact) {
     return (
       <div className="h-full w-full flex items-center justify-center text-center p-4 bg-white dark:bg-slate-900">
@@ -901,7 +894,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
     if (currentArtifact.type === 'html') {
       if (activeTab === 'preview') {
-        // previewHtml 由顶层 useMemo 提供
+        const displayHtml = integratedHtml || buildIntegratedHtml(currentVersion?.content || '');
         return (
           <div className="h-full w-full p-4 overflow-hidden flex flex-col bg-[#fafbfb] dark:bg-slate-950">
             {/* Browser Header Bar */}
@@ -917,14 +910,14 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
             </div>
             {/* Browser Content */}
             <div className="flex-1 min-h-0 border-l border-r border-b border-slate-200 dark:border-slate-800 rounded-b-xl bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
-              {(isPreviewLoading || (!previewHtml && !currentVersion)) ? (
+              {(!displayHtml && !currentVersion) ? (
                 <div className="flex items-center justify-center h-full text-slate-400 text-xs gap-2">
                   <RefreshCw className="w-4 h-4 animate-spin" /> 加载中...
                 </div>
               ) : (
                 <iframe
                   key={`html-preview-${currentVersion?.version || 1}-${currentArtifact?.id}`}
-                  srcDoc={previewHtml || currentVersion?.content || ''}
+                  srcDoc={displayHtml || currentVersion?.content || ''}
                   className="w-full h-full bg-white"
                   title="HTML Preview"
                   sandbox="allow-scripts allow-same-origin"
