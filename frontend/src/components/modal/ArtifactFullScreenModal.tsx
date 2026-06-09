@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { Artifact, ArtifactVersion } from '@/types';
 import { X, Copy, FileCode, FileText, Globe, GitCompare, RefreshCw, Edit3, Save, Network, Presentation } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
+import hljs from 'highlight.js';
 import CodeDiffViewer from '../artifact/CodeDiffViewer';
 import CodeEditorContainer from '../artifact/CodeEditorContainer';
 import DocPreview from '../artifact/DocPreview';
@@ -552,24 +553,59 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
 
   if (!open || !artifact) return null;
 
+  const getCodeLanguage = (): string => {
+    if (!artifact) return 'plaintext';
+    const name = artifact.title || '';
+    const ext = name.split('.').pop()?.toLowerCase();
+    const extMap: Record<string, string> = {
+      js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
+      html: 'html', css: 'css', scss: 'scss', less: 'less',
+      py: 'python', rb: 'ruby', java: 'java', go: 'go', rs: 'rust',
+      c: 'c', cpp: 'cpp', cs: 'csharp', swift: 'swift', kt: 'kotlin',
+      php: 'php', sh: 'bash', bash: 'bash', zsh: 'bash',
+      json: 'json', xml: 'xml', yaml: 'yaml', yml: 'yaml', md: 'markdown',
+      sql: 'sql', graphql: 'graphql', dockerfile: 'dockerfile',
+    };
+    if (ext && extMap[ext]) return extMap[ext];
+    const nameMap: Record<string, string> = {
+      python: 'python', javascript: 'javascript', typescript: 'typescript',
+      java: 'java', go: 'go', rust: 'rust', cpp: 'cpp', csharp: 'csharp',
+      ruby: 'ruby', php: 'php', swift: 'swift', kotlin: 'kotlin',
+      bash: 'bash', shell: 'bash', sql: 'sql', html: 'html', css: 'css',
+      json: 'json', xml: 'xml', yaml: 'yaml', markdown: 'markdown',
+    };
+    const lower = name.toLowerCase();
+    for (const [keyword, lang] of Object.entries(nameMap)) {
+      if (lower.includes(keyword)) return lang;
+    }
+    return 'plaintext';
+  };
+
   const renderCodeLines = (content: string) => {
-    const lines = content.split('\n');
+    const lang = getCodeLanguage();
+    let highlighted: string;
+    try {
+      highlighted = hljs.highlight(content, { language: lang, ignoreIllegals: true }).value;
+    } catch {
+      highlighted = content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    const lines = highlighted.split('\n');
     return (
       <pre className="bg-slate-900 p-4 rounded-xl text-sm text-slate-100 font-mono leading-relaxed border border-slate-800 flex flex-col gap-0.5 overflow-x-auto whitespace-pre-wrap break-words">
         {lines.map((line, idx) => {
           const lineNum = idx + 1;
           return (
-            <div 
-              key={lineNum} 
+            <div
+              key={lineNum}
               data-line-number={lineNum}
               className="flex hover:bg-slate-850 px-2 py-0.5 rounded transition-all duration-150 group relative"
             >
               <span className="w-10 select-none text-slate-500 text-right pr-4 font-mono border-r border-slate-800 mr-4 flex-shrink-0">
                 {lineNum}
               </span>
-              <span className="flex-1 whitespace-pre-wrap font-mono">
-                {line || ' '}
-              </span>
+              <span className="flex-1 whitespace-pre-wrap font-mono"
+                dangerouslySetInnerHTML={{ __html: line || ' ' }}
+              />
             </div>
           );
         })}
