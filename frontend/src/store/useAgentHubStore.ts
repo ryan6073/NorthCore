@@ -3096,7 +3096,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     if (!useMockMode) {
       try {
         // 注意：不 strip status，以允许通过 saveAgent 更新 status 字段
-        const { id, ownerUserId, owner_user_id, conversationId, lastUsedAt, ...updatePayload } = updatedAgent as any;
+        const { id, ownerUserId, owner_user_id, conversationId, lastUsedAt, contactConversationId, ...updatePayload } = updatedAgent as any;
         const res = await updateAgentDetail(updatedAgent.id, updatePayload);
         if (res.code === 0) {
           const updated = res.data;
