@@ -313,10 +313,17 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
   // Inline multi-file HTML assets (CSS, JS, Images) in frontend, ensure 100% matches user's latest edits
   /** 取 artifact 版本列表中版本号最大的版本（最新版本） */
-  const getLatestVersion = (artifactId: string): ArtifactVersion | undefined => {
+  const getLatestContent = (artifactId: string): string | undefined => {
+    // 1. 优先从 allArtifacts 中取 content（后端 GET /workspaces/{id}/artifacts 直接返回了文件内容）
+    const artifact = allArtifacts?.find((a: any) => a.id === artifactId || a.artifactId === artifactId);
+    const a = artifact as any;
+    if (a?.content) return a.content;
+    if (a?.currentVersion?.content) return a.currentVersion.content;
+    // 2. 回退到 artifactVersions 缓存
     const versions = artifactVersions[artifactId];
     if (!versions || versions.length === 0) return undefined;
-    return versions.reduce((max, v) => (v.version > max.version ? v : max), versions[0]);
+    const latest = versions.reduce((max, v) => (v.version > max.version ? v : max), versions[0]);
+    return latest?.content;
   };
 
   const buildIntegratedHtml = (baseHtml: string): string => {
@@ -353,15 +360,15 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
         a.title.toLowerCase().endsWith('/' + filePath.toLowerCase()) ||
         a.title.toLowerCase().split('/').pop() === filePath.toLowerCase().split('/').pop()
       );
-      // CSS 和 JS 使用工作区中的最新版本
-      const cssVersion = cssArtifact && getLatestVersion(cssArtifact.id);
-      if (cssVersion?.content) {
-        result = result.replace(cssMatch[0], `<style>${cssVersion.content}</style>`);
+      // CSS 使用工作区中的最新内容（优先 allArtifacts.content，回退 artifactVersions）
+      const cssContent = cssArtifact && getLatestContent(cssArtifact.id);
+      if (cssContent) {
+        result = result.replace(cssMatch[0], `<style>${cssContent}</style>`);
       }
     }
 
     // Inline JS files: replace <script src="xxx.js"></script> with <script>...</script>
-    // 使用工作区中 JS 的最新版本（不受 HTML 卡片版本影响）
+    // 使用工作区中 JS 的最新内容
     const scriptSrcRegex = /<script[^>]*src=["']([^"']+\.js)["'][^>]*>\s*<\/script>/gi;
     let jsMatch;
     while ((jsMatch = scriptSrcRegex.exec(result)) !== null) {
@@ -373,15 +380,15 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
         a.title.toLowerCase().endsWith('/' + filePath.toLowerCase()) ||
         a.title.toLowerCase().split('/').pop() === filePath.toLowerCase().split('/').pop()
       );
-      // CSS 和 JS 使用工作区中的最新版本
-      const jsVersion = jsArtifact && getLatestVersion(jsArtifact.id);
-      if (jsVersion?.content) {
-        result = result.replace(jsMatch[0], `<script>${jsVersion.content}</script>`);
+      // JS 使用工作区中的最新内容
+      const jsContent = jsArtifact && getLatestContent(jsArtifact.id);
+      if (jsContent) {
+        result = result.replace(jsMatch[0], `<script>${jsContent}</script>`);
       }
     }
 
     // Inline Images: replace image src with base64 data URI
-    // 图片使用工作区中的最新版本（不受 HTML 卡片版本影响）
+    // 图片使用工作区中的最新内容
     const imgRegex = /<img[^>]*src=["']([^"']+\.(png|jpg|jpeg|gif|svg|webp|ico))["'][^>]*>/gi;
     let imgMatch;
     while ((imgMatch = imgRegex.exec(result)) !== null) {
@@ -393,9 +400,9 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
         a.title.toLowerCase().endsWith('/' + filePath.toLowerCase()) ||
         a.title.toLowerCase().split('/').pop() === filePath.toLowerCase().split('/').pop()
       );
-      // 图片使用工作区中的最新版本
-      const imgVersion = imgArtifact && getLatestVersion(imgArtifact.id);
-      if (imgVersion?.content) {
+      // 图片使用工作区中的最新内容
+      const imgContent = imgArtifact && getLatestContent(imgArtifact.id);
+      if (imgContent) {
         let mimeType = 'image/png';
         const ext = filePath.split('.').pop()?.toLowerCase();
         if (ext === 'svg') mimeType = 'image/svg+xml';
@@ -404,9 +411,9 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
         else if (ext === 'webp') mimeType = 'image/webp';
         else if (ext === 'ico') mimeType = 'image/x-icon';
 
-        const base64Content = imgVersion.content.startsWith('data:')
-          ? imgVersion.content
-          : `data:${mimeType};base64,${imgVersion.content}`;
+        const base64Content = imgContent.startsWith('data:')
+          ? imgContent
+          : `data:${mimeType};base64,${imgContent}`;
 
         result = result.replace(imgMatch[1], base64Content);
       }

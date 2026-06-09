@@ -342,17 +342,22 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
     }
   }, [open, artifact?.id, artifact?.type, activeTab, currentVersion?.version, currentVersion?.content]);
 
-  /** 取 artifact 版本列表中版本号最大的版本（最新版本） */
-  const getLatestVersion = (artifactId: string): ArtifactVersion | undefined => {
+  /** 取 artifact 的最新内容：优先 allArtifacts.content（后端直接返回），回退 artifactVersions */
+  const getLatestContent = (artifactId: string): string | undefined => {
+    const artifact = allArtifacts?.find((a: any) => a.id === artifactId || a.artifactId === artifactId);
+    const a = artifact as any;
+    if (a?.content) return a.content;
+    if (a?.currentVersion?.content) return a.currentVersion.content;
     const versions = artifactVersions[artifactId];
     if (!versions || versions.length === 0) return undefined;
-    return versions.reduce((max, v) => (v.version > max.version ? v : max), versions[0]);
+    const latest = versions.reduce((max, v) => (v.version > max.version ? v : max), versions[0]);
+    return latest?.content;
   };
 
   // Inline multi-file HTML assets (CSS, JS, Images) in frontend, ensure 100% matches user's latest edits
   const buildIntegratedHtml = (baseHtml: string): string => {
     let result = baseHtml;
-    
+
     const resolvePath = (relPath: string) => {
       if (!artifact) return relPath;
       const baseParts = artifact.title.replace(/\\/g, '/').split('/');
@@ -382,10 +387,10 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
         a.title.toLowerCase().endsWith('/' + filePath.toLowerCase()) ||
         a.title.toLowerCase().split('/').pop() === filePath.toLowerCase().split('/').pop()
       );
-      // CSS 和 JS 使用工作区中的最新版本
-      const cssVersion = cssArtifact && getLatestVersion(cssArtifact.id);
-      if (cssVersion?.content) {
-        result = result.replace(cssMatch[0], `<style>${cssVersion.content}</style>`);
+      // CSS 使用工作区中的最新内容
+      const cssContent = cssArtifact && getLatestContent(cssArtifact.id);
+      if (cssContent) {
+        result = result.replace(cssMatch[0], `<style>${cssContent}</style>`);
       }
     }
 
@@ -401,10 +406,10 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
         a.title.toLowerCase().endsWith('/' + filePath.toLowerCase()) ||
         a.title.toLowerCase().split('/').pop() === filePath.toLowerCase().split('/').pop()
       );
-      // CSS 和 JS 使用工作区中的最新版本
-      const jsVersion = jsArtifact && getLatestVersion(jsArtifact.id);
-      if (jsVersion?.content) {
-        result = result.replace(jsMatch[0], `<script>${jsVersion.content}</script>`);
+      // JS 使用工作区中的最新内容
+      const jsContent = jsArtifact && getLatestContent(jsArtifact.id);
+      if (jsContent) {
+        result = result.replace(jsMatch[0], `<script>${jsContent}</script>`);
       }
     }
 
@@ -420,9 +425,9 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
         a.title.toLowerCase().endsWith('/' + filePath.toLowerCase()) ||
         a.title.toLowerCase().split('/').pop() === filePath.toLowerCase().split('/').pop()
       );
-      // 图片使用工作区中的最新版本
-      const imgVersion = imgArtifact && getLatestVersion(imgArtifact.id);
-      if (imgVersion?.content) {
+      // 图片使用工作区中的最新内容
+      const imgContent = imgArtifact && getLatestContent(imgArtifact.id);
+      if (imgContent) {
         let mimeType = 'image/png';
         const ext = filePath.split('.').pop()?.toLowerCase();
         if (ext === 'svg') mimeType = 'image/svg+xml';
@@ -431,9 +436,9 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
         else if (ext === 'webp') mimeType = 'image/webp';
         else if (ext === 'ico') mimeType = 'image/x-icon';
 
-        const base64Content = imgVersion.content.startsWith('data:') 
-          ? imgVersion.content 
-          : `data:${mimeType};base64,${imgVersion.content}`;
+        const base64Content = imgContent.startsWith('data:') 
+          ? imgContent 
+          : `data:${mimeType};base64,${imgContent}`;
         
         result = result.replace(imgMatch[1], base64Content);
       }
