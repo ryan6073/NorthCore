@@ -99,7 +99,7 @@ const ConflictResolveModal: React.FC<ConflictResolveModalProps> = ({
         {/* Body: diff content or conflict info */}
         <div className="flex-1 min-h-0 overflow-auto">
           {showDiffMode ? (
-            <div className="h-full p-3" style={{ minHeight: '400px' }}>
+            <div className="h-full p-3" style={{ minHeight: '250px' }}>
               <CodeDiffViewer oldValue={localContent} newValue={artifactContent} splitView={splitView} />
             </div>
           ) : (
