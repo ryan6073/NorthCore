@@ -223,7 +223,6 @@ export const LoginView: React.FC = () => {
                 <span className="text-[10px] text-slate-500 select-none">
                   &nbsp;
                 </span>
-              )
               )}
             </div>
             <div className="relative">
