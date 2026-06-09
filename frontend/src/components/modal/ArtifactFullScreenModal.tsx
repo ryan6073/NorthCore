@@ -342,6 +342,13 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
     }
   }, [open, artifact?.id, artifact?.type, activeTab, currentVersion?.version, currentVersion?.content]);
 
+  /** 取 artifact 版本列表中版本号最大的版本（最新版本） */
+  const getLatestVersion = (artifactId: string): ArtifactVersion | undefined => {
+    const versions = artifactVersions[artifactId];
+    if (!versions || versions.length === 0) return undefined;
+    return versions.reduce((max, v) => (v.version > max.version ? v : max), versions[0]);
+  };
+
   // Inline multi-file HTML assets (CSS, JS, Images) in frontend, ensure 100% matches user's latest edits
   const buildIntegratedHtml = (baseHtml: string): string => {
     let result = baseHtml;
@@ -369,29 +376,33 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
     while ((cssMatch = cssLinkRegex.exec(result)) !== null) {
       const filePath = cssMatch[1];
       const targetPath = resolvePath(filePath).toLowerCase();
-      const cssArtifact = allArtifacts?.find((a: any) => 
+      const cssArtifact = allArtifacts?.find((a: any) =>
         a.title.replace(/\\/g, '/').toLowerCase() === targetPath ||
-        a.title.toLowerCase() === filePath.toLowerCase() || 
-        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase())
+        a.title.toLowerCase() === filePath.toLowerCase() ||
+        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase()) ||
+        a.title.toLowerCase().split('/').pop() === filePath.toLowerCase().split('/').pop()
       );
-      const cssVersion = cssArtifact && artifactVersions[cssArtifact.id]?.find(v => v.id === cssArtifact.currentVersionId);
+      // CSS 和 JS 使用工作区中的最新版本
+      const cssVersion = cssArtifact && getLatestVersion(cssArtifact.id);
       if (cssVersion?.content) {
         result = result.replace(cssMatch[0], `<style>${cssVersion.content}</style>`);
       }
     }
-    
+
     // Inline JS files: replace <script src="xxx.js"></script> with <script>...</script>
     const scriptSrcRegex = /<script[^>]*src=["']([^"']+\.js)["'][^>]*>\s*<\/script>/gi;
     let jsMatch;
     while ((jsMatch = scriptSrcRegex.exec(result)) !== null) {
       const filePath = jsMatch[1];
       const targetPath = resolvePath(filePath).toLowerCase();
-      const jsArtifact = allArtifacts?.find((a: any) => 
+      const jsArtifact = allArtifacts?.find((a: any) =>
         a.title.replace(/\\/g, '/').toLowerCase() === targetPath ||
-        a.title.toLowerCase() === filePath.toLowerCase() || 
-        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase())
+        a.title.toLowerCase() === filePath.toLowerCase() ||
+        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase()) ||
+        a.title.toLowerCase().split('/').pop() === filePath.toLowerCase().split('/').pop()
       );
-      const jsVersion = jsArtifact && artifactVersions[jsArtifact.id]?.find(v => v.id === jsArtifact.currentVersionId);
+      // CSS 和 JS 使用工作区中的最新版本
+      const jsVersion = jsArtifact && getLatestVersion(jsArtifact.id);
       if (jsVersion?.content) {
         result = result.replace(jsMatch[0], `<script>${jsVersion.content}</script>`);
       }
@@ -403,12 +414,14 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
     while ((imgMatch = imgRegex.exec(result)) !== null) {
       const filePath = imgMatch[1];
       const targetPath = resolvePath(filePath).toLowerCase();
-      const imgArtifact = allArtifacts?.find((a: any) => 
+      const imgArtifact = allArtifacts?.find((a: any) =>
         a.title.replace(/\\/g, '/').toLowerCase() === targetPath ||
-        a.title.toLowerCase() === filePath.toLowerCase() || 
-        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase())
+        a.title.toLowerCase() === filePath.toLowerCase() ||
+        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase()) ||
+        a.title.toLowerCase().split('/').pop() === filePath.toLowerCase().split('/').pop()
       );
-      const imgVersion = imgArtifact && artifactVersions[imgArtifact.id]?.find(v => v.id === imgArtifact.currentVersionId);
+      // 图片使用工作区中的最新版本
+      const imgVersion = imgArtifact && getLatestVersion(imgArtifact.id);
       if (imgVersion?.content) {
         let mimeType = 'image/png';
         const ext = filePath.split('.').pop()?.toLowerCase();

@@ -350,7 +350,8 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       const cssArtifact = allArtifacts?.find((a: any) =>
         a.title.replace(/\\/g, '/').toLowerCase() === targetPath ||
         a.title.toLowerCase() === filePath.toLowerCase() ||
-        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase())
+        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase()) ||
+        a.title.toLowerCase().split('/').pop() === filePath.toLowerCase().split('/').pop()
       );
       // CSS 和 JS 使用工作区中的最新版本
       const cssVersion = cssArtifact && getLatestVersion(cssArtifact.id);
@@ -369,7 +370,8 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       const jsArtifact = allArtifacts?.find((a: any) =>
         a.title.replace(/\\/g, '/').toLowerCase() === targetPath ||
         a.title.toLowerCase() === filePath.toLowerCase() ||
-        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase())
+        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase()) ||
+        a.title.toLowerCase().split('/').pop() === filePath.toLowerCase().split('/').pop()
       );
       // CSS 和 JS 使用工作区中的最新版本
       const jsVersion = jsArtifact && getLatestVersion(jsArtifact.id);
@@ -388,7 +390,8 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       const imgArtifact = allArtifacts?.find((a: any) =>
         a.title.replace(/\\/g, '/').toLowerCase() === targetPath ||
         a.title.toLowerCase() === filePath.toLowerCase() ||
-        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase())
+        a.title.toLowerCase().endsWith('/' + filePath.toLowerCase()) ||
+        a.title.toLowerCase().split('/').pop() === filePath.toLowerCase().split('/').pop()
       );
       // 图片使用工作区中的最新版本
       const imgVersion = imgArtifact && getLatestVersion(imgArtifact.id);
@@ -894,7 +897,8 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
     if (currentArtifact.type === 'html') {
       if (activeTab === 'preview') {
-        const displayHtml = integratedHtml || buildIntegratedHtml(currentVersion?.content || '');
+        const builtHtml = buildIntegratedHtml(currentVersion?.content || '');
+        const displayHtml = integratedHtml || builtHtml;
         return (
           <div className="h-full w-full p-4 overflow-hidden flex flex-col bg-[#fafbfb] dark:bg-slate-950">
             {/* Browser Header Bar */}
