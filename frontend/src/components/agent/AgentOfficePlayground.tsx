@@ -55,11 +55,11 @@ const HorseAgent: React.FC<{
 
       {/* Shout bubble */}
       {shout && (
-        <div className="absolute -top-7 left-1/2 -translate-x-1/2 z-20 animate-shout-in whitespace-nowrap">
-          <div className="bg-yellow-100 dark:bg-yellow-900/80 border border-yellow-300 dark:border-yellow-700 text-[7px] font-bold text-yellow-800 dark:text-yellow-200 px-1.5 py-0.5 rounded-lg shadow-lg">
+        <div className="absolute -top-10 left-1/2 -translate-x-1/2 z-[9999] animate-shout-in whitespace-nowrap">
+          <div className="bg-white border-2 border-slate-300 text-[10px] font-bold text-slate-800 px-3 py-1.5 rounded-xl shadow-xl">
             💬 {shout}
           </div>
-          <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-yellow-100 dark:bg-yellow-900/80 border-r border-b border-yellow-300 dark:border-yellow-700 rotate-45" />
+          <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white border-r-2 border-b-2 border-slate-300 rotate-45" />
         </div>
       )}
 
@@ -89,12 +89,12 @@ const HorseAgent: React.FC<{
 
         {/* Tool call status icon for working agents */}
         {activityType === 'work' && toolCallStatus === 'success' && (
-          <span className="absolute -top-3 -left-3 text-xs animate-office-bounce select-none z-20">
+          <span className="absolute -top-3 -left-3 text-xs animate-office-bounce select-none z-[9999]">
             🎵
           </span>
         )}
         {activityType === 'work' && toolCallStatus === 'failed' && (
-          <span className="absolute -top-3 -left-3 text-xs animate-office-shake select-none z-20">
+          <span className="absolute -top-3 -left-3 text-xs animate-office-shake select-none z-[9999]">
             😡
           </span>
         )}
@@ -119,11 +119,11 @@ const HorseAgentV2: React.FC<{
 
       {/* Shout bubble */}
       {shout && (
-        <div className="absolute -top-7 left-1/2 -translate-x-1/2 z-20 animate-shout-in whitespace-nowrap">
-          <div className="bg-yellow-100 dark:bg-yellow-900/80 border border-yellow-300 dark:border-yellow-700 text-[7px] font-bold text-yellow-800 dark:text-yellow-200 px-1.5 py-0.5 rounded-lg shadow-lg">
+        <div className="absolute -top-10 left-1/2 -translate-x-1/2 z-[9999] animate-shout-in whitespace-nowrap">
+          <div className="bg-white border-2 border-slate-300 text-[10px] font-bold text-slate-800 px-3 py-1.5 rounded-xl shadow-xl">
             💬 {shout}
           </div>
-          <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-yellow-100 dark:bg-yellow-900/80 border-r border-b border-yellow-300 dark:border-yellow-700 rotate-45" />
+          <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white border-r-2 border-b-2 border-slate-300 rotate-45" />
         </div>
       )}
 
@@ -177,7 +177,7 @@ const HorseAgentV2: React.FC<{
         )}
 
         {activityType === 'sleep' && (
-          <div className="absolute bottom-0 w-14 h-7 bg-indigo-100/90 dark:bg-indigo-950/40 rounded-lg border border-indigo-200/50 dark:border-indigo-900/30 flex items-center p-0.5 z-0 transition-opacity duration-300">
+          <div className="absolute bottom-0 w-14 h-7 bg-indigo-100/90 dark:bg-indigo-950/40 rounded-xl border border-indigo-200/50 dark:border-indigo-900/30 flex items-center p-0.5 z-0 transition-opacity duration-300">
             {/* Pillow */}
             <div className="w-2.5 h-4 bg-white dark:bg-slate-800 rounded-sm shadow-xs border border-slate-200/50 dark:border-slate-900/50 flex-shrink-0"></div>
             {/* Sleeping sheet lines */}
@@ -228,12 +228,12 @@ const HorseAgentV2: React.FC<{
 
         {/* Tool call status icon for working agents */}
         {activityType === 'work' && toolCallStatus === 'success' && (
-          <span className="absolute -top-1 -left-1 text-xs animate-office-bounce select-none z-20">
+          <span className="absolute -top-1 -left-1 text-xs animate-office-bounce select-none z-[9999]">
             🎵
           </span>
         )}
         {activityType === 'work' && toolCallStatus === 'failed' && (
-          <span className="absolute -top-1 -left-1 text-xs animate-office-shake select-none z-20">
+          <span className="absolute -top-1 -left-1 text-xs animate-office-shake select-none z-[9999]">
             😡
           </span>
         )}
@@ -303,8 +303,14 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
   }, [leisureAgents]);
 
   // Interval to increment timer, switch activities, and trigger shouts
+  // 使用 ref 追踪最新 leisureStates 避免闭包陈旧值问题
+  const leisureStatesRef = React.useRef(leisureStates);
+  leisureStatesRef.current = leisureStates;
+
   React.useEffect(() => {
     const timer = setInterval(() => {
+      let typeChanges: string[] = [];
+
       setLeisureStates(prev => {
         const next = { ...prev };
         let changed = false;
@@ -324,6 +330,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
               type: newType,
               seconds: 0
             };
+            typeChanges.push(id);
           } else {
             next[id] = {
               ...state,
@@ -336,17 +343,27 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
         return changed ? next : prev;
       });
 
-      // Random shouts for leisure agents
+      // 状态切换的 Agent 立即清除喊话
+      if (typeChanges.length > 0) {
+        setShouts(prev => {
+          const next = { ...prev };
+          typeChanges.forEach(id => { delete next[id]; });
+          return next;
+        });
+      }
+
+      // Random shouts for leisure agents（使用 ref 获取最新状态）
+      const currentStates = leisureStatesRef.current;
       setShouts(prev => {
         const next = { ...prev };
         let changed = false;
 
         leisureAgents.forEach(agent => {
-          const state = leisureStates[agent.id];
+          const state = currentStates[agent.id];
           if (!state) return;
 
-          // 16% chance per second to shout (~6s interval)
-          if (Math.random() < 0.16) {
+          // 16% chance per second to shout (~6s interval), only gym and game
+          if (state.type !== 'sleep' && Math.random() < 0.16) {
             const shoutsList = state.type === 'gym' ? GYM_SHOUTS : GAME_SHOUTS;
             const shout = shoutsList[Math.floor(Math.random() * shoutsList.length)];
             if (next[agent.id] !== shout) {
@@ -356,20 +373,12 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
           }
         });
 
-        // Clear shouts after 3 seconds
-        Object.keys(next).forEach(id => {
-          if (next[id]) {
-            // Existing shout - clear it after timeout
-            // We handle this with a separate interval below
-          }
-        });
-
         return changed ? next : prev;
       });
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [leisureAgents, leisureStates]);
+  }, [leisureAgents]);
 
   // Separate interval to clear shouts after 5 seconds
   React.useEffect(() => {
@@ -519,7 +528,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
             : '待命巡检';
       const seconds = isWorking ? 0 : (leisureState?.seconds || 0);
       return (
-        <div key={agent.id} className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-lg bg-white/85 dark:bg-slate-950/45 border border-slate-200/80 dark:border-slate-800/80 group relative" style={{ overflow: 'visible' }}>
+        <div key={agent.id} className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-xl bg-white/85 dark:bg-slate-950/45 border border-slate-200/80 dark:border-slate-800/80 group relative" style={{ overflow: 'visible' }}>
           <div className="flex-shrink-0">
             {styleMode === 'emoji' ? (
               <HorseAgent agent={agent} activityType={activityType} showNameBadge={false} toolCallStatus={agentToolCallStatus[agent.id]} shout={shouts[agent.id]} />
@@ -530,15 +539,15 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
           <div className="flex flex-col leading-tight">
             <span className="text-[9px] font-semibold text-slate-700 dark:text-slate-300">{agent.name}</span>
             <div className="flex items-center gap-1">
-              <span className={`text-[7px] font-medium ${isWorking ? 'text-indigo-500' : 'text-emerald-500'}`}>{activityLabel}</span>
+              <span className={`text-[10px] font-medium ${isWorking ? 'text-indigo-500' : 'text-emerald-500'}`}>{activityLabel}</span>
               {isWorking ? (
-                <span className="text-[7px] text-indigo-400/70 font-mono">—</span>
+                <span className="text-[10px] text-indigo-400/70 font-mono">—</span>
               ) : (
-                <span className="text-[7px] text-slate-400 font-mono">{seconds}s</span>
+                <span className="text-[10px] text-slate-400 font-mono">{seconds}s</span>
               )}
             </div>
           </div>
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-full mt-[-4px] hidden group-hover:flex z-[9999] bg-slate-900 text-white text-[9px] px-2 py-1 rounded shadow-lg whitespace-nowrap pointer-events-none">
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-full mt-[-4px] hidden group-hover:flex z-[9999] bg-slate-900 text-white text-[9px] px-2 py-1 rounded shadow-xl whitespace-nowrap pointer-events-none">
             {agent.name}: {isWorking ? '正在处理当前任务' : `当前${activityLabel}`}
           </div>
         </div>
@@ -599,14 +608,14 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
         <div className="min-w-0 flex items-center gap-3">
           <button
             onClick={handleToggle}
-            className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-650 dark:hover:text-slate-200 transition-colors"
+            className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-slate-400 dark:text-slate-500 hover:text-slate-650 dark:hover:text-slate-200 transition-colors"
             title="收起办公室"
           >
             <ChevronDown className="w-3.5 h-3.5" />
           </button>
           <div>
             <h3 className="text-sm font-extrabold text-slate-850 dark:text-slate-100 flex items-center gap-2 font-sans tracking-tight">
-              <span className="w-7 h-7 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/20">
+              <span className="w-7 h-7 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-xl shadow-indigo-500/20">
                 <Monitor className="w-3.5 h-3.5" />
               </span>
               智能体办公室
@@ -628,7 +637,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
           {onClose && (
             <button
               onClick={onClose}
-              className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-650 dark:hover:text-slate-200 transition-colors"
+              className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-slate-400 dark:text-slate-500 hover:text-slate-650 dark:hover:text-slate-200 transition-colors"
               title="隐藏办公室"
             >
               <X className="w-3 h-3" />
@@ -667,7 +676,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
                       ) : (
                         <HorseAgentV2 agent={assignedAgent} activityType="work" toolCallStatus={agentToolCallStatus[assignedAgent.id]} shout={shouts[assignedAgent.id]} />
                       )}
-                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-30 bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-30 bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded shadow-xl whitespace-nowrap">
                         {assignedAgent.name}: 正在处理当前任务
                       </div>
                     </div>
@@ -724,14 +733,14 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
                     </div>
 
                     <div className="flex flex-col pr-1 justify-center">
-                      <span className={`text-[8px] px-1.5 py-0.5 rounded font-semibold flex items-center gap-1.5 ${activity.color}`}>
+                      <span className={`text-[8px] px-3 py-1.5 rounded font-semibold flex items-center gap-1.5 ${activity.color}`}>
                         <ActivityIcon className="w-2.5 h-2.5" />
                         <span>{activity.label}</span>
-                        <span className="text-[7px] opacity-75 font-mono bg-white/50 dark:bg-black/25 px-1 rounded-sm">{state.seconds}s</span>
+                        <span className="text-[10px] opacity-75 font-mono bg-white/50 dark:bg-black/25 px-1 rounded-sm">{state.seconds}s</span>
                       </span>
                     </div>
 
-                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-30 bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-30 bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded shadow-xl whitespace-nowrap">
                       {agent.name} 当前{activity.label}，已持续 {state.seconds} 秒
                       {shouts[agent.id] && <> — 💬 {shouts[agent.id]}</>}
                     </div>
