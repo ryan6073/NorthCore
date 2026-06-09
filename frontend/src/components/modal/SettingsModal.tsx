@@ -47,7 +47,7 @@ export const SettingsModal: React.FC = () => {
   const loadLocalAgentLogs = useAgentHubStore(state => state.loadLocalAgentLogs);
   const localAgentLoading = useAgentHubStore(state => state.localAgentLoading);
 
-  const [activeTab, setActiveTab] = useState<'profile' | 'model' | 'permissions' | 'notifications' | 'agents' | 'system'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'model' | 'notifications' | 'system'>('profile');
   
   // Model sub-tab state
   const [modelSubTab, setModelSubTab] = useState<'configs' | 'credentials' | 'providers'>('configs');
@@ -413,17 +413,6 @@ export const SettingsModal: React.FC = () => {
                 <span>模型参数</span>
               </button>
               <button
-                onClick={() => setActiveTab('permissions')}
-                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                  activeTab === 'permissions'
-                    ? 'bg-violet-600 text-white shadow-md shadow-violet-500/10'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-slate-100'
-                }`}
-              >
-                <Folder className="w-4 h-4" />
-                <span>文件权限</span>
-              </button>
-              <button
                 onClick={() => setActiveTab('notifications')}
                 className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   activeTab === 'notifications'
@@ -433,17 +422,6 @@ export const SettingsModal: React.FC = () => {
               >
                 <Bell className="w-4 h-4" />
                 <span>系统通知</span>
-              </button>
-              <button
-                onClick={() => setActiveTab('agents')}
-                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                  activeTab === 'agents'
-                    ? 'bg-violet-600 text-white shadow-md shadow-violet-500/10'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-slate-100'
-                }`}
-              >
-                <Terminal className="w-4 h-4" />
-                <span>本地 Agent 进程</span>
               </button>
               <button
                 onClick={() => setActiveTab('system')}
@@ -1005,102 +983,7 @@ export const SettingsModal: React.FC = () => {
           )}
 
           {/* TAB 3: FILE PERMISSIONS */}
-          {activeTab === 'permissions' && (
-            <form onSubmit={handleSavePermissions} className="space-y-6">
-              <div>
-                <h2 className="text-lg font-bold text-slate-800 dark:text-white">本地文件权限与限制</h2>
-                <p className="text-slate-400 dark:text-slate-500 text-xs mt-0.5">控制智能体能够对关联项目目录进行哪些本地读写操作。</p>
-              </div>
-
-              {/* Toggles */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-2xl">
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-850 dark:text-slate-150">允许智能体读取本地项目文件</h4>
-                    <p className="text-[10px] text-slate-400 mt-0.5">启用后，智能体将具有只读访问权限来分析工作区中的代码和文档。</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setAllowRead(!allowRead)}
-                    className={`w-11 h-6 rounded-full p-0.5 transition-colors outline-none flex items-center ${
-                      allowRead ? 'bg-violet-600' : 'bg-slate-300 dark:bg-slate-800'
-                    }`}
-                  >
-                    <div className={`bg-white w-5 h-5 rounded-full shadow transform transition-transform duration-200 ${allowRead ? 'translate-x-5' : 'translate-x-0'}`} />
-                  </button>
-                </div>
-
-                <div className="flex items-center justify-between p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-2xl">
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-850 dark:text-slate-150">允许智能体写入本地文件</h4>
-                    <p className="text-[10px] text-slate-400 mt-0.5">启用后，您可以一键将智能体生成的 Artifact 覆盖或保存到本地项目。</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setAllowWrite(!allowWrite)}
-                    className={`w-11 h-6 rounded-full p-0.5 transition-colors outline-none flex items-center ${
-                      allowWrite ? 'bg-violet-600' : 'bg-slate-300 dark:bg-slate-800'
-                    }`}
-                  >
-                    <div className={`bg-white w-5 h-5 rounded-full shadow transform transition-transform duration-200 ${allowWrite ? 'translate-x-5' : 'translate-x-0'}`} />
-                  </button>
-                </div>
-
-                <div className="flex items-center justify-between p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-2xl">
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-850 dark:text-slate-150">写入本地文件前进行二次确认</h4>
-                    <p className="text-[10px] text-slate-400 mt-0.5">当覆盖已有文件或新建文件时，需要用户在 UI 弹窗进行手动授权。</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmBeforeWrite(!confirmBeforeWrite)}
-                    className={`w-11 h-6 rounded-full p-0.5 transition-colors outline-none flex items-center ${
-                      confirmBeforeWrite ? 'bg-violet-600' : 'bg-slate-300 dark:bg-slate-800'
-                    }`}
-                  >
-                    <div className={`bg-white w-5 h-5 rounded-full shadow transform transition-transform duration-200 ${confirmBeforeWrite ? 'translate-x-5' : 'translate-x-0'}`} />
-                  </button>
-                </div>
-
-                <div className="flex items-center justify-between p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-2xl">
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-850 dark:text-slate-150">默认自动覆盖冲突文件</h4>
-                    <p className="text-[10px] text-slate-400 mt-0.5">当写入路径存在重名文件时，自动进行代码覆盖，跳过冲突弹窗提示（不建议开启）。</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setAutoOverwrite(!autoOverwrite)}
-                    className={`w-11 h-6 rounded-full p-0.5 transition-colors outline-none flex items-center ${
-                      autoOverwrite ? 'bg-violet-600' : 'bg-slate-300 dark:bg-slate-800'
-                    }`}
-                  >
-                    <div className={`bg-white w-5 h-5 rounded-full shadow transform transition-transform duration-200 ${autoOverwrite ? 'translate-x-5' : 'translate-x-0'}`} />
-                  </button>
-                </div>
-              </div>
-
-              {/* Default save directory */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">默认 Artifact 保存子目录</label>
-                <input
-                  type="text"
-                  value={defaultSaveDir}
-                  onChange={(e) => setDefaultSaveDir(e.target.value)}
-                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-600 outline-none focus:border-violet-600 dark:focus:border-violet-500 transition-colors font-mono"
-                  placeholder="e.g. src/components"
-                />
-              </div>
-
-              <div className="pt-2">
-                <button
-                  type="submit"
-                  className="bg-violet-600 hover:bg-violet-500 text-white font-semibold text-xs px-4 py-2.5 rounded-xl transition-colors shadow-lg shadow-violet-500/10 active:scale-95"
-                >
-                  保存权限设置
-                </button>
-              </div>
-            </form>
-          )}
+          {false && null}
 
           {/* TAB 4: SYSTEM NOTIFICATIONS */}
           {activeTab === 'notifications' && (
@@ -1188,183 +1071,6 @@ export const SettingsModal: React.FC = () => {
           )}
 
           {/* TAB 5: LOCAL AGENT PROCESSES CONTROL */}
-          {activeTab === 'agents' && (
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-lg font-bold text-slate-800 dark:text-white">本地 Agent 进程管理</h2>
-                <p className="text-slate-400 dark:text-slate-500 text-xs mt-0.5">管理运行在您本地系统的 AI 模型及文件工具后台服务进程。</p>
-              </div>
-
-              {/* Selector */}
-              <div className="flex gap-2">
-                {localAgentProcesses.map(a => {
-                  const isSelected = selectedAgentId === a.id;
-                  const getStatusColor = (status: string) => {
-                    if (status === 'running') return 'bg-emerald-500';
-                    if (status === 'starting' || status === 'restarting') return 'bg-amber-500 animate-pulse';
-                    if (status === 'error') return 'bg-red-500';
-                    return 'bg-slate-400';
-                  };
-                  return (
-                    <button
-                      key={a.id}
-                      onClick={() => setSelectedAgentId(a.id)}
-                      className={`flex-1 py-3 px-4 rounded-xl border text-xs font-semibold text-left transition-all relative flex items-center justify-between ${
-                        isSelected
-                          ? 'border-violet-600 bg-violet-50/15 dark:bg-violet-950/20'
-                          : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900/40'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Cpu className="w-4 h-4 text-slate-500" />
-                        <span className={isSelected ? 'text-violet-600 dark:text-violet-400 font-bold' : 'text-slate-700 dark:text-slate-300'}>{a.name}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className={`w-2 h-2 rounded-full ${getStatusColor(a.status)}`} />
-                        <span className="text-[10px] text-slate-400 dark:text-slate-500 font-normal lowercase">{a.status}</span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {selectedAgent ? (
-                <div className="grid grid-cols-3 gap-6 pt-1">
-                  {/* Form fields */}
-                  <form onSubmit={handleSaveAgentProcessSettings} className="col-span-2 space-y-4">
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-slate-700 dark:text-slate-350">启动命令</label>
-                      <input
-                        type="text"
-                        value={agentCommand}
-                        onChange={(e) => setAgentCommand(e.target.value)}
-                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-850 dark:text-slate-200 outline-none focus:border-violet-600 font-mono"
-                        placeholder="e.g. npm run start"
-                        required
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-slate-700 dark:text-slate-350">工作目录</label>
-                      <input
-                        type="text"
-                        value={agentWorkDir}
-                        onChange={(e) => setAgentWorkDir(e.target.value)}
-                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-850 dark:text-slate-200 outline-none focus:border-violet-600 font-mono"
-                        placeholder="Leave blank for project root"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-slate-700 dark:text-slate-350">运行端口 (Port)</label>
-                        <input
-                          type="number"
-                          value={agentPort}
-                          onChange={(e) => setAgentPort(parseInt(e.target.value))}
-                          className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-850 dark:text-slate-200 outline-none"
-                          required
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-slate-700 dark:text-slate-350">日志输出路径</label>
-                        <input
-                          type="text"
-                          value={agentLogPath}
-                          onChange={(e) => setAgentLogPath(e.target.value)}
-                          className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-850 dark:text-slate-200 outline-none font-mono"
-                          placeholder="agent.log"
-                          disabled
-                        />
-                      </div>
-                    </div>
-
-                    <div className="pt-2 flex gap-3">
-                      <button
-                        type="submit"
-                        className="bg-slate-800 hover:bg-slate-750 dark:bg-slate-700 dark:hover:bg-slate-600 text-white font-semibold text-xs px-4 py-2.5 rounded-xl transition-all shadow active:scale-95"
-                      >
-                        保存进程配置
-                      </button>
-                    </div>
-                  </form>
-
-                  {/* Process Status Box */}
-                  <div className="col-span-1 bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-2xl p-4 flex flex-col justify-between">
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-800 dark:text-slate-150 mb-3 uppercase tracking-wider">控制面板</h4>
-                      <div className="space-y-2 text-xs">
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">当前状态:</span>
-                          <span className="font-semibold text-slate-700 dark:text-slate-300 font-mono capitalize">{selectedAgent.status}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">PID 编号:</span>
-                          <span className="font-semibold text-slate-700 dark:text-slate-300 font-mono">{selectedAgent.pid || '无'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">绑定端口:</span>
-                          <span className="font-semibold text-slate-700 dark:text-slate-300 font-mono">{selectedAgent.port}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2 mt-4">
-                      {selectedAgent.status === 'running' ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => stopLocalAgent(selectedAgent.id)}
-                            disabled={localAgentLoading[selectedAgent.id]}
-                            className="w-full py-2 bg-red-650 hover:bg-red-550 disabled:bg-slate-400 text-white font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow active:scale-95 transition-all"
-                          >
-                            <Square className="w-3.5 h-3.5 fill-current" />
-                            停止进程
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => restartLocalAgent(selectedAgent.id)}
-                            disabled={localAgentLoading[selectedAgent.id]}
-                            className="w-full py-2 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-400 text-white font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow active:scale-95 transition-all"
-                          >
-                            <RotateCw className="w-3.5 h-3.5" />
-                            重启进程
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => startLocalAgent(selectedAgent.id)}
-                          disabled={localAgentLoading[selectedAgent.id]}
-                          className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-400 text-white font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow active:scale-95 transition-all"
-                        >
-                          <Play className="w-3.5 h-3.5 fill-current" />
-                          启动进程
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Logs terminal box */}
-                  <div className="col-span-3 space-y-2 mt-2">
-                    <div className="flex items-center gap-1 text-slate-700 dark:text-slate-300">
-                      <ScrollText className="w-4 h-4" />
-                      <span className="text-xs font-bold">运行日志 (Log Terminal)</span>
-                    </div>
-                    <div className="w-full h-32 bg-slate-950 text-slate-300 font-mono text-[10px] p-3 rounded-xl overflow-y-auto leading-relaxed border border-slate-850">
-                      {localAgentLogs[selectedAgent.id] && localAgentLogs[selectedAgent.id].length > 0 ? (
-                        localAgentLogs[selectedAgent.id].map((log, idx) => (
-                          <div key={idx} className="whitespace-pre-wrap">{log}</div>
-                        ))
-                      ) : (
-                        <div className="text-slate-600 italic">No output logs. Start the agent process to see live log output.</div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          )}
-
-          {/* TAB 6: SYSTEM PREFERENCE */}
           {activeTab === 'system' && (
             <div className="space-y-6">
               <div>
