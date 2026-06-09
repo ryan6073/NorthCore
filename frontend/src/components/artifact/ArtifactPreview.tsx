@@ -170,7 +170,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     } else if (res.success) {
       // Success is indicated by desktop notifications/system chat messages in store
     } else {
-      alert(`应用失败: ${res.error || '未知错误'}`);
+      console.warn('[ArtifactPreview] Apply to local error:', res.error);
     }
   };
 
