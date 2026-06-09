@@ -220,9 +220,10 @@ export const LoginView: React.FC = () => {
             <div className="flex justify-between items-center">
               <label className="text-xs font-semibold text-slate-300">密码</label>
               {!isRegister && (
-                <span className="text-[10px] text-slate-500 hover:text-slate-400 cursor-pointer">
-                  提示: 默认管理员为 admin@northcore.ai / admin123
+                <span className="text-[10px] text-slate-500 select-none">
+                  &nbsp;
                 </span>
+              )
               )}
             </div>
             <div className="relative">
