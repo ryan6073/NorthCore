@@ -314,8 +314,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
           const state = next[id];
           const newSeconds = state.seconds + 1;
 
-          const charSum = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-          const threshold = 8 + (charSum % 8);
+          const threshold = 12;
 
           if (newSeconds >= threshold) {
             const remaining = activities.filter(t => t !== state.type);
@@ -345,8 +344,8 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
           const state = leisureStates[agent.id];
           if (!state) return;
 
-          // 3% chance per second to shout
-          if (Math.random() < 0.03) {
+          // 8% chance per second to shout (~12s interval)
+          if (Math.random() < 0.08) {
             const shoutsList = state.type === 'gym' ? GYM_SHOUTS : GAME_SHOUTS;
             const shout = shoutsList[Math.floor(Math.random() * shoutsList.length)];
             if (next[agent.id] !== shout) {
@@ -371,15 +370,15 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
     return () => clearInterval(timer);
   }, [leisureAgents, leisureStates]);
 
-  // Separate interval to clear shouts after 3 seconds
+  // Separate interval to clear shouts after 5 seconds
   React.useEffect(() => {
     const timer = setInterval(() => {
       setShouts(prev => {
         const next = { ...prev };
         let changed = false;
         Object.keys(next).forEach(id => {
-          if (next[id] !== null && Math.random() < 0.33) {
-            // ~33% chance per second to clear (average 3s duration)
+          if (next[id] !== null && Math.random() < 0.20) {
+            // ~20% chance per second to clear (average 5s duration)
             next[id] = null;
             changed = true;
           }
