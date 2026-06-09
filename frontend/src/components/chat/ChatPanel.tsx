@@ -271,15 +271,20 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
     });
   };
 
+  // 监听每条新消息渲染完成，滚动到底部
   useEffect(() => {
     if (!conversationId) return;
 
+    // 历史加载中不滚动（保持位置锚定）
+    if (isLoadingHistoryRef.current) {
+      prevMessagesLengthRef.current = messages.length;
+      return;
+    }
+
     const isSameConv = lastScrolledConversationId.current === conversationId;
 
-    const prevLength = prevMessagesLengthRef.current;
-
-    // 新消息到达时总是尝试滚动到底部（如果用户在底部附近）
-    if (!isLoadingHistoryRef.current && !isSameConv) {
+    // 切换会话：安排初始底部钉住
+    if (!isSameConv) {
       lastScrolledConversationId.current = conversationId;
       justSwitchedRef.current = true;
       ignoreHistoryLoadUntilRef.current = Date.now() + 900;
@@ -288,30 +293,22 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         justSwitchedRef.current = false;
         clearInitialBottomTimers();
       }, 800);
-      return () => {
-        clearTimeout(timer);
-        clearInitialBottomTimers();
-      };
+      prevMessagesLengthRef.current = messages.length;
+      return () => { clearTimeout(timer); clearInitialBottomTimers(); };
     }
 
-    if (!isLoadingHistoryRef.current && justSwitchedRef.current) {
+    // 切换过渡期：继续钉住
+    if (justSwitchedRef.current) {
       scheduleInitialBottomPin();
+      prevMessagesLengthRef.current = messages.length;
       return clearInitialBottomTimers;
     }
 
-    // 不在历史加载且不在切换过渡期时，尝试滚动
-    if (!isLoadingHistoryRef.current && !justSwitchedRef.current && conversationId) {
-      const lastMsg = messages[messages.length - 1];
-      if (messages.length > prevLength && lastMsg) {
-        // 新消息到达：用户消息总是滚动，Agent消息仅在底部时滚动
-        if (lastMsg.role === 'user' || isNearBottom()) {
-          scrollToBottom(lastMsg.role === 'user' ? 'smooth' : 'smooth');
-        }
-      } else if (messages.length === prevLength && lastMsg && isNearBottom()) {
-        // 流式更新：仅在底部时即时滚动
-        scrollToBottom('instant');
-      }
-    }
+    // 正常消息：总是滚动到底部（不判断是否在底部）
+    // 使用 requestAnimationFrame 确保 DOM 已更新
+    requestAnimationFrame(() => {
+      scrollToBottom('smooth');
+    });
 
     prevMessagesLengthRef.current = messages.length;
   }, [
