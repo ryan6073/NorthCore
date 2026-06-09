@@ -278,16 +278,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
 
     const prevLength = prevMessagesLengthRef.current;
 
-    if (isLoadingHistoryRef.current) {
-      prevMessagesLengthRef.current = messages.length;
-      return;
-    }
-
-    if (!isSameConv) {
+    // 新消息到达时总是尝试滚动到底部（如果用户在底部附近）
+    if (!isLoadingHistoryRef.current && !isSameConv) {
       lastScrolledConversationId.current = conversationId;
       justSwitchedRef.current = true;
       ignoreHistoryLoadUntilRef.current = Date.now() + 900;
-      prevMessagesLengthRef.current = messages.length;
       scheduleInitialBottomPin();
       const timer = setTimeout(() => {
         justSwitchedRef.current = false;
@@ -299,33 +294,26 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
       };
     }
 
-    if (justSwitchedRef.current) {
-      prevMessagesLengthRef.current = messages.length;
+    if (!isLoadingHistoryRef.current && justSwitchedRef.current) {
       scheduleInitialBottomPin();
       return clearInitialBottomTimers;
     }
 
-    const lastMsg = messages[messages.length - 1];
-    if (!lastMsg) {
-      prevMessagesLengthRef.current = messages.length;
-      return;
-    }
-
-    if (messages.length > prevLength) {
-      prevMessagesLengthRef.current = messages.length;
-      if (lastMsg.role === 'user') {
-        scrollToBottom('smooth');
-      } else {
-        if (isNearBottom()) {
-          scrollToBottom('smooth');
+    // 不在历史加载且不在切换过渡期时，尝试滚动
+    if (!isLoadingHistoryRef.current && !justSwitchedRef.current && conversationId) {
+      const lastMsg = messages[messages.length - 1];
+      if (messages.length > prevLength && lastMsg) {
+        // 新消息到达：用户消息总是滚动，Agent消息仅在底部时滚动
+        if (lastMsg.role === 'user' || isNearBottom()) {
+          scrollToBottom(lastMsg.role === 'user' ? 'smooth' : 'smooth');
         }
-      }
-    } else {
-      prevMessagesLengthRef.current = messages.length;
-      if (isNearBottom() && lastMsg.role === 'agent' && lastMsg.type !== 'status') {
+      } else if (messages.length === prevLength && lastMsg && isNearBottom()) {
+        // 流式更新：仅在底部时即时滚动
         scrollToBottom('instant');
       }
     }
+
+    prevMessagesLengthRef.current = messages.length;
   }, [
     conversationId,
     messagesLength,
