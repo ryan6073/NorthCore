@@ -5243,8 +5243,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       content: `生成产物 ${originalArt.title}`,
       createdAt: getCurrentFullTime(),
       metadata: {
-        artifactVersion: nextVer,
-        artifactVersionId: newVersionId,
+        artifactVersion: newVersion.version,
+        artifactVersionId: newVersion.id,
       },
     };
 
