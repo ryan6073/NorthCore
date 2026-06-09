@@ -52,7 +52,7 @@ const ConflictResolveModal: React.FC<ConflictResolveModalProps> = ({
   const showDiffMode = showDiff && localContent !== undefined && artifactContent !== undefined;
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4" style={{ isolation: 'isolate' }}>
       {/* 遮罩层，拦截鼠标事件防止穿透到后面的气泡多功能区域 */}
       <div className="absolute inset-0 bg-transparent" onClick={onClose} />
       <div className="bg-white dark:bg-slate-900 border border-lark-border dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden transform transition-all duration-300 animate-scale-in flex flex-col relative transition-colors z-10"
