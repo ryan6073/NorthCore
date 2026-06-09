@@ -41,15 +41,11 @@ const ConflictResolveModal: React.FC<ConflictResolveModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      {/* Overlay backdrop */}
-      <div 
-        className="absolute inset-0 bg-slate-900/60 backdrop-blur-md transition-opacity duration-300 animate-fade-in"
-        onClick={onClose}
-      />
-      
-      {/* Dialog box */}
-      <div className="bg-white dark:bg-slate-900 border border-lark-border dark:border-slate-800 rounded-3xl shadow-2xl max-w-lg w-full z-10 overflow-hidden transform transition-all duration-300 animate-scale-in flex flex-col relative transition-colors">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+      {/* Dialog box — 无遮罩，最高层级 */}
+      <div className="bg-white dark:bg-slate-900 border border-lark-border dark:border-slate-800 rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden transform transition-all duration-300 animate-scale-in flex flex-col relative transition-colors"
+        onClick={(e) => e.stopPropagation()}
+      >
         <button
           onClick={onClose}
           className="absolute right-5 top-5 p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
