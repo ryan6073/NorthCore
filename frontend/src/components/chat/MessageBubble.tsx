@@ -401,16 +401,16 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, agents, onCustom
                 onClick={handleQuoteClick}
                 className={`${
                   isUser
-                    ? 'w-auto self-end max-w-[90%] bg-indigo-500/25 border-l border-white/40 text-white hover:bg-indigo-500/35 hover:border-white/60'
+                    ? 'w-auto self-end max-w-[90%] bg-white/20 backdrop-blur-sm border-l border-white/40 text-slate-100 hover:bg-white/30 hover:border-white/60'
                     : 'w-full self-stretch bg-slate-50 dark:bg-slate-900 border-l-2 border-slate-300 dark:border-slate-700 hover:bg-slate-100/80 dark:hover:bg-slate-850 hover:border-slate-400 dark:hover:border-slate-650'
                 } p-2.5 rounded-r-xl text-[10.5px] mb-1.5 flex flex-col gap-0.5 select-none shadow-sm cursor-pointer transition-all`}
                 title="点击跳转到被引用的原始消息"
               >
                 <div className="flex items-center justify-between">
                   <span className={`font-semibold ${isUser ? 'text-white' : 'text-slate-700 dark:text-slate-350'}`}>回复 @{message.quotedMessage.senderName}：</span>
-                  <span className={`text-[9px] font-medium ${isUser ? 'text-blue-200/90' : 'text-indigo-500 dark:text-indigo-400'}`}>点击跳转</span>
+                  <span className={`text-[9px] font-medium ${isUser ? 'text-blue-200' : 'text-indigo-500 dark:text-indigo-400'}`}>点击跳转</span>
                 </div>
-                <span className={`truncate ${isUser ? 'text-white/90' : ''}`}>{message.quotedMessage.content}</span>
+                <span className={`truncate ${isUser ? 'text-white' : ''}`}>{message.quotedMessage.content}</span>
               </div>
             )}
 
