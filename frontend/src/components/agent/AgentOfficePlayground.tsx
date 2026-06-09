@@ -1,6 +1,7 @@
 import React from 'react';
 import { Agent } from '@/types';
-import { Laptop, Gamepad2, Dumbbell, BedDouble, Monitor, X, ChevronRight, ChevronDown } from 'lucide-react';
+import { Laptop, Gamepad2, Dumbbell, BedDouble, Monitor, X, ChevronRight, ChevronDown, Music, Siren } from 'lucide-react';
+import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface AgentOfficePlaygroundProps {
   agents: Agent[];
@@ -10,8 +11,29 @@ interface AgentOfficePlaygroundProps {
   mode?: 'expanded' | 'collapsed';
 }
 
+// Shout messages
+const GYM_SHOUTS = [
+  '老大，我们真的能变成健身高手吗',
+  '没给没给',
+  '谁往我蛋白粉里加优乐美了',
+];
+const GAME_SHOUTS = [
+  '抽牢二抽牢二',
+  '大残！一滴一滴',
+  '对面是桂！',
+  '我怎么老被炸啊',
+  '翻开回忆角落~',
+  '金图纸一个宝贝',
+];
+
 // Horse-headed Man (马头人) character component
-const HorseAgent: React.FC<{ agent: Agent; activityType: 'work' | 'game' | 'gym' | 'sleep'; showNameBadge?: boolean }> = ({ agent, activityType, showNameBadge = true }) => {
+const HorseAgent: React.FC<{
+  agent: Agent;
+  activityType: 'work' | 'game' | 'gym' | 'sleep';
+  showNameBadge?: boolean;
+  toolCallStatus?: 'success' | 'failed' | null;
+  shout?: string | null;
+}> = ({ agent, activityType, showNameBadge = true, toolCallStatus, shout }) => {
   const getBodyEmoji = () => {
     switch (activityType) {
       case 'work': return '👔';
@@ -29,6 +51,16 @@ const HorseAgent: React.FC<{ agent: Agent; activityType: 'work' | 'game' | 'gym'
         <span className="text-[8px] font-bold bg-slate-900/80 dark:bg-slate-950/80 text-white px-1.5 py-0.2 rounded-sm mb-1 max-w-[65px] truncate shadow-sm">
           {agent.name}
         </span>
+      )}
+
+      {/* Shout bubble */}
+      {shout && (
+        <div className="absolute -top-7 left-1/2 -translate-x-1/2 z-20 animate-shout-in whitespace-nowrap">
+          <div className="bg-yellow-100 dark:bg-yellow-900/80 border border-yellow-300 dark:border-yellow-700 text-[7px] font-bold text-yellow-800 dark:text-yellow-200 px-1.5 py-0.5 rounded-lg shadow-lg">
+            💬 {shout}
+          </div>
+          <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-yellow-100 dark:bg-yellow-900/80 border-r border-b border-yellow-300 dark:border-yellow-700 rotate-45" />
+        </div>
       )}
 
       {/* Horse-headed Character Container */}
@@ -54,19 +86,46 @@ const HorseAgent: React.FC<{ agent: Agent; activityType: 'work' | 'game' | 'gym'
             💻
           </span>
         )}
+
+        {/* Tool call status icon for working agents */}
+        {activityType === 'work' && toolCallStatus === 'success' && (
+          <span className="absolute -top-3 -left-3 text-xs animate-office-bounce select-none z-20">
+            🎵
+          </span>
+        )}
+        {activityType === 'work' && toolCallStatus === 'failed' && (
+          <span className="absolute -top-3 -left-3 text-xs animate-office-shake select-none z-20">
+            😡
+          </span>
+        )}
       </div>
     </div>
   );
 };
 
 // V2: Realistic Dynamic Horse Agent component with realistic joint transitions
-const HorseAgentV2: React.FC<{ agent: Agent; activityType: 'work' | 'game' | 'gym' | 'sleep' }> = ({ agent, activityType }) => {
+const HorseAgentV2: React.FC<{
+  agent: Agent;
+  activityType: 'work' | 'game' | 'gym' | 'sleep';
+  toolCallStatus?: 'success' | 'failed' | null;
+  shout?: string | null;
+}> = ({ agent, activityType, toolCallStatus, shout }) => {
   return (
     <div className="flex flex-col items-center relative group select-none">
       {/* Name Badge */}
       <span className="text-[8px] font-bold bg-slate-900/80 dark:bg-slate-950/80 text-white px-1.5 py-0.2 rounded-sm mb-1 max-w-[65px] truncate shadow-sm">
         {agent.name}
       </span>
+
+      {/* Shout bubble */}
+      {shout && (
+        <div className="absolute -top-7 left-1/2 -translate-x-1/2 z-20 animate-shout-in whitespace-nowrap">
+          <div className="bg-yellow-100 dark:bg-yellow-900/80 border border-yellow-300 dark:border-yellow-700 text-[7px] font-bold text-yellow-800 dark:text-yellow-200 px-1.5 py-0.5 rounded-lg shadow-lg">
+            💬 {shout}
+          </div>
+          <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-yellow-100 dark:bg-yellow-900/80 border-r border-b border-yellow-300 dark:border-yellow-700 rotate-45" />
+        </div>
+      )}
 
       {/* Dynamic Joint Character Body Wrapper */}
       <div className="w-16 h-20 relative flex items-center justify-center">
@@ -128,7 +187,7 @@ const HorseAgentV2: React.FC<{ agent: Agent; activityType: 'work' | 'game' | 'gy
 
         {/* Dynamic Joint Character Body Wrapper */}
         <div className={`v2-character ${activityType}`}>
-          
+
           {/* Head & Neck joint (SVG Vector horse head) */}
           <div className="head-joint">
             <svg viewBox="0 0 100 100" className="w-full h-full drop-shadow-[0_1px_1.5px_rgba(0,0,0,0.2)]">
@@ -149,24 +208,35 @@ const HorseAgentV2: React.FC<{ agent: Agent; activityType: 'work' | 'game' | 'gy
 
           {/* Torso */}
           <div className="torso-joint bg-slate-750 dark:bg-slate-650 rounded-md border border-slate-650 dark:border-slate-550 flex items-center justify-center">
-            {/* Outfits details depending on activity */}
             {activityType === 'work' && <div className="w-1 h-4 bg-blue-500 rounded-sm mt-0.5 border-t border-blue-400"></div>}
             {activityType === 'gym' && <div className="w-3 h-5 bg-rose-500/80 rounded-sm border border-rose-400 flex items-center justify-center text-[5px] font-bold text-white font-mono scale-90">🏃</div>}
             {activityType === 'game' && <div className="w-2.5 h-4.5 bg-emerald-500/80 rounded-sm flex items-center justify-center text-[5px] text-emerald-100 font-bold border border-emerald-400">🎮</div>}
           </div>
 
-          {/* Left Arm (arm-left) */}
+          {/* Left Arm */}
           <div className="arm-left bg-slate-550 dark:bg-slate-450 rounded-full"></div>
 
-          {/* Right Arm (arm-right) */}
+          {/* Right Arm */}
           <div className="arm-right bg-slate-550 dark:bg-slate-450 rounded-full"></div>
 
-          {/* Left Leg (leg-left) */}
+          {/* Left Leg */}
           <div className="leg-left bg-slate-800 dark:bg-slate-700 rounded-full"></div>
 
-          {/* Right Leg (leg-right) */}
+          {/* Right Leg */}
           <div className="leg-right bg-slate-800 dark:bg-slate-700 rounded-full"></div>
         </div>
+
+        {/* Tool call status icon for working agents */}
+        {activityType === 'work' && toolCallStatus === 'success' && (
+          <span className="absolute -top-1 -left-1 text-xs animate-office-bounce select-none z-20">
+            🎵
+          </span>
+        )}
+        {activityType === 'work' && toolCallStatus === 'failed' && (
+          <span className="absolute -top-1 -left-1 text-xs animate-office-shake select-none z-20">
+            😡
+          </span>
+        )}
 
         {/* Sleeping Bubbles */}
         {activityType === 'sleep' && (
@@ -183,30 +253,34 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
   const styleMode: 'emoji' = 'emoji';
   const isCollapsed = mode === 'collapsed';
 
+  const agentToolCallStatus = useAgentHubStore(state => state.agentToolCallStatus);
+
   // Filter agents by the active conversation's assigned agents
   const displayAgents = agentIds && agentIds.length > 0
     ? agents.filter(a => agentIds.includes(a.id))
-    : agents.filter(a => a.enabled); // Fallback to all enabled agents if none provided
+    : agents.filter(a => a.enabled);
 
   if (displayAgents.length === 0) return null;
 
-  // Determine who is working and who is at leisure
   const workingAgents = displayAgents.filter(a => a.status === 'thinking');
   const leisureAgents = displayAgents.filter(a => a.status !== 'thinking');
 
-  // Dynamic Leisure States: track activity type and duration for each idle agent
+  // Dynamic Leisure States
   const [leisureStates, setLeisureStates] = React.useState<Record<string, {
     type: 'game' | 'gym' | 'sleep';
     seconds: number;
   }>>({});
 
-  // Initialize and synchronize leisure states when leisureAgents list changes
+  // Shout system: track active shout per agent
+  const [shouts, setShouts] = React.useState<Record<string, string | null>>({});
+
+  // Initialize and synchronize leisure states
   React.useEffect(() => {
     setLeisureStates(prev => {
       const next = { ...prev };
       let changed = false;
       const activities: ('game' | 'gym' | 'sleep')[] = ['game', 'gym', 'sleep'];
-      
+
       leisureAgents.forEach((agent, index) => {
         if (!next[agent.id]) {
           next[agent.id] = {
@@ -216,35 +290,33 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
           changed = true;
         }
       });
-      
-      // Clean up agents that are no longer at leisure
+
       Object.keys(next).forEach(id => {
         if (!leisureAgents.some(a => a.id === id)) {
           delete next[id];
           changed = true;
         }
       });
-      
+
       return changed ? next : prev;
     });
   }, [leisureAgents]);
 
-  // Interval to increment timer and randomly switch activities every 8-15 seconds
+  // Interval to increment timer, switch activities, and trigger shouts
   React.useEffect(() => {
     const timer = setInterval(() => {
       setLeisureStates(prev => {
         const next = { ...prev };
         let changed = false;
         const activities: ('game' | 'gym' | 'sleep')[] = ['game', 'gym', 'sleep'];
-        
+
         Object.keys(next).forEach(id => {
           const state = next[id];
           const newSeconds = state.seconds + 1;
-          
-          // Generate a pseudo-random switch threshold between 8 and 15 seconds per agent
+
           const charSum = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
           const threshold = 8 + (charSum % 8);
-          
+
           if (newSeconds >= threshold) {
             const remaining = activities.filter(t => t !== state.type);
             const newType = remaining[Math.floor(Math.random() * remaining.length)];
@@ -260,11 +332,61 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
           }
           changed = true;
         });
-        
+
+        return changed ? next : prev;
+      });
+
+      // Random shouts for leisure agents
+      setShouts(prev => {
+        const next = { ...prev };
+        let changed = false;
+
+        leisureAgents.forEach(agent => {
+          const state = leisureStates[agent.id];
+          if (!state) return;
+
+          // 3% chance per second to shout
+          if (Math.random() < 0.03) {
+            const shoutsList = state.type === 'gym' ? GYM_SHOUTS : GAME_SHOUTS;
+            const shout = shoutsList[Math.floor(Math.random() * shoutsList.length)];
+            if (next[agent.id] !== shout) {
+              next[agent.id] = shout;
+              changed = true;
+            }
+          }
+        });
+
+        // Clear shouts after 3 seconds
+        Object.keys(next).forEach(id => {
+          if (next[id]) {
+            // Existing shout - clear it after timeout
+            // We handle this with a separate interval below
+          }
+        });
+
         return changed ? next : prev;
       });
     }, 1000);
-    
+
+    return () => clearInterval(timer);
+  }, [leisureAgents, leisureStates]);
+
+  // Separate interval to clear shouts after 3 seconds
+  React.useEffect(() => {
+    const timer = setInterval(() => {
+      setShouts(prev => {
+        const next = { ...prev };
+        let changed = false;
+        Object.keys(next).forEach(id => {
+          if (next[id] !== null && Math.random() < 0.33) {
+            // ~33% chance per second to clear (average 3s duration)
+            next[id] = null;
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+    }, 1000);
     return () => clearInterval(timer);
   }, []);
 
@@ -272,14 +394,13 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
   const totalDesks = displayAgents.length;
   const deskAssignments: (Agent | null)[] = Array(totalDesks).fill(null);
 
-  // Assign working agents to desks
   workingAgents.forEach((agent, index) => {
     if (index < totalDesks) {
       deskAssignments[index] = agent;
     }
   });
 
-  /** 共享的 CSS keyframes，展开态和收起态都需要注入 */
+  /** 共享的 CSS keyframes */
   const officeStyles = (
     <style>{`
       @keyframes office-typing {
@@ -305,11 +426,31 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
         40% { opacity: 0.85; }
         100% { transform: translate(8px, -18px) scale(1.3); opacity: 0; }
       }
+      @keyframes office-shake {
+        0%, 100% { transform: rotate(0deg); }
+        25% { transform: rotate(-15deg) scale(1.2); }
+        50% { transform: rotate(15deg) scale(1.3); }
+        75% { transform: rotate(-10deg) scale(1.1); }
+      }
+      @keyframes office-bounce {
+        0%, 100% { transform: translateY(0) scale(1); }
+        25% { transform: translateY(-3px) scale(1.2) rotate(-10deg); }
+        50% { transform: translateY(0) scale(1.3) rotate(10deg); }
+        75% { transform: translateY(-2px) scale(1.1) rotate(-5deg); }
+      }
+      @keyframes shout-in {
+        0% { opacity: 0; transform: translate(-50%, 4px) scale(0.8); }
+        20% { opacity: 1; transform: translate(-50%, 0) scale(1.05); }
+        40% { transform: translate(-50%, 0) scale(1); }
+      }
       .animate-office-typing { animation: office-typing 0.28s infinite ease-in-out; }
       .animate-office-glow { animation: office-glow 2.5s infinite ease-in-out; }
       .animate-office-jog { animation: office-jog 0.38s infinite ease-in-out; }
       .animate-office-game { animation: office-game 0.55s infinite ease-in-out; }
       .animate-office-zzz { animation: office-zzz 1.8s infinite ease-in-out; }
+      .animate-office-shake { animation: office-shake 0.5s infinite ease-in-out; }
+      .animate-office-bounce { animation: office-bounce 0.6s infinite ease-in-out; }
+      .animate-shout-in { animation: shout-in 0.3s ease-out forwards; }
 
       @keyframes treadmill-belt {
         0% { transform: translateX(0); }
@@ -363,7 +504,6 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
   };
 
   if (isCollapsed) {
-    // 收起态：分左右两部分，左边工作区/右边休闲区，显示持续时长
     const workingCollapsed = displayAgents.filter(a => a.status === 'thinking');
     const leisureCollapsed = displayAgents.filter(a => a.status !== 'thinking');
     const renderAgentCard = (agent: Agent) => {
@@ -382,9 +522,9 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
         <div key={agent.id} className="inline-flex items-center gap-1 pl-1 pr-2 py-1 rounded-lg bg-white/85 dark:bg-slate-950/45 border border-slate-200/80 dark:border-slate-800/80 group relative" style={{ overflow: 'visible' }}>
           <div className="flex-shrink-0">
             {styleMode === 'emoji' ? (
-              <HorseAgent agent={agent} activityType={activityType} showNameBadge={false} />
+              <HorseAgent agent={agent} activityType={activityType} showNameBadge={false} toolCallStatus={agentToolCallStatus[agent.id]} shout={shouts[agent.id]} />
             ) : (
-              <HorseAgentV2 agent={agent} activityType={activityType} />
+              <HorseAgentV2 agent={agent} activityType={activityType} toolCallStatus={agentToolCallStatus[agent.id]} shout={shouts[agent.id]} />
             )}
           </div>
           <div className="flex flex-col leading-tight">
@@ -419,7 +559,6 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
           </button>
         </div>
         <div className="flex items-stretch gap-3">
-          {/* 左侧：工作区 */}
           <div className="flex-1 min-w-0">
             {workingCollapsed.length > 0 && (
               <div className="text-[8px] font-bold text-indigo-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
@@ -431,11 +570,9 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
               {workingCollapsed.map(renderAgentCard)}
             </div>
           </div>
-          {/* 分隔线 */}
           {workingCollapsed.length > 0 && leisureCollapsed.length > 0 && (
             <div className="w-px bg-slate-200 dark:bg-slate-700/50 self-stretch flex-shrink-0" />
           )}
-          {/* 右侧：休闲区 */}
           <div className="flex-1 min-w-0">
             {leisureCollapsed.length > 0 && (
               <div className="text-[8px] font-bold text-emerald-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
@@ -526,9 +663,9 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
                   <div className="flex flex-col items-center gap-1.5 mt-2">
                     <div className="relative group">
                       {styleMode === 'emoji' ? (
-                        <HorseAgent agent={assignedAgent} activityType="work" />
+                        <HorseAgent agent={assignedAgent} activityType="work" toolCallStatus={agentToolCallStatus[assignedAgent.id]} shout={shouts[assignedAgent.id]} />
                       ) : (
-                        <HorseAgentV2 agent={assignedAgent} activityType="work" />
+                        <HorseAgentV2 agent={assignedAgent} activityType="work" toolCallStatus={agentToolCallStatus[assignedAgent.id]} shout={shouts[assignedAgent.id]} />
                       )}
                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-30 bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
                         {assignedAgent.name}: 正在处理当前任务
@@ -580,9 +717,9 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
                   >
                     <div className="relative">
                       {styleMode === 'emoji' ? (
-                        <HorseAgent agent={agent} activityType={activity.type} />
+                        <HorseAgent agent={agent} activityType={activity.type} shout={shouts[agent.id]} />
                       ) : (
-                        <HorseAgentV2 agent={agent} activityType={activity.type} />
+                        <HorseAgentV2 agent={agent} activityType={activity.type} shout={shouts[agent.id]} />
                       )}
                     </div>
 
@@ -596,6 +733,7 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
 
                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-30 bg-slate-900 text-white text-[9px] px-2 py-0.5 rounded shadow-lg whitespace-nowrap">
                       {agent.name} 当前{activity.label}，已持续 {state.seconds} 秒
+                      {shouts[agent.id] && <> — 💬 {shouts[agent.id]}</>}
                     </div>
                   </div>
                 );

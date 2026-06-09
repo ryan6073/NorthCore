@@ -697,6 +697,7 @@ interface AgentHubStore {
   quoteArtifactRef: ArtifactReference | null;
   webSearchMode: 'auto' | 'force' | 'off';
   conversationWebSearchMode: Record<string, 'auto' | 'force' | 'off'>;
+  agentToolCallStatus: Record<string, 'success' | 'failed' | null>;
 
   // ============ v4 新增：Agent 一对一专属对话系统 ============
   showAgentProfile: boolean;
@@ -980,6 +981,7 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
   quoteArtifactRef: null,
   webSearchMode: 'auto',
   conversationWebSearchMode: {},
+  agentToolCallStatus: {},
 
   // v4 新增初始状态
   showAgentProfile: false,
@@ -4739,19 +4741,21 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         set(state => {
           const targetRun = state.runDetailsById[runId];
           if (!targetRun) return {};
+          const step = targetRun.steps?.find((s: any) => s.id === stepId);
+          const agentId = toolCall?.agentId || step?.agentId || targetRun.agentId;
           const updatedSteps = targetRun.steps?.map((step: any) => {
             if (step.id === stepId) {
               const currentLog = step.log || step.logs || '';
               const newLog = `${currentLog}✅ [Tool Call Completed] ${toolName} success.\n`;
-              return { 
-                ...step, 
+              return {
+                ...step,
                 log: newLog,
                 logs: newLog
               };
             }
             return step;
           }) || [];
-          const nextState = {
+          const nextState: any = {
             runDetailsById: {
               ...state.runDetailsById,
               [runId]: {
@@ -4760,6 +4764,12 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               }
             }
           };
+          if (agentId) {
+            nextState.agentToolCallStatus = {
+              ...state.agentToolCallStatus,
+              [agentId]: 'success'
+            };
+          }
           return updateSandboxStatusMessage({ ...state, ...nextState }, targetRun.conversationId || state.activeConversationId, runId);
         });
       });
@@ -4772,19 +4782,21 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         set(state => {
           const targetRun = state.runDetailsById[runId];
           if (!targetRun) return {};
+          const step = targetRun.steps?.find((s: any) => s.id === stepId);
+          const agentId = toolCall?.agentId || step?.agentId || targetRun.agentId;
           const updatedSteps = targetRun.steps?.map((step: any) => {
             if (step.id === stepId) {
               const currentLog = step.log || step.logs || '';
               const newLog = `${currentLog}❌ [Tool Call Failed] ${toolName} error: ${toolError}\n`;
-              return { 
-                ...step, 
+              return {
+                ...step,
                 log: newLog,
                 logs: newLog
               };
             }
             return step;
           }) || [];
-          const nextState = {
+          const nextState: any = {
             runDetailsById: {
               ...state.runDetailsById,
               [runId]: {
@@ -4793,6 +4805,12 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               }
             }
           };
+          if (agentId) {
+            nextState.agentToolCallStatus = {
+              ...state.agentToolCallStatus,
+              [agentId]: 'failed'
+            };
+          }
           return updateSandboxStatusMessage({ ...state, ...nextState }, targetRun.conversationId || state.activeConversationId, runId);
         });
       });
