@@ -7073,10 +7073,11 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     // Trigger System-level notifications if enabled in settings
     const { enableNotifications, notifyOnTaskCompleted, notifyOnArtifactCreated, notifyOnAgentError } = get().settings;
     if (enableNotifications) {
-      if (eventType === 'step') return; // Do not trigger native system/OS-level popups for minor step completions to avoid spamming
+      if (eventType === 'step') return;
       if (eventType === 'task' && !notifyOnTaskCompleted) return;
       if (eventType === 'artifact' && !notifyOnArtifactCreated) return;
       if (eventType === 'error' && !notifyOnAgentError) return;
+      if (!eventType) return; // 未指定 eventType 的通知不触发原生通知
 
       // 1. Electron Desktop Native Bridge Notification
       try {
