@@ -1704,11 +1704,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                   }}
                   placeholder={conversation?.isArchived ? '会话已归档，无法输入消息' : '输入消息，输入 @ 唤起 Agent 选择器...'}
                   disabled={conversation?.isArchived}
-                  className={`absolute inset-0 w-full h-full px-2 py-1.5 text-sm font-sans leading-normal outline-none resize-none bg-transparent focus:ring-0 border border-transparent ${
-                    conversation?.isArchived 
+                  className={`absolute inset-0 w-full h-full px-2 py-1.5 text-sm leading-normal outline-none resize-none bg-transparent focus:ring-0 border border-transparent ${
+                    conversation?.isArchived
                       ? 'text-slate-300 dark:text-slate-600 placeholder:text-slate-400 dark:placeholder:text-slate-600'
                       : inputValue ? 'text-transparent' : 'text-lark-text-primary dark:text-slate-150 placeholder:text-lark-text-tertiary dark:placeholder:text-slate-650'
-                  }`}
+                  } ${inputValue ? 'font-semibold' : 'font-sans'}`}
                   style={{ wordBreak: 'break-word', caretColor: conversation?.isArchived ? 'transparent' : '#7c3aed' }}
                 />
               </div>
