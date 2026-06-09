@@ -7045,7 +7045,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
         get().addDesktopNotification(
           '文件写入成功',
           `Artifact ${artifact.title} 已写入 ${targetPath}`,
-          'success'
+          'success',
+          'step'
         );
 
         return { success: true };
