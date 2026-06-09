@@ -5242,6 +5242,10 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
       artifactId: artifactId,
       content: `生成产物 ${originalArt.title}`,
       createdAt: getCurrentFullTime(),
+      metadata: {
+        artifactVersion: nextVer,
+        artifactVersionId: newVersionId,
+      },
     };
 
     set(state => {
