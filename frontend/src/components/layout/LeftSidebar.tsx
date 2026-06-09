@@ -208,10 +208,10 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
             ? isAgentMode
               ? 'bg-emerald-50/70 dark:bg-gradient-to-r dark:from-emerald-950/35 dark:to-teal-950/15 text-emerald-600 dark:text-emerald-400 font-medium'
               : conv.isPinned
-                ? 'bg-green-100 dark:bg-green-950/40 text-lark-primary dark:text-white border border-green-300/50 dark:border-green-800/50'
+                ? 'bg-green-200 dark:bg-green-950/60 text-lark-primary dark:text-white border border-green-400/60 dark:border-green-700/60'
                 : 'bg-lark-primary-light dark:bg-gradient-to-r dark:from-violet-950/40 dark:to-indigo-950/20 text-lark-primary dark:text-white'
             : conv.isPinned
-              ? 'bg-green-50/80 dark:bg-green-950/20 border border-green-200/60 dark:border-green-900/40 hover:bg-green-100/80 dark:hover:bg-green-950/40'
+              ? 'bg-green-100/90 dark:bg-green-950/40 border border-green-300/70 dark:border-green-800/60 hover:bg-green-200/80 dark:hover:bg-green-950/60'
               : 'hover:bg-slate-200/50 dark:hover:bg-slate-800/50'
         } ${conv.isArchived ? 'opacity-70 hover:opacity-90' : ''}`}
       >
