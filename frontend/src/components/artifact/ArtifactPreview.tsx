@@ -503,44 +503,12 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
       // 确保预览与源码一致
       let baseContent = currentVersion.content;
 
-      if (useMockMode) {
-        // Mock mode: 内联 CSS/JS 资源
-        const fullyIntegrated = buildIntegratedHtml(baseContent);
-        setIntegratedHtml(fullyIntegrated);
-        setServerPreviewHtml(null);
-      } else {
-        // 非 mock mode: 仅重写相对路径（指向后端 API 预览端点）
-        const runId = currentArtifact.runId && currentArtifact.runId !== 'direct'
-          ? currentArtifact.runId
-          : useAgentHubStore.getState().getActiveRunId(useAgentHubStore.getState().activeConversationId);
-
-        if (runId) {
-          // 先设置基于 currentVersion.content 的预览（确保内容和源码一致）
-          setServerPreviewHtml(rewriteRelativeUrls(baseContent, runId));
-
-          // 对于最新版本，额外尝试从后端获取增强版预览（含内联资源）
-          // 但即使失败也不影响内容一致性，因为已有基础内容
-          if (currentVersion.version === currentArtifact.latestVersion) {
-            setIsPreviewLoading(true);
-            sandboxService.getSandboxHtmlPreview(runId, currentArtifact.title)
-              .then(res => {
-                if (active && res.code === 0 && res.data) {
-                  // 后端返回的 HTML 以 currentVersion.content 为基础，仅增强资源处理
-                  // 因此可以直接替换
-                  setServerPreviewHtml(rewriteRelativeUrls(res.data.html, runId));
-                }
-              })
-              .catch(err => {
-                console.warn('Sandbox preview enhancement failed, using base content:', err);
-              })
-              .finally(() => {
-                if (active) setIsPreviewLoading(false);
-              });
-          }
-        } else {
-          setServerPreviewHtml(baseContent);
-        }
-      }
+      // 统一使用前端内联方式处理 CSS/JS 资源
+      // HTML 使用 currentVersion.content（卡片绑定的版本）
+      // CSS/JS 使用工作区中的最新版本（getLatestVersion）
+      const fullyIntegrated = buildIntegratedHtml(baseContent);
+      setIntegratedHtml(fullyIntegrated);
+      setServerPreviewHtml(null);
     } else {
       setIntegratedHtml(undefined);
       setServerPreviewHtml(null);
@@ -949,7 +917,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
               ) : (
                 <iframe
                   key={`html-preview-${currentVersion?.version || 1}-${currentArtifact?.id}`}
-                  srcDoc={useAgentHubStore.getState().useMockMode ? previewHtml : (serverPreviewHtml || currentVersion?.content || '')}
+                  srcDoc={previewHtml || currentVersion?.content || ''}
                   className="w-full h-full bg-white"
                   title="HTML Preview"
                   sandbox="allow-scripts allow-same-origin"

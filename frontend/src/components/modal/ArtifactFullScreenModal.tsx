@@ -503,37 +503,10 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
       const { useMockMode } = useAgentHubStore.getState();
       let baseContent = currentVersion.content;
 
-      if (useMockMode) {
-        const fullyIntegrated = buildIntegratedHtml(baseContent);
-        setIntegratedHtml(fullyIntegrated);
-        setServerPreviewHtml(null);
-      } else {
-        const runId = artifact.runId && artifact.runId !== 'direct'
-          ? artifact.runId
-          : useAgentHubStore.getState().getActiveRunId(useAgentHubStore.getState().activeConversationId);
-
-        if (runId) {
-          // 始终以 currentVersion.content 为基础，确保与源码一致
-          setServerPreviewHtml(rewriteRelativeUrls(baseContent, runId));
-
-          // 后端增强预览（仅增强资源路径，不影响内容一致性）
-          setIsPreviewLoading(true);
-          getSandboxHtmlPreview(runId, artifact.title)
-            .then(res => {
-              if (active && res.code === 0 && res.data) {
-                setServerPreviewHtml(rewriteRelativeUrls(res.data.html, runId));
-              }
-            })
-            .catch(err => {
-              console.warn('Sandbox preview enhancement failed, using base content:', err);
-            })
-            .finally(() => {
-              if (active) setIsPreviewLoading(false);
-            });
-        } else {
-          setServerPreviewHtml(baseContent);
-        }
-      }
+      // 统一使用前端内联方式处理 CSS/JS 资源
+      const fullyIntegrated = buildIntegratedHtml(baseContent);
+      setIntegratedHtml(fullyIntegrated);
+      setServerPreviewHtml(null);
     } else {
       setIntegratedHtml(undefined);
       setServerPreviewHtml(null);
@@ -792,7 +765,7 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
               ) : (
                 <iframe
                   key={`html-full-preview-${currentVersion?.version || 1}-${artifact?.id}`}
-                  srcDoc={useAgentHubStore.getState().useMockMode ? htmlSrcDoc : (serverPreviewHtml || '')}
+                  srcDoc={htmlSrcDoc || currentVersion?.content || ''}
                   className="w-full h-full bg-white"
                   title="HTML Full Screen Preview"
                   sandbox="allow-scripts allow-same-origin"
