@@ -89,19 +89,19 @@ const HorseAgent: React.FC<{
           </span>
         )}
         {activityType === 'work' && (
-          <span className="absolute -top-2.5 -right-2 text-[8px] animate-pulse select-none">
+          <span className="absolute -top-3 -right-2.5 text-sm animate-pulse select-none">
             💻
           </span>
         )}
 
         {/* Tool call status icon for working agents */}
         {activityType === 'work' && toolCallStatus === 'success' && (
-          <span className="absolute -top-3 -left-3 text-xs animate-office-bounce select-none z-[9999]">
+          <span className="absolute -top-3 -left-3 text-[10px] animate-office-bounce select-none z-[9999]">
             🎵
           </span>
         )}
         {activityType === 'work' && toolCallStatus === 'failed' && (
-          <span className="absolute -top-3 -left-3 text-xs animate-office-shake select-none z-[9999]">
+          <span className="absolute -top-3 -left-3 text-[10px] animate-office-shake select-none z-[9999]">
             😡
           </span>
         )}
@@ -235,12 +235,12 @@ const HorseAgentV2: React.FC<{
 
         {/* Tool call status icon for working agents */}
         {activityType === 'work' && toolCallStatus === 'success' && (
-          <span className="absolute -top-1 -left-1 text-xs animate-office-bounce select-none z-[9999]">
+          <span className="absolute -top-1 -left-1 text-[10px] animate-office-bounce select-none z-[9999]">
             🎵
           </span>
         )}
         {activityType === 'work' && toolCallStatus === 'failed' && (
-          <span className="absolute -top-1 -left-1 text-xs animate-office-shake select-none z-[9999]">
+          <span className="absolute -top-1 -left-1 text-[10px] animate-office-shake select-none z-[9999]">
             😡
           </span>
         )}
