@@ -4138,12 +4138,24 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             dag: updatedDag || baseRun.dag
           };
 
-          const nextState = {
+          const stepAgentId = step?.agentId || baseRun.steps?.find((s: any) => s.id === stepId)?.agentId;
+          const nextState: any = {
             runDetailsById: {
               ...state.runDetailsById,
               [runId]: runDetail
             }
           };
+
+          // Step完成时，若该Agent在当前run中无活跃step且在其他run中也无活跃，则重置为online
+          if (stepAgentId && !agentHasActiveStepInRun(mergedSteps, stepAgentId)) {
+            const updatedAgents = state.agents.map(a =>
+              a.id === stepAgentId && shouldResetAgent(state, a.id, runId)
+                ? { ...a, status: 'online' as const }
+                : a
+            );
+            nextState.agents = updatedAgents;
+          }
+
           const mergedState = { ...state, ...nextState };
           return updateSandboxStatusMessage(mergedState, baseRun.conversationId || state.activeConversationId, runId);
         });
@@ -4191,12 +4203,24 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             dag: updatedDag || baseRun.dag
           };
 
-          const nextState = {
+          const stepAgentId = step?.agentId || baseRun.steps?.find((s: any) => s.id === stepId)?.agentId;
+          const nextState: any = {
             runDetailsById: {
               ...state.runDetailsById,
               [runId]: runDetail
             }
           };
+
+          // Step失败时，若该Agent在当前run中无活跃step且在其他run中也无活跃，则重置为online
+          if (stepAgentId && !agentHasActiveStepInRun(mergedSteps, stepAgentId)) {
+            const updatedAgents = state.agents.map(a =>
+              a.id === stepAgentId && shouldResetAgent(state, a.id, runId)
+                ? { ...a, status: 'online' as const }
+                : a
+            );
+            nextState.agents = updatedAgents;
+          }
+
           const mergedState = { ...state, ...nextState };
           return updateSandboxStatusMessage(mergedState, baseRun.conversationId || state.activeConversationId, runId);
         });
@@ -4244,7 +4268,8 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             dag: updatedDag || baseRun.dag
           };
 
-          const nextState = {
+          const stepAgentId = step?.agentId || baseRun.steps?.find((s: any) => s.id === stepId)?.agentId;
+          const nextState: any = {
             runDetailsById: {
               ...state.runDetailsById,
               [runId]: runDetail
@@ -4254,6 +4279,17 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
               [runId]: conflicts || runDetail.conflicts || []
             }
           };
+
+          // Step冲突时，若该Agent在当前run中无活跃step且在其他run中也无活跃，则重置为online
+          if (stepAgentId && !agentHasActiveStepInRun(mergedSteps, stepAgentId)) {
+            const updatedAgents = state.agents.map(a =>
+              a.id === stepAgentId && shouldResetAgent(state, a.id, runId)
+                ? { ...a, status: 'online' as const }
+                : a
+            );
+            nextState.agents = updatedAgents;
+          }
+
           const mergedState = { ...state, ...nextState };
           return updateSandboxStatusMessage(mergedState, baseRun.conversationId || state.activeConversationId, runId);
         });
@@ -4273,6 +4309,11 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
             (r.agentId === agentId || r.steps?.some((s: any) => s.agentId === agentId) || r.dag?.nodes?.some((n: any) => n.agentId === agentId)) &&
             (r.status === 'running' || r.status === 'pending' || r.status === 'queued')
         );
+      };
+
+      // 检查指定 run 的 steps 中该 agent 是否还有活跃的 step（排除已结束的 step）
+      const agentHasActiveStepInRun = (steps: any[] | undefined, agentId: string) => {
+        return steps?.some((s: any) => s.agentId === agentId && (s.status === 'running' || s.status === 'pending' || s.status === 'blocked')) || false;
       };
 
       const unsubRunCompleted = wsClient.on('run.completed', (event: any) => {
