@@ -5235,9 +5235,9 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
     const editLogMsg: Message = {
       id: createId('msg'),
       conversationId: targetConvId,
-      senderId: 'system',
-      senderName: '系统',
-      role: 'system',
+      senderId: 'user',
+      senderName: '用户',
+      role: 'user',
       type: 'artifact',
       artifactId: artifactId,
       content: `生成产物 ${originalArt.title}`,
