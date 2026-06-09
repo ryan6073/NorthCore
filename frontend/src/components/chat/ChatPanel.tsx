@@ -510,11 +510,17 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   }, [handleDragMove, handleDragEnd]);
 
   const parseTargetAgentId = useCallback((inputText: string) => {
-    const matches = [...inputText.matchAll(/@([^\s]+)/g)];
-    if (matches.length === 0) return null;
-    const lastName = matches[matches.length - 1][1];
-    const found = agents.find(a => a.name === lastName && a.enabled === true && a.status !== 'disabled');
-    return found ? found.id : null;
+    if (!inputText.includes('@')) return null;
+    // 按名称长度降序排序，优先匹配完整 Agent 名（含空格）
+    const sortedAgents = [...agents]
+      .filter(a => a.enabled === true && a.status !== 'disabled')
+      .sort((a, b) => b.name.length - a.name.length);
+    for (const agent of sortedAgents) {
+      if (inputText.includes(`@${agent.name}`)) {
+        return agent.id;
+      }
+    }
+    return null;
   }, [agents]);
 
   const handleSend = () => {
