@@ -33,6 +33,21 @@ export const FileTreePanel: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadTargetDir, setUploadTargetDir] = useState<string>('');
 
+  // 点击菜单外部关闭菜单
+  useEffect(() => {
+    if (!activeMenuPath) return;
+    const handleClick = (e: MouseEvent) => {
+      const menu = document.querySelector(`[data-menu-panel="${CSS.escape(activeMenuPath)}"]`);
+      if (menu && menu.contains(e.target as Node)) return;
+      setActiveMenuPath(null);
+    };
+    // 延迟添加避免当前点击冒泡触发
+    setTimeout(() => document.addEventListener('click', handleClick), 0);
+    return () => {
+      setTimeout(() => document.removeEventListener('click', handleClick), 0);
+    };
+  }, [activeMenuPath]);
+
   // Automatically default to local if isDesktop is true and no server workspace exists
   useEffect(() => {
     if (isDesktop && !serverCurrentWorkspace && currentWorkspace) {
@@ -284,18 +299,16 @@ export const FileTreePanel: React.FC = () => {
             {activeMenuPath === node.path && (
               <>
                 <div
-                  className="fixed inset-0 z-40"
-                  onClick={(e) => {
-                    const btn = document.querySelector(`[data-path-menu="${CSS.escape(node.path)}"]`);
-                    if (btn && btn.contains(e.target as Node)) return;
-                    setActiveMenuPath(null);
-                  }}
+                  className="fixed inset-0 z-40 pointer-events-none"
                 />
-                <div className="fixed z-[9999] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl py-1.5 text-left w-36 flex flex-col gap-0.5 animate-scale-in text-[11px]"
+                <div data-menu-panel={node.path}
+                  className="fixed z-[9999] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl py-1.5 text-left w-36 flex flex-col gap-0.5 animate-scale-in text-[11px]"
                   style={{
                     top: menuPosition ? `${menuPosition.top}px` : '0px',
                     left: menuPosition ? `${menuPosition.left}px` : '0px',
                   }}
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseLeave={() => setActiveMenuPath(null)}
                 >
                   {viewMode === 'local' ? (
                     <button
