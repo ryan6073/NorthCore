@@ -5287,8 +5287,6 @@ export const useAgentHubStore = create<AgentHubStore>()((set, get) => ({
           ...state.artifactVersions,
           [artifactId]: updatedVersionsList,
         },
-        selectedArtifactId: artifactId,
-        selectedArtifactVersion: nextVer,
         messages: [...state.messages, editLogMsg],
         conversationMessages: updatedConversationMessages,
       };
