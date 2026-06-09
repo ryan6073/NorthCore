@@ -13,6 +13,7 @@ interface NewConversationModalProps {
 const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClose, onCreateConversation, agents }) => {
   const [mode, setMode] = useState<'single' | 'group'>('single');
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
+  const [conversationTitle, setConversationTitle] = useState('');
 
   const workspaces = useAgentHubStore(state => state.workspaces);
   const loadWorkspaces = useAgentHubStore(state => state.loadWorkspaces);
@@ -46,6 +47,7 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
     } else {
       setMode('single');
       setSelectedAgentIds([]);
+      setConversationTitle('');
       setSelectedWorkspaceId('');
       setShowCreateWorkspace(false);
       setShowWsDropdown(false);
@@ -84,9 +86,10 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
       }
     }
 
-    const title = mode === 'single'
+    const defaultTitle = mode === 'single'
       ? (agents.find(a => a.id === selectedAgentIds[0])?.name || '新会话')
       : `${finalAgentIds.filter(id => id !== 'agent-orchestrator').length + 1}人会话`;
+    const title = conversationTitle.trim() || defaultTitle;
 
     onCreateConversation({
       title,
@@ -158,6 +161,20 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
               <Users className="w-3.5 h-3.5" />
               群聊 (多Agent)
             </button>
+          </div>
+
+          {/* Conversation Title Input */}
+          <div>
+            <label className="block text-[11px] font-semibold text-lark-text-secondary dark:text-slate-400 mb-1.5">
+              会话名称 <span className="text-slate-400 dark:text-slate-500 font-normal">(选填)</span>
+            </label>
+            <input
+              type="text"
+              value={conversationTitle}
+              onChange={(e) => setConversationTitle(e.target.value)}
+              placeholder="留空将根据成员自动生成名称"
+              className="w-full text-xs px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-violet-500/80 dark:focus:border-violet-500/50 transition-all"
+            />
           </div>
 
           <div>
