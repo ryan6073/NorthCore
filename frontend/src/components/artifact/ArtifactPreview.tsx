@@ -695,6 +695,13 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
     return currentVersion.content;
   }, [currentArtifact, currentVersion]);
 
+  // 内联多文件 HTML 资源：HTML 使用当前卡片的版本，CSS/JS/图片使用最新版本
+  const previewHtml = useMemo(() => {
+    if (!currentArtifact || currentArtifact.type !== 'html' || !currentVersion?.content) return undefined;
+    // 优先使用 integratedHtml（useEffect 中设置的异步版本），否则即时内联
+    return integratedHtml || buildIntegratedHtml(currentVersion.content);
+  }, [currentArtifact, currentVersion?.content, currentVersion?.version, allArtifacts, artifactVersions, integratedHtml]);
+
   if (!currentArtifact) {
     return (
       <div className="h-full w-full flex items-center justify-center text-center p-4 bg-white dark:bg-slate-900">
@@ -894,7 +901,7 @@ const ArtifactPreview: React.FC<ArtifactPreviewProps> = ({ artifact, onOpenFullS
 
     if (currentArtifact.type === 'html') {
       if (activeTab === 'preview') {
-        const previewHtml = integratedHtml || htmlSrcDoc;
+        // previewHtml 由顶层 useMemo 提供
         return (
           <div className="h-full w-full p-4 overflow-hidden flex flex-col bg-[#fafbfb] dark:bg-slate-950">
             {/* Browser Header Bar */}

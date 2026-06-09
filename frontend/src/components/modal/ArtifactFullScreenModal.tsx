@@ -528,8 +528,9 @@ const ArtifactFullScreenModal: React.FC<ArtifactFullScreenModalProps> = ({ open,
 
   const htmlSrcDoc = useMemo(() => {
     if (!artifact || artifact.type !== 'html' || !currentVersion) return undefined;
-    return integratedHtml || currentVersion.content;
-  }, [artifact, currentVersion, integratedHtml]);
+    // 优先使用 integratedHtml（useEffect异步设置），否则即时内联
+    return integratedHtml || buildIntegratedHtml(currentVersion.content);
+  }, [artifact, currentVersion, integratedHtml, allArtifacts, artifactVersions]);
 
   if (!open || !artifact) return null;
 
