@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { CreateConversationPayload, Agent, UserInfo } from '@/types';
-import { X, UserPlus, Users, Check, Plus, Loader2 } from 'lucide-react';
+import { X, UserPlus, Users, Check, Plus, Loader2, Search, Cloud, ChevronDown, AlertCircle } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 
 interface NewConversationModalProps {
@@ -25,6 +25,10 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [showWsDropdown, setShowWsDropdown] = useState(false);
+  const [wsSearch, setWsSearch] = useState('');
+  const [wsError, setWsError] = useState<string | null>(null);
+  const wsDropdownRef = useRef<HTMLDivElement>(null);
 
   const preselectedAgentId = useAgentHubStore(state => state.preselectedAgentId);
   const setPreselectedAgentId = useAgentHubStore(state => state.setPreselectedAgentId);
@@ -44,11 +48,28 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
       setSelectedAgentIds([]);
       setSelectedWorkspaceId('');
       setShowCreateWorkspace(false);
+      setShowWsDropdown(false);
       setNewWorkspaceName('');
+      setWsSearch('');
+      setWsError(null);
       setCreatingWorkspace(false);
       setPreselectedAgentId(null);
     }
   }, [open, isGuest, loadWorkspaces, preselectedAgentId, setPreselectedAgentId]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!showWsDropdown) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (wsDropdownRef.current && !wsDropdownRef.current.contains(e.target as Node)) {
+        setShowWsDropdown(false);
+        setWsSearch('');
+        setWsError(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showWsDropdown]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -191,89 +212,180 @@ const NewConversationModal: React.FC<NewConversationModalProps> = ({ open, onClo
           {/* Workspace Selection Section - 只对非Guest用户显示 */}
           {!isGuest && (
             <div className="space-y-1.5 pt-1">
-              <div className="flex items-center justify-between">
-                <label className="block text-[11px] font-semibold text-lark-text-secondary dark:text-slate-400">
-                  绑定工作区 (必填)
-                </label>
-                {!showCreateWorkspace && (
-                  <button
-                    type="button"
-                    onClick={() => setShowCreateWorkspace(true)}
-                    className="text-[10px] text-lark-primary dark:text-violet-400 font-bold hover:underline flex items-center gap-0.5"
-                  >
-                    <Plus className="w-3 h-3" />
-                    新建工作区
-                  </button>
+              <label className="block text-[11px] font-semibold text-lark-text-secondary dark:text-slate-400 mb-1">
+                绑定工作区 (必填)
+              </label>
+              <div className="relative" ref={wsDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowWsDropdown(!showWsDropdown);
+                    setShowCreateWorkspace(false);
+                    setNewWorkspaceName('');
+                    setWsSearch('');
+                    setWsError(null);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium border transition-all cursor-pointer select-none
+                    ${showWsDropdown
+                      ? 'bg-violet-500/10 border-violet-500/50 text-violet-600 dark:text-violet-400'
+                      : selectedWorkspaceId
+                        ? 'bg-violet-50/80 dark:bg-violet-950/20 border-violet-300/60 dark:border-violet-800/60 text-violet-700 dark:text-violet-300'
+                        : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700'
+                    }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Cloud className={`w-3.5 h-3.5 flex-shrink-0 ${selectedWorkspaceId ? 'text-violet-500' : 'text-slate-400'}`} />
+                    <span className="truncate">
+                      {selectedWorkspaceId
+                        ? workspaces.find(w => w.id === selectedWorkspaceId)?.name
+                        : '请选择绑定的工作区'}
+                    </span>
+                  </div>
+                  <ChevronDown className={`w-3 h-3 flex-shrink-0 transition-transform duration-200 ${showWsDropdown ? 'rotate-180' : ''}`} />
+                </button>
+
+                {showWsDropdown && (
+                  <div className="absolute top-full left-0 mt-1 w-full bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800/80 rounded-xl shadow-xl backdrop-blur-md p-2 z-[99] animate-fade-in">
+                    {/* Search box */}
+                    <div className="relative mb-2">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                      <input
+                        type="text"
+                        value={wsSearch}
+                        onChange={(e) => setWsSearch(e.target.value)}
+                        placeholder="搜索工作区..."
+                        className="w-full text-xs pl-8 pr-3 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-none focus:border-violet-500/80 dark:focus:border-violet-500/50 text-slate-800 dark:text-slate-100"
+                      />
+                    </div>
+
+                    {/* Workspace list */}
+                    <div className="max-h-40 overflow-y-auto space-y-1">
+                      {(() => {
+                        const filtered = workspaces.filter(w =>
+                          w.name.toLowerCase().includes(wsSearch.toLowerCase())
+                        );
+                        if (filtered.length === 0 && wsSearch) {
+                          return <div className="text-[11px] text-slate-400 italic text-center py-4">无匹配工作区</div>;
+                        }
+                        return filtered.map(w => {
+                          const isSelected = selectedWorkspaceId === w.id;
+                          return (
+                            <button
+                              key={w.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedWorkspaceId(w.id);
+                                setShowWsDropdown(false);
+                                setWsSearch('');
+                              }}
+                              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left text-xs font-medium transition-all group
+                                ${isSelected
+                                  ? 'bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400 font-bold border border-violet-500/20'
+                                  : 'hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-700 dark:text-slate-350 hover:text-slate-900 dark:hover:text-slate-100 border border-transparent'
+                                }`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0 flex-1 pr-1.5">
+                                <Cloud className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-violet-500' : 'text-slate-400 group-hover:text-violet-500/80 transition-colors'}`} />
+                                <span className="truncate">{w.name}</span>
+                              </div>
+                              {isSelected && <Check className="w-3.5 h-3.5 flex-shrink-0 text-violet-500" />}
+                            </button>
+                          );
+                        });
+                      })()}
+                    </div>
+
+                    {/* Separator */}
+                    <div className="h-px bg-slate-100 dark:bg-slate-850/80 my-1.5" />
+
+                    {/* Create area */}
+                    <div>
+                      {showCreateWorkspace ? (
+                        <div className="flex flex-col gap-1.5 p-1 animate-scale-in">
+                          <input
+                            type="text"
+                            value={newWorkspaceName}
+                            onChange={(e) => {
+                              setNewWorkspaceName(e.target.value);
+                              setWsError(null);
+                            }}
+                            placeholder="工作区名称..."
+                            autoFocus
+                            className="w-full text-xs px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-none focus:border-violet-500 text-slate-800 dark:text-slate-100"
+                          />
+                          {wsError && (
+                            <div className="flex items-center gap-1 text-[10px] text-red-500 dark:text-red-400">
+                              <AlertCircle className="w-3 h-3 flex-shrink-0" />
+                              <span>{wsError}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowCreateWorkspace(false);
+                                setNewWorkspaceName('');
+                                setWsError(null);
+                              }}
+                              className="px-2 py-1 text-[10px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-medium"
+                            >
+                              取消
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!newWorkspaceName.trim() || creatingWorkspace}
+                              onClick={async () => {
+                                const name = newWorkspaceName.trim();
+                                if (!name) return;
+                                // 前端同名检查
+                                if (workspaces.some(w => w.name === name)) {
+                                  setWsError(`工作区 "${name}" 已存在，请换个名称`);
+                                  return;
+                                }
+                                setCreatingWorkspace(true);
+                                setWsError(null);
+                                try {
+                                  const newWs = await createWorkspace(name);
+                                  if (newWs) {
+                                    setSelectedWorkspaceId(newWs.id);
+                                    setShowCreateWorkspace(false);
+                                    setNewWorkspaceName('');
+                                    setShowWsDropdown(false);
+                                  }
+                                } catch (e: any) {
+                                  const msg = e?.response?.data?.data?.error === 'workspace_name_conflict'
+                                    ? `工作区 "${name}" 已存在，请换个名称`
+                                    : '创建工作区失败，请重试';
+                                  setWsError(msg);
+                                } finally {
+                                  setCreatingWorkspace(false);
+                                }
+                              }}
+                              className="px-2.5 py-1 bg-violet-600 hover:bg-violet-500 active:scale-95 disabled:bg-slate-300 dark:disabled:bg-slate-800 disabled:text-slate-400 dark:disabled:text-slate-600 text-[10px] text-white rounded font-bold transition-all flex items-center gap-1"
+                            >
+                              {creatingWorkspace && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
+                              确定
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowCreateWorkspace(true);
+                            setNewWorkspaceName('');
+                            setWsError(null);
+                          }}
+                          className="w-full flex items-center justify-center gap-1.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-900/60 text-[11px] text-slate-550 dark:text-slate-450 hover:text-violet-600 dark:hover:text-violet-400 rounded-lg transition-all font-semibold border border-dashed border-slate-200 dark:border-slate-800/80 hover:border-violet-500/30"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>新建工作区</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
-
-              {showCreateWorkspace ? (
-                <div className="flex gap-2 p-2 bg-slate-50 dark:bg-slate-950/40 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl items-center animate-fade-in">
-                  <input
-                    type="text"
-                    value={newWorkspaceName}
-                    onChange={(e) => setNewWorkspaceName(e.target.value)}
-                    placeholder="工作区名称..."
-                    className="flex-1 text-xs px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-lark-primary"
-                    autoFocus
-                  />
-                  <button
-                    type="button"
-                    disabled={creatingWorkspace}
-                    onClick={async () => {
-                      const name = newWorkspaceName.trim();
-                      if (!name) return;
-                      setCreatingWorkspace(true);
-                      try {
-                        const newWs = await createWorkspace(name);
-                        if (newWs) {
-                          setSelectedWorkspaceId(newWs.id);
-                          setShowCreateWorkspace(false);
-                          setNewWorkspaceName('');
-                        }
-                      } catch (e) {
-                        console.error(e);
-                      } finally {
-                        setCreatingWorkspace(false);
-                      }
-                    }}
-                    className="px-2.5 py-1.5 bg-lark-primary text-white text-[10px] font-bold rounded-lg hover:bg-lark-primary-hover active:scale-95 transition-all flex items-center gap-1 flex-shrink-0"
-                  >
-                    {creatingWorkspace ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
-                    确认
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowCreateWorkspace(false);
-                      setNewWorkspaceName('');
-                    }}
-                    className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-650 dark:text-slate-300 text-[10px] font-bold rounded-lg active:scale-95 transition-all flex-shrink-0"
-                  >
-                    取消
-                  </button>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-1.5">
-                  <select
-                    value={selectedWorkspaceId}
-                    onChange={(e) => setSelectedWorkspaceId(e.target.value)}
-                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-100 outline-none focus:ring-1 focus:ring-lark-primary transition-all font-medium cursor-pointer"
-                  >
-                    <option value="">📁 请选择绑定的工作区 (必填)</option>
-                    {workspaces.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        📁 {w.name}
-                      </option>
-                    ))}
-                  </select>
-                  {workspaces.length === 0 && (
-                    <p className="text-[10px] text-amber-600 dark:text-amber-400">
-                      ⚠️ 暂无可用工作区，请先点击"新建工作区"创建一个。
-                    </p>
-                  )}
-                </div>
-              )}
             </div>
           )}
 

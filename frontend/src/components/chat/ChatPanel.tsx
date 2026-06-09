@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Conversation, Message, Agent, Artifact, MessageAttachment, AgentMentionItem } from '@/types';
 import MessageBubble from './MessageBubble';
 import ContextUsageRing from '@/components/common/ContextUsageRing';
-import { Send, Paperclip, Smile, AtSign, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight, Settings, Pencil, Check, Terminal, Cpu, FileText, Folder, Save, Globe, Loader2, ChevronDown, Plus, Search, AlertTriangle, Cloud, Laptop } from 'lucide-react';
+import { Send, Paperclip, Smile, AtSign, GripVertical, X, FileCode, Brain, Pin, Trash2, ArrowUpRight, Settings, Pencil, Check, Terminal, Cpu, FileText, Folder, Save, Globe, Loader2, ChevronDown, Plus, Search, AlertTriangle, AlertCircle, Cloud, Laptop } from 'lucide-react';
 import { useAgentHubStore } from '@/store/useAgentHubStore';
 import { AgentOfficePlayground } from '@/components/agent/AgentOfficePlayground';
 
@@ -146,6 +146,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const [isWorkspaceSubmitting, setIsWorkspaceSubmitting] = useState(false);
+  const [wsCreateError, setWsCreateError] = useState<string | null>(null);
   const workspaceDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -154,6 +155,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
         setShowWorkspaceDropdown(false);
         setIsCreatingWorkspace(false);
         setNewWorkspaceName('');
+        setWsCreateError(null);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -937,20 +939,33 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                         <input
                           type="text"
                           value={newWorkspaceName}
-                          onChange={(e) => setNewWorkspaceName(e.target.value)}
+                          onChange={(e) => {
+                            setNewWorkspaceName(e.target.value);
+                            setWsCreateError(null);
+                          }}
                           placeholder="沙箱名称..."
                           autoFocus
                           onKeyDown={async (e) => {
                             if (e.key === 'Enter' && newWorkspaceName.trim()) {
+                              const name = newWorkspaceName.trim();
+                              // 前端同名检查
+                              if (workspaces.some(w => w.name === name)) {
+                                setWsCreateError(`工作区 "${name}" 已存在，请换个名称`);
+                                return;
+                              }
                               setIsWorkspaceSubmitting(true);
+                              setWsCreateError(null);
                               try {
-                                const newWS = await createWorkspace(newWorkspaceName.trim());
+                                const newWS = await createWorkspace(name);
                                 if (newWS) {
                                   await bindConversationWorkspace(conversation.id, newWS.id);
                                 }
                                 setShowWorkspaceDropdown(false);
-                              } catch (err) {
-                                console.error('Failed to create workspace:', err);
+                              } catch (err: any) {
+                                const msg = err?.response?.data?.data?.error === 'workspace_name_conflict'
+                                  ? `工作区 "${name}" 已存在，请换个名称`
+                                  : '创建工作区失败，请重试';
+                                setWsCreateError(msg);
                               } finally {
                                 setIsWorkspaceSubmitting(false);
                                 setIsCreatingWorkspace(false);
@@ -960,12 +975,19 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                           }}
                           className="w-full text-xs px-2 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-none focus:border-violet-500 text-slate-800 dark:text-slate-100"
                         />
+                        {wsCreateError && (
+                          <div className="flex items-center gap-1 text-[10px] text-red-500 dark:text-red-400 px-1">
+                            <AlertCircle className="w-3 h-3 flex-shrink-0" />
+                            <span>{wsCreateError}</span>
+                          </div>
+                        )}
                         <div className="flex justify-end gap-1.5">
                           <button
                             type="button"
                             onClick={() => {
                               setIsCreatingWorkspace(false);
                               setNewWorkspaceName('');
+                              setWsCreateError(null);
                             }}
                             className="px-2 py-1 text-[10px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-medium"
                           >
@@ -975,15 +997,25 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ conversation, agents, messages, a
                             type="button"
                             disabled={!newWorkspaceName.trim() || isWorkspaceSubmitting}
                             onClick={async () => {
+                              const name = newWorkspaceName.trim();
+                              // 前端同名检查
+                              if (workspaces.some(w => w.name === name)) {
+                                setWsCreateError(`工作区 "${name}" 已存在，请换个名称`);
+                                return;
+                              }
                               setIsWorkspaceSubmitting(true);
+                              setWsCreateError(null);
                               try {
-                                const newWS = await createWorkspace(newWorkspaceName.trim());
+                                const newWS = await createWorkspace(name);
                                 if (newWS) {
                                   await bindConversationWorkspace(conversation.id, newWS.id);
                                 }
                                 setShowWorkspaceDropdown(false);
-                              } catch (err) {
-                                console.error('Failed to create workspace:', err);
+                              } catch (err: any) {
+                                const msg = err?.response?.data?.data?.error === 'workspace_name_conflict'
+                                  ? `工作区 "${name}" 已存在，请换个名称`
+                                  : '创建工作区失败，请重试';
+                                setWsCreateError(msg);
                               } finally {
                                 setIsWorkspaceSubmitting(false);
                                 setIsCreatingWorkspace(false);
