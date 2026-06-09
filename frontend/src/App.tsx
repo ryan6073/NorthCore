@@ -182,7 +182,7 @@ function App() {
 
   const handleOpenAgentChat = useCallback(async (agentId: string) => {
     const agent = agents.find(a => a.id === agentId);
-    if (agent && (agent.requiresWorkspace === true || agent.supportsContactConversation === false)) {
+    if (agent && agent.requiresWorkspace === true) {
       useAgentHubStore.setState({ preselectedAgentId: agentId, isNewConversationOpen: true });
     } else {
       try {

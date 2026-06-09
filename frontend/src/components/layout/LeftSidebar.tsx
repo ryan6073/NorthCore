@@ -440,7 +440,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = ({
           selectedAgentId={selectedAgentId}
           onSelectAgent={async (agentId) => {
             const agent = agents.find(a => a.id === agentId);
-            if (agent && (agent.requiresWorkspace === true || agent.supportsContactConversation === false)) {
+            if (agent && agent.requiresWorkspace === true) {
               useAgentHubStore.setState({ preselectedAgentId: agentId, isNewConversationOpen: true });
             } else {
               try {
