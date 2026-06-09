@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import ReactDOM from 'react-dom';
 import { AlertTriangle, X, Check, Save, Edit, RefreshCw } from 'lucide-react';
 import CodeDiffViewer from '../artifact/CodeDiffViewer';
 
@@ -48,10 +49,10 @@ const ConflictResolveModal: React.FC<ConflictResolveModalProps> = ({
     }
   };
 
-  // DIFF 独立全屏窗口 — 彻底解决被消息遮挡的问题
+  // DIFF 独立全屏窗口 — 通过 portal 渲染到 document.body，彻底脱离消息 DOM 层级
   if (showDiff && localContent !== undefined && artifactContent !== undefined) {
-    return (
-      <div className="fixed inset-0 z-[99999] flex flex-col bg-white dark:bg-slate-900" style={{ isolation: 'isolate' }}>
+    const diffContent = (
+      <div className="fixed inset-0 flex flex-col bg-white dark:bg-slate-900" style={{ zIndex: 2147483647 }}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-3 border-b border-slate-200 dark:border-slate-800 flex-shrink-0">
           <div className="flex items-center gap-3">
@@ -64,16 +65,12 @@ const ConflictResolveModal: React.FC<ConflictResolveModalProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setSplitView(!splitView)}
-              className="px-3 py-1.5 text-[11px] font-semibold rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-all"
-            >
+            <button onClick={() => setSplitView(!splitView)}
+              className="px-3 py-1.5 text-[11px] font-semibold rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-all">
               {splitView ? '单栏' : '双栏'}
             </button>
-            <button
-              onClick={() => setShowDiff(false)}
-              className="px-3 py-1.5 text-[11px] font-semibold rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-all"
-            >
+            <button onClick={() => setShowDiff(false)}
+              className="px-3 py-1.5 text-[11px] font-semibold rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-all">
               返回
             </button>
             <button onClick={onClose} className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors" title="关闭">
@@ -81,34 +78,30 @@ const ConflictResolveModal: React.FC<ConflictResolveModalProps> = ({
             </button>
           </div>
         </div>
-        {/* Diff Content */}
-        <div className="flex-1 min-h-0 overflow-hidden p-4">
+        {/* Diff Content — 占剩余空间的 60% */}
+        <div className="flex-1 min-h-0 overflow-hidden p-4" style={{ maxHeight: '60vh' }}>
           <CodeDiffViewer oldValue={localContent} newValue={artifactContent} splitView={splitView} />
         </div>
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-slate-200 dark:border-slate-800 flex-shrink-0 bg-slate-50/50 dark:bg-slate-950/20">
-          <button
-            onClick={() => setShowDiff(false)}
-            className="px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 text-xs font-semibold rounded-xl transition-all bg-white dark:bg-slate-900"
-          >
+          <button onClick={() => setShowDiff(false)}
+            className="px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 text-xs font-semibold rounded-xl transition-all bg-white dark:bg-slate-900">
             返回
           </button>
-          <button
-            onClick={() => { onOverwrite(); onClose(); }}
-            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-xl shadow-md shadow-red-500/10 transition-all active:scale-95 flex items-center gap-1.5"
-          >
-            <Save className="w-3.5 h-3.5" />
-            覆盖写入
+          <button onClick={() => { onOverwrite(); onClose(); }}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-xl shadow-md shadow-red-500/10 transition-all active:scale-95 flex items-center gap-1.5">
+            <Save className="w-3.5 h-3.5" />覆盖写入
           </button>
         </div>
       </div>
     );
+    return ReactDOM.createPortal(diffContent, document.body);
   }
 
-  return (
-    <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4" style={{ isolation: 'isolate' }}>
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 flex items-center justify-center p-4" style={{ zIndex: 2147483647 }}>
       <div className="absolute inset-0 bg-transparent" onClick={onClose} />
-      <div className="bg-white dark:bg-slate-900 border border-lark-border dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden transform transition-all duration-300 animate-scale-in flex flex-col relative transition-colors z-10"
+      <div className="bg-white dark:bg-slate-900 border border-lark-border dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden transform transition-all duration-300 animate-scale-in flex flex-col relative transition-colors"
         onClick={(e) => e.stopPropagation()}
       >
         <button
@@ -225,7 +218,9 @@ const ConflictResolveModal: React.FC<ConflictResolveModalProps> = ({
         </div>
       </div>
     </div>
-  );
+  , document.body);
 };
 
 export default ConflictResolveModal;
+
+ 
