@@ -25,6 +25,13 @@ const GAME_SHOUTS = [
   '翻开回忆角落~',
   '金图纸一个宝贝',
 ];
+const SLEEP_SHOUTS = [
+  '好的zZZ',
+  '收..收到zZZ',
+  "I'm SpiderMan",
+  '你不要过来啊！',
+  '嘿嘿，彩票~',
+];
 
 // Horse-headed Man (马头人) character component
 const HorseAgent: React.FC<{
@@ -362,9 +369,12 @@ export const AgentOfficePlayground: React.FC<AgentOfficePlaygroundProps> = ({ ag
           const state = currentStates[agent.id];
           if (!state) return;
 
-          // 16% chance per second to shout (~6s interval), only gym and game
-          if (state.type !== 'sleep' && Math.random() < 0.16) {
-            const shoutsList = state.type === 'gym' ? GYM_SHOUTS : GAME_SHOUTS;
+          // 16% chance per second to shout (~6s interval)
+          if (Math.random() < 0.16) {
+            let shoutsList: string[];
+            if (state.type === 'gym') shoutsList = GYM_SHOUTS;
+            else if (state.type === 'sleep') shoutsList = SLEEP_SHOUTS;
+            else shoutsList = GAME_SHOUTS;
             const shout = shoutsList[Math.floor(Math.random() * shoutsList.length)];
             if (next[agent.id] !== shout) {
               next[agent.id] = shout;
