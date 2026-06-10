@@ -216,10 +216,18 @@ export default function MessageBubble({ message: rawMessage, agents = [], onOpen
         </View>
       )}
 
-      {/* User Avatar — 显示用户名首字母 */}
+      {/* User Avatar */}
       {isUser && (
         <View style={[styles.avatar, styles.userAvatar]}>
-          <Text style={styles.avatarText}>{(userInfo?.username || 'U').charAt(0).toUpperCase()}</Text>
+          {userInfo?.avatar ? (
+            <AuthImage
+              uri={userInfo.avatar}
+              style={{ flex: 1, borderRadius: 10 }}
+              resizeMode="cover"
+            />
+          ) : (
+            <Text style={styles.avatarText}>{(userInfo?.username || 'U').charAt(0).toUpperCase()}</Text>
+          )}
         </View>
       )}
     </View>

@@ -18,45 +18,29 @@ interface FileDiffStat {
   artifactId?: string;
 }
 
-/**
- * 沙箱任务完成后多条产物消息的聚合卡片
- * 复刻 frontend GroupedArtifactsCard
- *
- * 撤销状态判定（两个来源取或）：
- * 1. message store artifacts 中找不到对应 (artifactId + runId) → 已撤销
- * 2. 调用 GET /runs/{runId} 检查 run 状态为 rolled_back/revoked → 已撤销
- * 3. 用户主动点击撤销完成后 → 已撤销
- */
 export default function RollbackRunCard({ message, onOpenArtifactFullScreen }: RollbackRunCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isUndoing, setIsUndoing] = useState(false);
+  const [userRevoked, setUserRevoked] = useState(false);
 
-  // 主动查询 run 状态
+  // ── 查询后端 run 状态 ──
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
-  const runId = message.metadata?.sourceRunId;
+  const runId: string | undefined = message.metadata?.sourceRunId;
 
   useEffect(() => {
-    if (!runId) {
-      setStatusLoading(false);
-      return;
-    }
+    if (!runId) { setStatusLoading(false); return; }
     let cancelled = false;
     setStatusLoading(true);
     sandboxApi.getRunDetail(runId)
-      .then((data) => {
-        if (!cancelled) {
-          setRunStatus(data?.status || null);
-          setStatusLoading(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setStatusLoading(false);
-      });
+      .then((data) => { if (!cancelled) { setRunStatus(data?.status || null); setStatusLoading(false); } })
+      .catch(() => { if (!cancelled) setStatusLoading(false); });
     return () => { cancelled = true; };
   }, [runId]);
 
-  // store artifacts 对比
+  const isRunRolledBack = runStatus === 'rolled_back' || runStatus === 'revoked';
+
+  // ── store artifacts 对比 ──
   const storeArtifacts = useMessageStore((s) => s.artifacts);
   const storeArtifactKeys = useMemo(
     () => new Set(storeArtifacts.map((a) => `${a.id || a.artifactId}::${a.runId || ''}`).filter(Boolean)),
@@ -71,34 +55,30 @@ export default function RollbackRunCard({ message, onOpenArtifactFullScreen }: R
     artifactItems.forEach((item) => {
       const aid = item.artifactId;
       const rid = runId || (item as any).runId || '';
-      const key = `${aid}::${rid}`;
-      if (aid && storeArtifactKeys.size > 0 && !storeArtifactKeys.has(key)) {
+      if (aid && storeArtifactKeys.size > 0 && !storeArtifactKeys.has(`${aid}::${rid}`)) {
         map[aid] = true;
       }
     });
     return map;
   }, [artifactItems, storeArtifactKeys, runId]);
 
-  // 综合判断是否已撤销
-  const isRunRolledBack = runStatus === 'rolled_back' || runStatus === 'revoked';
-  const hasAnyStoreRevoked = fileStats.some((f) => f.artifactId && revokedMap[f.artifactId]);
-  const [userRevoked, setUserRevoked] = useState(false);
+  const hasAnyStoreRevoked = artifactItems.some((item) => item.artifactId && revokedMap[item.artifactId]);
   const isRevoked = isRunRolledBack || hasAnyStoreRevoked || userRevoked;
 
-  const getFileDiff = (path: string, action: string): { additions: number; deletions: number } => {
-    let additions = 15, deletions = 0;
+  // ── 文件统计 ──
+  const getFileDiff = (path: string, action: string) => {
+    let a = 15, d = 0;
     const lower = path.toLowerCase();
-    if (lower.endsWith('.ico')) { additions = 1; }
-    else if (lower.endsWith('.svg')) { additions = 24; }
-    else if (lower.endsWith('.css')) { additions = 85; }
-    else if (lower.endsWith('.html')) { additions = 120; deletions = action === 'updated' ? 12 : 0; }
-    else if (lower.endsWith('.js') || lower.endsWith('.ts') || lower.endsWith('.tsx')) {
-      additions = 68; deletions = action === 'updated' ? 8 : 0;
-    } else { additions = 10; deletions = action === 'updated' ? 2 : 0; }
-    return { additions, deletions };
+    if (lower.endsWith('.ico')) { a = 1; }
+    else if (lower.endsWith('.svg')) { a = 24; }
+    else if (lower.endsWith('.css')) { a = 85; }
+    else if (lower.endsWith('.html')) { a = 120; d = action === 'updated' ? 12 : 0; }
+    else if (lower.endsWith('.js') || lower.endsWith('.ts') || lower.endsWith('.tsx')) { a = 68; d = action === 'updated' ? 8 : 0; }
+    else { a = 10; d = action === 'updated' ? 2 : 0; }
+    return { additions: a, deletions: d };
   };
 
-  const fileStats: (FileDiffStat & { msgId: string })[] = artifactItems.map(msg => {
+  const fileStats = artifactItems.map(msg => {
     const filePath = msg.metadata?.sourceFilePath || msg.content.replace(/^(生成产物|更新产物)\s*/, '');
     const action = msg.metadata?.action || 'created';
     const { additions, deletions } = getFileDiff(filePath, action);
@@ -121,7 +101,7 @@ export default function RollbackRunCard({ message, onOpenArtifactFullScreen }: R
       await sandboxApi.rollbackRun(runId);
       setUserRevoked(true);
     } catch {
-      // error — 保留原状态
+      // error
     } finally {
       setIsUndoing(false);
     }
@@ -133,100 +113,59 @@ export default function RollbackRunCard({ message, onOpenArtifactFullScreen }: R
     }
   };
 
-  const getActionText = (action: string) => {
-    if (action === 'created') return '新生成';
-    if (action === 'updated') return '已更新';
-    return action;
-  };
-
-  const getActionBg = (action: string) => {
-    if (action === 'created') return '#ecfdf5';
-    if (action === 'updated') return '#eff6ff';
-    return '#f1f5f9';
-  };
-
-  const getActionColor = (action: string) => {
-    if (action === 'created') return '#059669';
-    if (action === 'updated') return '#2563eb';
-    return '#64748b';
+  const actionColors: Record<string, { bg: string; text: string }> = {
+    created: { bg: '#ecfdf5', text: '#059669' },
+    updated: { bg: '#eff6ff', text: '#2563eb' },
   };
 
   return (
-    <View style={styles.card}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <View style={styles.iconBox}>
+    <View style={s.card}>
+      <View style={s.header}>
+        <View style={s.headerLeft}>
+          <View style={s.iconBox}>
             <Ionicons name="code-slash-outline" size={16} color="#64748b" />
           </View>
-          <View style={styles.headerText}>
-            <Text style={styles.title} numberOfLines={2}>{title}</Text>
+          <View style={s.headerText}>
+            <Text style={s.title} numberOfLines={2}>{title}</Text>
             {!isRevoked && (
-              <View style={styles.diffRow}>
-                <Text style={styles.diffAdd}>+{totalAdditions}</Text>
-                <Text style={styles.diffDel}>-{totalDeletions}</Text>
+              <View style={s.diffRow}>
+                <Text style={s.diffAdd}>+{totalAdditions}</Text>
+                <Text style={s.diffDel}>-{totalDeletions}</Text>
               </View>
             )}
           </View>
         </View>
-
-        {/* Undo Button */}
         {!isRevoked && (
-          <TouchableOpacity
-            onPress={handleUndo}
-            disabled={isUndoing || statusLoading}
-            style={styles.undoBtn}
-            activeOpacity={0.6}
-          >
-            {statusLoading ? (
-              <ActivityIndicator size="small" color="#94a3b8" />
-            ) : isUndoing ? (
-              <ActivityIndicator size="small" color="#64748b" />
-            ) : (
-              <>
-                <Ionicons name="refresh-outline" size={12} color="#64748b" />
-                <Text style={styles.undoText}>撤销</Text>
-              </>
-            )}
+          <TouchableOpacity onPress={handleUndo} disabled={isUndoing || statusLoading} style={s.undoBtn} activeOpacity={0.6}>
+            {statusLoading || isUndoing
+              ? <ActivityIndicator size="small" color="#94a3b8" />
+              : <><Ionicons name="refresh-outline" size={12} color="#64748b" /><Text style={s.undoText}>撤销</Text></>}
           </TouchableOpacity>
         )}
       </View>
 
-      {/* File List */}
-      <View style={styles.fileList}>
+      <View style={s.fileList}>
         {visibleStats.map((file, idx) => {
-          const fileRevoked = isRevoked || (file.artifactId ? revokedMap[file.artifactId] : false);
+          const fr = isRevoked || (file.artifactId ? revokedMap[file.artifactId] : false);
           return (
-            <TouchableOpacity
-              key={idx}
-              onPress={() => handleFileClick(file.artifactId)}
-              disabled={fileRevoked}
-              style={[styles.fileRow, idx < visibleStats.length - 1 && styles.fileRowBorder]}
-              activeOpacity={fileRevoked ? 1 : 0.6}
-            >
-              <View style={styles.fileRowLeft}>
-                {fileRevoked ? (
-                  <View style={[styles.actionBadge, { backgroundColor: '#fff1f2' }]}>
-                    <Text style={[styles.actionBadgeText, { color: '#e11d48' }]}>已撤销</Text>
-                  </View>
+            <TouchableOpacity key={idx} onPress={() => handleFileClick(file.artifactId)} disabled={fr}
+              style={[s.fileRow, idx < visibleStats.length - 1 && s.fileRowBorder]} activeOpacity={fr ? 1 : 0.6}>
+              <View style={s.fileRowLeft}>
+                {fr ? (
+                  <View style={[s.badge, { backgroundColor: '#fff1f2' }]}><Text style={[s.badgeText, { color: '#e11d48' }]}>已撤销</Text></View>
                 ) : (
-                  <View style={[styles.actionBadge, { backgroundColor: getActionBg(file.action) }]}>
-                    <Text style={[styles.actionBadgeText, { color: getActionColor(file.action) }]}>
-                      {getActionText(file.action)}
+                  <View style={[s.badge, { backgroundColor: (actionColors[file.action] || actionColors.created).bg }]}>
+                    <Text style={[s.badgeText, { color: (actionColors[file.action] || actionColors.created).text }]}>
+                      {file.action === 'created' ? '新生成' : file.action === 'updated' ? '已更新' : file.action}
                     </Text>
                   </View>
                 )}
-                <Text
-                  style={[styles.filePath, fileRevoked && styles.filePathRevoked]}
-                  numberOfLines={1}
-                >
-                  {file.path}
-                </Text>
+                <Text style={[s.filePath, fr && s.filePathRevoked]} numberOfLines={1}>{file.path}</Text>
               </View>
-              {!fileRevoked && (
-                <View style={styles.fileDiffRight}>
-                  <Text style={styles.diffAdd}>+{file.additions}</Text>
-                  <Text style={styles.diffDel}>-{file.deletions}</Text>
+              {!fr && (
+                <View style={s.fileDiffRight}>
+                  <Text style={s.diffAdd}>+{file.additions}</Text>
+                  <Text style={s.diffDel}>-{file.deletions}</Text>
                 </View>
               )}
             </TouchableOpacity>
@@ -234,15 +173,37 @@ export default function RollbackRunCard({ message, onOpenArtifactFullScreen }: R
         })}
       </View>
 
-      {/* Expand/Collapse */}
       {hasMore && (
-        <TouchableOpacity style={styles.expandFooter} onPress={() => setIsExpanded(!isExpanded)} activeOpacity={0.7}>
-          <Text style={styles.expandText}>
-            {isExpanded ? '收起列表' : `再显示 ${hiddenCount} 个文件`}
-          </Text>
+        <TouchableOpacity style={s.expandFooter} onPress={() => setIsExpanded(!isExpanded)} activeOpacity={0.7}>
+          <Text style={s.expandText}>{isExpanded ? '收起列表' : `再显示 ${hiddenCount} 个文件`}</Text>
           <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={13} color="#64748b" />
         </TouchableOpacity>
       )}
     </View>
   );
 }
+
+const s = StyleSheet.create({
+  card: { backgroundColor: '#fcfcfd', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, overflow: 'hidden', marginVertical: 4, maxWidth: '100%', width: '100%' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', backgroundColor: '#ffffff' },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 },
+  iconBox: { width: 30, height: 30, borderRadius: 8, backgroundColor: '#f8fafc', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#f1f5f9' },
+  headerText: { flex: 1, minWidth: 0 },
+  title: { fontSize: 11, fontWeight: '700', color: '#1e293b', lineHeight: 15 },
+  diffRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  diffAdd: { fontSize: 9, fontFamily: 'monospace', fontWeight: '700', color: '#059669' },
+  diffDel: { fontSize: 9, fontFamily: 'monospace', fontWeight: '700', color: '#dc2626' },
+  undoBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, backgroundColor: '#f8fafc', marginLeft: 8 },
+  undoText: { fontSize: 10, fontWeight: '600', color: '#64748b' },
+  fileList: { backgroundColor: '#f8fafc', paddingHorizontal: 12, paddingVertical: 4 },
+  fileRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 7 },
+  fileRowBorder: { borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  fileRowLeft: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 },
+  badge: { paddingHorizontal: 4, paddingVertical: 1, borderRadius: 3 },
+  badgeText: { fontSize: 8, fontWeight: '700' },
+  filePath: { fontSize: 10, fontFamily: 'monospace', color: '#475569', flex: 1 },
+  filePathRevoked: { color: '#94a3b8', textDecorationLine: 'line-through' },
+  fileDiffRight: { flexDirection: 'row', alignItems: 'center', gap: 3, marginLeft: 6 },
+  expandFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#f1f5f9', backgroundColor: '#ffffff' },
+  expandText: { fontSize: 10, fontWeight: '600', color: '#64748b' },
+});

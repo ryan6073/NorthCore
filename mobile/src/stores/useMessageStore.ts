@@ -815,40 +815,6 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         };
       });
     } catch (error: any) {
-      if (reachedMessagePost && isUncertainPostTransportError(error)) {
-        console.warn('[MessageStore] sendMessage response lost, waiting for websocket sync', error);
-        set((state) => {
-          const nextMessages = state.messages.map((m) =>
-            m.id === clientMsgId
-              ? {
-                  ...m,
-                  metadata: {
-                    ...m.metadata,
-                    deliveryState: 'pending_confirmation',
-                  },
-                }
-              : m
-          );
-
-          return {
-            messages: nextMessages,
-            isStreaming: true,
-            ...cacheConversationPatch(state, conversationId, { messages: nextMessages }),
-          };
-        });
-
-        setTimeout(() => {
-          const state = get();
-          const hasPendingClientMessage = state.messages.some((m) => m.id === clientMsgId);
-          if (state.currentConversationId === conversationId && hasPendingClientMessage) {
-            state.loadConversationData(conversationId).catch((syncError) => {
-              console.warn('[MessageStore] delayed message sync failed', syncError);
-            });
-          }
-        }, 2500);
-        return;
-      }
-
       console.error('[MessageStore] sendMessage failed', error);
       const agentMessage: Message = {
         id: 'err_' + Date.now(),

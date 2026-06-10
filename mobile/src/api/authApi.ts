@@ -22,4 +22,12 @@ export const authApi = {
     });
     return res.data;
   },
+
+  /**
+   * 验证当前 token 是否有效（轻量调用）
+   * 401 时抛出异常，checkAuth 会据此清除 token
+   */
+  async verifyToken(): Promise<void> {
+    await request<any>('/auth/me', { method: 'GET' });
+  },
 };

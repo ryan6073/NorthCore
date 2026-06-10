@@ -89,18 +89,27 @@ export const useAuthStore = create<AuthState>((set) => ({
   checkAuth: async () => {
     try {
       const token = await tokenStore.getItem('auth_token');
-      if (token) {
-        // Restore user info from SecureStore/localStorage
-        try {
-          const userJson = await tokenStore.getItem('auth_user');
-          if (userJson) {
-            const userInfo = JSON.parse(userJson);
-            set({ isAuthenticated: true, token, userInfo });
-            return;
-          }
-        } catch {}
+      if (!token) {
+        set({ isAuthenticated: false, token: null });
+        return;
       }
-      set({ isAuthenticated: !!token, token });
+
+      // 向后端验证 token 是否仍然有效
+      // 如果返回 401 则清除 token 跳到登录页
+      try {
+        const userJson = await tokenStore.getItem('auth_user');
+        const userInfo = userJson ? JSON.parse(userJson) : null;
+
+        // 调用一个轻量接口验证 token 有效性
+        await authApi.verifyToken();
+        set({ isAuthenticated: true, token, userInfo });
+      } catch {
+        // token 无效（401）或网络不可用
+        console.warn('[AuthStore] token invalid or network unavailable, clearing auth');
+        await tokenStore.deleteItem('auth_token');
+        await tokenStore.deleteItem('auth_user');
+        set({ isAuthenticated: false, token: null, userInfo: null });
+      }
     } catch (error) {
       console.error('[AuthStore] checkAuth failed:', error);
       set({ isAuthenticated: false, token: null });
