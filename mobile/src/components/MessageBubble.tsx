@@ -347,7 +347,7 @@ const styles = StyleSheet.create({
   },
   fullWidthWrapper: {
     flexDirection: 'column',
-    maxWidth: '100%',
+    maxWidth: '78%',
     width: '100%',
   },
 

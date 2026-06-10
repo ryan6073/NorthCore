@@ -8,7 +8,17 @@ export interface AgentRunDetail {
 
 export const sandboxApi = {
   /**
-   * 撤销沙箱运行 (rollback) — 与前端 POST /runs/{runId}/rollback 保持一致
+   * 查询沙箱运行详情
+   */
+  async getRunDetail(runId: string): Promise<AgentRunDetail> {
+    const res = await request<AgentRunDetail>(`/runs/${runId}`, {
+      method: 'GET',
+    });
+    return res.data;
+  },
+
+  /**
+   * 撤销沙箱运行 (rollback)
    */
   async rollbackRun(runId: string): Promise<AgentRunDetail> {
     const res = await request<AgentRunDetail>(`/runs/${runId}/rollback`, {
