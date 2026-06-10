@@ -11,10 +11,10 @@ import {
   Text,
   ScrollView,
   Alert,
-  Clipboard,
   Dimensions,
   Modal,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, Stack, router } from 'expo-router';
 import { useMessageStore } from '@/stores/useMessageStore';
 import { useConversationStore } from '@/stores/useConversationStore';
@@ -29,9 +29,45 @@ import * as DocumentPicker from 'expo-document-picker';
 import type { Artifact, ArtifactVersion, MessageAttachment, WorkspaceItem } from '@/types';
 import { getWorkspaces, createWorkspace } from '@/services/workspaceService';
 import { detectFileCategory, getFileIcon, getFileColor, getFileTypeLabel } from '@/utils/fileType';
+import { formatTimeDivider, shouldShowTimeDivider } from '@/utils/timeFormat';
+
+/**
+ * 专用于消息列表的 ErrorBoundary，捕获 FlatList renderItem 内的渲染异常
+ * 防止一个坏消息导致整个屏幕白屏/闪退
+ */
+class MsgListErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
+  constructor(props: any) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error: Error) { return { hasError: true, error }; }
+  componentDidCatch(error: Error, info: any) {
+    console.error('[MsgListErrorBoundary] 🚨 消息列表渲染崩溃:', error.message);
+    console.error('[MsgListErrorBoundary] 📚 Stack:', error.stack);
+    if (info?.componentStack) console.error('[MsgListErrorBoundary] componentStack:', info.componentStack);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24, backgroundColor: '#f6f8fb' }}>
+          <Ionicons name="warning-outline" size={40} color="#ef4444" />
+          <Text style={{ fontSize: 16, fontWeight: '700', color: '#1f2329', marginTop: 12, marginBottom: 8 }}>消息渲染异常</Text>
+          <Text style={{ fontSize: 12, color: '#646a73', textAlign: 'center', lineHeight: 18, marginBottom: 16 }}>
+            {this.state.error?.message || '渲染消息时遇到了未预期的错误'}
+          </Text>
+          <TouchableOpacity
+            style={{ backgroundColor: '#3370ff', paddingHorizontal: 24, paddingVertical: 10, borderRadius: 10 }}
+            onPress={() => this.setState({ hasError: false, error: null })}
+          >
+            <Text style={{ color: '#fff', fontWeight: '600' }}>重试</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function ConversationScreen() {
-  const { conversationId } = useLocalSearchParams<{ conversationId: string }>();
+  const { conversationId: rawConversationId } = useLocalSearchParams<{ conversationId: string }>();
+  const conversationId = rawConversationId || ''; // guard: never undefined — crasher #2
   const currentConversationId = useMessageStore((state) => state.currentConversationId);
   const messages = useMessageStore((state) => state.messages);
   const artifacts = useMessageStore((state) => state.artifacts);
@@ -206,9 +242,14 @@ export default function ConversationScreen() {
   const chronologicalMessages = useMemo(() => {
     if (currentConversationId !== conversationId) return [];
     try {
-      return [...messages].sort(
-        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-      );
+      return [...messages].sort((a, b) => {
+        // Defensive: NaN comparator crashes Hermes — crasher #3
+        const timeA = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (isNaN(timeA)) return 1;
+        if (isNaN(timeB)) return -1;
+        return timeA - timeB;
+      });
     } catch {
       return messages;
     }
@@ -218,6 +259,22 @@ export default function ConversationScreen() {
     () => shouldInvertMessages ? [...chronologicalMessages].reverse() : chronologicalMessages,
     [chronologicalMessages, shouldInvertMessages],
   );
+
+  // 生成带时间分隔的消息条目数组
+  // 每个元素: { type: 'message', msg: Message } 或 { type: 'time-divider', label: string }
+  const messageItems = useMemo(() => {
+    const items: ({ type: 'time-divider'; label: string } | { type: 'message'; msg: Message })[] = [];
+    const ordered = shouldInvertMessages ? [...chronologicalMessages].reverse() : chronologicalMessages;
+    for (let i = 0; i < ordered.length; i++) {
+      const msg = ordered[i];
+      const prev = i > 0 ? ordered[i - 1] : null;
+      if (shouldShowTimeDivider(msg.createdAt, prev?.createdAt)) {
+        items.push({ type: 'time-divider', label: formatTimeDivider(msg.createdAt) });
+      }
+      items.push({ type: 'message', msg });
+    }
+    return items;
+  }, [chronologicalMessages, shouldInvertMessages]);
 
   const conversationArtifacts = useMemo(
     () => (currentConversationId === conversationId ? artifacts : []),
@@ -714,38 +771,57 @@ export default function ConversationScreen() {
           </Modal>
         )}
 
+        <MsgListErrorBoundary>
         <FlatList
           ref={flatListRef}
-          data={displayMessages}
+          data={messageItems}
           inverted={shouldInvertMessages}
           style={[
             styles.messageList,
             !isMessageListReady && chronologicalMessages.length > 1 && styles.messageListHidden,
           ]}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              activeOpacity={1}
-              onLongPress={(event) => {
-                const pageY = event?.nativeEvent?.pageY || 200;
-                const pageX = event?.nativeEvent?.pageX || 150;
-                setSelectedMessage(item);
-                setMsgMenuY(pageY);
-                setMsgMenuX(pageX);
-                setMsgMenuVisible(true);
-              }}
-            >
-              <MessageBubble
-                message={item}
-                agents={agents}
-                onOpenArtifactFullScreen={(artifact, version) =>
-                  setArtifactPreview({ visible: true, artifact, version })}
-                onImagePress={(url, name) =>
-                  setImageViewer({ visible: true, url, name })
-                }
-              />
-            </TouchableOpacity>
-          )}
+          keyExtractor={(item) => item.type === 'time-divider' ? `divider-${item.label}` : item.msg?.id || `msg-${Math.random()}`}
+          renderItem={({ item }) => {
+            if (!item) return null;
+            // 时间分隔行
+            if (item.type === 'time-divider') {
+              return (
+                <View style={styles.timeDivider}>
+                  <View style={styles.timeDividerLine} />
+                  <View style={styles.timeDividerLabel}>
+                    <Text style={styles.timeDividerText}>{item.label}</Text>
+                  </View>
+                  <View style={styles.timeDividerLine} />
+                </View>
+              );
+            }
+            // 普通消息
+            const msg = item.msg;
+            if (!msg) return null;
+            return (
+              <TouchableOpacity
+                activeOpacity={1}
+                onLongPress={(event) => {
+                  const pageY = event?.nativeEvent?.pageY || 200;
+                  const pageX = event?.nativeEvent?.pageX || 150;
+                  setSelectedMessage(msg);
+                  setMsgMenuY(pageY);
+                  setMsgMenuX(pageX);
+                  setMsgMenuVisible(true);
+                }}
+              >
+                <MessageBubble
+                  message={msg}
+                  agents={agents}
+                  onOpenArtifactFullScreen={(artifact, version) =>
+                    setArtifactPreview({ visible: true, artifact, version })}
+                  onImagePress={(url, name) =>
+                    setImageViewer({ visible: true, url, name })
+                  }
+                />
+              </TouchableOpacity>
+            );
+          }}
           contentContainerStyle={styles.listContent}
           onContentSizeChange={(_, height) => {
             listContentHeightRef.current = height;
@@ -824,6 +900,7 @@ export default function ConversationScreen() {
             ) : null
           }
         />
+      </MsgListErrorBoundary>
 
         {/* Floating Mention List Popover */}
         {showMentionPopup && (
@@ -1135,7 +1212,7 @@ export default function ConversationScreen() {
                 <TouchableOpacity
                   style={styles.msgMenuBtn}
                   onPress={() => {
-                    Clipboard.setString(selectedMessage.content);
+                    Clipboard.setStringAsync(selectedMessage.content);
                     Alert.alert('提示', '已复制消息内容到剪贴板！');
                     setMsgMenuVisible(false);
                   }}
@@ -2226,5 +2303,30 @@ const styles = StyleSheet.create({
     borderLeftWidth: 1,
     borderColor: '#e5e7eb',
     transform: [{ rotate: '45deg' }],
+  },
+
+  // ── 时间分隔行 ──
+  timeDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 14,
+    paddingHorizontal: 16,
+  },
+  timeDividerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: '#dee0e3',
+  },
+  timeDividerLabel: {
+    marginHorizontal: 12,
+    backgroundColor: '#f6f8fb',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  timeDividerText: {
+    fontSize: 11,
+    color: '#8f959e',
+    fontWeight: '600',
   },
 });

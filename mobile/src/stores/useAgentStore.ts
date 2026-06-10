@@ -29,10 +29,10 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   },
 
   createAgent: async (agent) => {
-    // Mock模式下直接用内存生成
+    // 本地先创建再同步服务端（后端会返回真正的 id）
     const newAgent: Agent = {
       ...agent,
-      id: 'mock_agent_' + Date.now(),
+      id: 'local_' + Date.now(),
       status: 'online',
     };
     set((state) => ({ agents: [...state.agents, newAgent] }));

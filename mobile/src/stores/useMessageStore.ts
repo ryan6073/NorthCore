@@ -108,19 +108,6 @@ const now = () => new Date().toISOString();
 
 /** Store WS unsubscribers so they can be cleaned up on disconnect */
 let wsUnsubscribers: (() => void)[] = [];
-
-/**
- * 模块级内存缓存，用于在 Hot Refresh（Fast Refresh）时保留最近一次加载的会话数据。
- * Zustand store 在 Refresh 时会重置为初始状态，但模块级变量不会被重新初始化，
- * 因此可以在此处恢复上次的数据，避免刷新后消息变为空白。
- */
-let sessionCache: Map<string, ConversationMessageCache> | null = null;
-const getSessionCache = (): Map<string, ConversationMessageCache> => {
-  if (!sessionCache) {
-    sessionCache = new Map();
-  }
-  return sessionCache;
-};
 const artifactContentRequests = new Map<string, Promise<ArtifactVersion[]>>();
 
 const cacheConversationPatch = (
@@ -175,16 +162,6 @@ function registerWSEventHandlers() {
   wsUnsubscribers.forEach((fn) => fn());
   wsUnsubscribers = [];
 
-  /**
-   * 同步消息变更到 sessionCache，确保模块级缓存与 store 一致
-   */
-  const syncSessionCache = (convId: string, messages: Message[]) => {
-    const cache = getSessionCache().get(convId);
-    if (cache) {
-      getSessionCache().set(convId, { ...cache, messages, updatedAt: Date.now() });
-    }
-  };
-
   // 1. User message confirmed by server
   wsUnsubscribers.push(
     wsClient.on<UserCreatedEvent>('conversation.message.user_created', (event) => {
@@ -201,7 +178,6 @@ function registerWSEventHandlers() {
             quotedMessage:
               state.messages[optimisticIndex].quotedMessage || message.quotedMessage,
           };
-          syncSessionCache(message.conversationId, updated);
           return {
             messages: updated,
             isStreaming: true,
@@ -210,7 +186,6 @@ function registerWSEventHandlers() {
         }
         if (!state.messages.some((m) => m.id === message.id)) {
           const updated = [...state.messages, message];
-          syncSessionCache(message.conversationId, updated);
           return {
             messages: updated,
             isStreaming: true,
@@ -301,7 +276,6 @@ function registerWSEventHandlers() {
           updated = [...updated, fullMessage];
         }
         updated = updated.filter((m) => m.id !== `thinking-${fullMessage.senderId}`);
-        syncSessionCache(fullMessage.conversationId, updated);
         return {
           messages: updated,
           isStreaming: false,
@@ -496,7 +470,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     set({ currentConversationId: conversationId, loading: true, hasMore: true, cursor: null });
     try {
       const list = await getMessages(conversationId);
-      const nextMessages = list.slice(); // 直接用Mock数据，不需要处理分页，因为Mock数据是全量的
+      const nextMessages = list.slice();
       const nextCursor = list.length > 0 ? list[list.length - 1].id : null;
 
       set((state) => ({
@@ -519,11 +493,6 @@ export const useMessageStore = create<MessageState>((set, get) => ({
 
   /** 进入会话时统一加载所有关联数据
    * 并发: 消息 / pin / 记忆 / 上下文使用 / 产物
-   *
-   * 设计说明：
-   * - 优先使用 Zustand conversationCache（内存级，Refresh 后丢失）
-   * - 其次使用模块级 sessionCache（可跨越 Hot Refresh 保持数据）
-   * - 加载期间不清空旧消息，避免刷新后出现空白闪烁
    */
   loadConversationData: async (conversationId: string) => {
     const cached = get().conversationCache[conversationId];
@@ -543,21 +512,13 @@ export const useMessageStore = create<MessageState>((set, get) => ({
       return;
     }
 
-    // 尝试从模块级 sessionCache 恢复（Hot Refresh 时仍可用）
-    const sessionCached = getSessionCache().get(conversationId);
-    const currentMessages = get().messages;
-    const hasData = currentMessages.length > 0;
-    const sessionHasData = sessionCached && sessionCached.messages.length > 0;
-
     set({
       currentConversationId: conversationId,
-      // 不清空 messages：保留旧数据/缓存数据作为骨架屏，
-      // 避免刷新后出现"没有消息"的空白闪烁
-      messages: hasData ? currentMessages : (sessionHasData ? sessionCached!.messages : []),
-      artifacts: hasData ? get().artifacts : (sessionHasData ? sessionCached!.artifacts : []),
-      pins: hasData ? get().pins : (sessionHasData ? sessionCached!.pins : []),
-      memories: hasData ? get().memories : (sessionHasData ? sessionCached!.memories : []),
-      contextUsage: hasData ? get().contextUsage : (sessionHasData ? sessionCached!.contextUsage : null),
+      messages: [],
+      artifacts: [],
+      pins: [],
+      memories: [],
+      contextUsage: null,
       loading: true,
       loadingMore: false,
       hasMore: true,
@@ -566,11 +527,11 @@ export const useMessageStore = create<MessageState>((set, get) => ({
 
     try {
       const [messagesData, pinsResult, memoriesResult, contextResult, nextArtifacts] = await Promise.all([
-        getMessages(conversationId),
-        conversationApi.getPins(conversationId),
-        conversationApi.getMemories(conversationId),
-        conversationApi.getContextUsage(conversationId),
-        getArtifacts(conversationId),
+        getMessages(conversationId).catch(() => [] as Message[]),
+        conversationApi.getPins(conversationId).catch(() => [] as PinItem[]),
+        conversationApi.getMemories(conversationId).catch(() => [] as MemoryItem[]),
+        conversationApi.getContextUsage(conversationId).catch(() => null),
+        getArtifacts(conversationId).catch(() => [] as Artifact[]),
       ]);
 
       const pinsList = Array.isArray(pinsResult) ? pinsResult : [];
@@ -581,54 +542,38 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         isPinned: pinMessageIds.has(m.id) || m.isPinned,
       }));
 
-      // 合并数据：保留现有 store 中 API 未返回的消息（如 WebSocket 推来的增量）
-      // 避免 API 分页延迟或缓存导致丢失最新消息
-      const stateBeforeMerge = get();
-      const existingMessageIds = new Set(messagesWithPin.map((m) => m.id));
-      const extraMessages = stateBeforeMerge.currentConversationId === conversationId
-        ? stateBeforeMerge.messages.filter((m) => !existingMessageIds.has(m.id))
-        : [];
-
-      const mergedMessages = [...messagesWithPin, ...extraMessages];
-
-      // 写入模块级 sessionCache（Hot Refresh 后可恢复）
-      const cacheEntry: ConversationMessageCache = {
-        messages: mergedMessages,
-        artifacts: nextArtifacts,
-        pins: pinsList,
-        memories: memoriesList,
-        contextUsage: contextResult,
-        cursor: mergedMessages.length > 0 ? mergedMessages[mergedMessages.length - 1].id : null,
-        hasMore: false,
-        updatedAt: Date.now(),
-      };
-      getSessionCache().set(conversationId, cacheEntry);
-
       set((state) => ({
-        messages: mergedMessages,
+        messages: messagesWithPin,
         artifacts: nextArtifacts,
         pins: pinsList,
         memories: memoriesList,
         contextUsage: contextResult,
         hasMore: false,
-        cursor: mergedMessages.length > 0 ? mergedMessages[mergedMessages.length - 1].id : null,
+        cursor: messagesData.length > 0 ? messagesData[messagesData.length - 1].id : null,
         loading: false,
-        ...cacheConversationPatch(state, conversationId, cacheEntry),
+        ...cacheConversationPatch(state, conversationId, {
+          messages: messagesWithPin,
+          artifacts: nextArtifacts,
+          pins: pinsList,
+          memories: memoriesList,
+          contextUsage: contextResult,
+          hasMore: false,
+          cursor: messagesData.length > 0 ? messagesData[messagesData.length - 1].id : null,
+        }),
       }));
     } catch (error) {
       console.warn('[MessageStore] loadConversationData failed', error);
-      // 失败时不清空已有数据，保留刷新前的消息
       set((state) => ({
         loading: false,
         loadingMore: false,
         hasMore: false,
         cursor: null,
         ...cacheConversationPatch(state, conversationId, {
-          messages: state.messages,
-          artifacts: state.artifacts,
-          pins: state.pins,
-          memories: state.memories,
-          contextUsage: state.contextUsage,
+          messages: state.currentConversationId === conversationId ? state.messages : [],
+          artifacts: state.currentConversationId === conversationId ? state.artifacts : [],
+          pins: state.currentConversationId === conversationId ? state.pins : [],
+          memories: state.currentConversationId === conversationId ? state.memories : [],
+          contextUsage: state.currentConversationId === conversationId ? state.contextUsage : null,
           hasMore: false,
           cursor: null,
         }),
@@ -863,8 +808,6 @@ export const useMessageStore = create<MessageState>((set, get) => ({
           }
         }
 
-        syncSessionCache(conversationId, merged);
-
         return {
           messages: merged,
           isStreaming: false,
@@ -908,7 +851,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
 
       console.error('[MessageStore] sendMessage failed', error);
       const agentMessage: Message = {
-        id: 'mock_' + Date.now(),
+        id: 'err_' + Date.now(),
         conversationId,
         senderId: 'agent',
         senderName: 'AI助手',

@@ -45,9 +45,9 @@ export default function AgentDetailScreen() {
       await fetchConversations();
       router.push(`/chats/${newConv.id}`);
     } catch (error) {
-      // Fallback in case of mock/unreachable backend
+      // Fallback: create conversation failed
       const tempId = 'temp_' + Date.now();
-      Alert.alert('提示', '已进入对话（离线模式）');
+      Alert.alert('提示', '创建对话失败');
       router.push(`/chats/${tempId}`);
     } finally {
       setLoading(false);

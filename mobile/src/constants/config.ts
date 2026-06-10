@@ -1,8 +1,5 @@
 export const API_BASE_URL = 'https://test2.yeolde.fun/api/v1';
 
-// Mock模式开关：设为true时完全使用本地Mock数据，后端不可用时也能测试
-export const USE_MOCK = true;
-
 export const APP_NAME = 'NorthCore';
 
 export const COLORS = {

@@ -82,6 +82,9 @@ sandboxes/
 
 docs/
 
+# mobile2 — Flutter project (not part of this monorepo)
+mobile2/
+
 * text=auto
 
 *.ts text eol=lf

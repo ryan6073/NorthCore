@@ -14,14 +14,33 @@ import {
 import { useAuthStore } from '@/stores/useAuthStore';
 import { Ionicons } from '@expo/vector-icons';
 
+type AuthMode = 'login' | 'register';
+
 export default function LoginScreen() {
+  const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [guestLoading, setGuestLoading] = useState(false);
-  const { login, loginAsGuest } = useAuthStore();
+  const { login, register, loginAsGuest } = useAuthStore();
 
-  const handleLogin = async () => {
+  const isLogin = mode === 'login';
+
+  const resetForm = () => {
+    setEmail('');
+    setPassword('');
+    setUsername('');
+    setConfirmPassword('');
+  };
+
+  const toggleMode = () => {
+    resetForm();
+    setMode(isLogin ? 'register' : 'login');
+  };
+
+  const handleSubmit = async () => {
     if (!email.trim() || !password.trim()) {
       Alert.alert('提示', '请输入邮箱和密码');
       return;
@@ -30,15 +49,40 @@ export default function LoginScreen() {
       Alert.alert('提示', '请输入有效的电子邮箱');
       return;
     }
-    
-    setLoading(true);
-    try {
-      await login(email.trim().toLowerCase(), password);
-    } catch (error: any) {
-      console.error(error);
-      Alert.alert('登录失败', error?.response?.data?.message || '邮箱或密码错误，请重试');
-    } finally {
-      setLoading(false);
+
+    if (isLogin) {
+      setLoading(true);
+      try {
+        await login(email.trim().toLowerCase(), password);
+      } catch (error: any) {
+        console.error(error);
+        Alert.alert('登录失败', error?.response?.data?.message || '邮箱或密码错误，请重试');
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      if (password.length < 6) {
+        Alert.alert('提示', '密码长度至少6位');
+        return;
+      }
+      if (password !== confirmPassword) {
+        Alert.alert('提示', '两次输入的密码不一致');
+        return;
+      }
+      if (!username.trim()) {
+        Alert.alert('提示', '请输入用户名');
+        return;
+      }
+
+      setLoading(true);
+      try {
+        await register(username.trim(), email.trim().toLowerCase(), password);
+      } catch (error: any) {
+        console.error(error);
+        Alert.alert('注册失败', error?.response?.data?.message || '注册失败，请稍后重试');
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -69,7 +113,25 @@ export default function LoginScreen() {
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>邮箱登录</Text>
+          <Text style={styles.cardTitle}>{isLogin ? '邮箱登录' : '创建账号'}</Text>
+
+          {/* 注册时显示用户名 */}
+          {!isLogin && (
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>用户名</Text>
+              <View style={styles.inputWrapper}>
+                <Ionicons name="person-outline" size={20} color="#8f959e" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="请输入用户名"
+                  placeholderTextColor="#8f959e"
+                  value={username}
+                  onChangeText={setUsername}
+                  autoCapitalize="none"
+                />
+              </View>
+            </View>
+          )}
 
           <View style={styles.inputGroup}>
             <Text style={styles.label}>电子邮箱</Text>
@@ -90,13 +152,13 @@ export default function LoginScreen() {
           <View style={styles.inputGroup}>
             <View style={styles.passwordHeader}>
               <Text style={styles.label}>密码</Text>
-              <Text style={styles.hintText}>默认: admin@northcore.ai / admin123</Text>
+              {isLogin && <Text style={styles.hintText}>默认: admin@northcore.ai / admin123</Text>}
             </View>
             <View style={styles.inputWrapper}>
               <Ionicons name="lock-closed-outline" size={20} color="#8f959e" style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
-                placeholder="请输入密码"
+                placeholder={isLogin ? '请输入密码' : '密码长度至少6位'}
                 placeholderTextColor="#8f959e"
                 value={password}
                 onChangeText={setPassword}
@@ -105,16 +167,41 @@ export default function LoginScreen() {
             </View>
           </View>
 
+          {/* 注册时显示确认密码 */}
+          {!isLogin && (
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>确认密码</Text>
+              <View style={styles.inputWrapper}>
+                <Ionicons name="lock-closed-outline" size={20} color="#8f959e" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="再次输入密码"
+                  placeholderTextColor="#8f959e"
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  secureTextEntry
+                />
+              </View>
+            </View>
+          )}
+
           <TouchableOpacity
             style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={handleLogin}
+            onPress={handleSubmit}
             disabled={loading || guestLoading}
           >
             {loading ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={styles.buttonText}>立即登录</Text>
+              <Text style={styles.buttonText}>{isLogin ? '立即登录' : '注册并登录'}</Text>
             )}
+          </TouchableOpacity>
+
+          {/* 登录/注册切换 */}
+          <TouchableOpacity style={styles.switchModeButton} onPress={toggleMode} disabled={loading || guestLoading}>
+            <Text style={styles.switchModeText}>
+              {isLogin ? '没有账号？立即注册' : '已有账号？去登录'}
+            </Text>
           </TouchableOpacity>
 
           <View style={styles.dividerContainer}>
@@ -131,9 +218,7 @@ export default function LoginScreen() {
             {guestLoading ? (
               <ActivityIndicator color="#3370ff" />
             ) : (
-              <>
-                <Text style={styles.guestButtonText}>✨ 访客快捷体验</Text>
-              </>
+              <Text style={styles.guestButtonText}>✨ 访客快捷体验</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -274,6 +359,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     fontSize: 12,
     color: '#8f959e',
+  },
+  switchModeButton: {
+    alignItems: 'center',
+    marginTop: 16,
+    padding: 8,
+  },
+  switchModeText: {
+    color: '#3370ff',
+    fontSize: 14,
+    fontWeight: '500',
   },
   guestButton: {
     height: 48,

@@ -52,21 +52,23 @@ export default function MarkdownRenderer({
 }
 
 /** Native WebView that auto-heights via postMessage */
-function NativeWebView({ content, language, isCodeBlock, maxHeight }: MarkdownRendererProps) {
+function NativeWebView({ content: rawContent, language, isCodeBlock, maxHeight }: MarkdownRendererProps) {
+  const safeContent = rawContent ?? '';  // guard against undefined/null — crasher #1
   const [height, setHeight] = useState(40);
   const [expanded, setExpanded] = useState(false);
-  const [fullContentExpanded, setFullContentExpanded] = useState(false);
-  const isOverflow = maxHeight !== undefined && height > maxHeight && !isCodeBlock;
+  // 展开后忽略 maxHeight
+  const effectiveMaxHeight = expanded ? undefined : maxHeight;
+  const isOverflow = effectiveMaxHeight !== undefined && height > effectiveMaxHeight && !isCodeBlock;
 
-  // 超大内容截断：超过 3000 字符的 markdown 先折叠，避免 WebView 渲染超时/崩溃
-  const CONTENT_CHARS_LIMIT = 3000;
-  const isLongContent = !isCodeBlock && content.length > CONTENT_CHARS_LIMIT;
-  const displayContent = fullContentExpanded || isCodeBlock ? content : content.slice(0, CONTENT_CHARS_LIMIT) + '\n\n...（内容过长已截断，点击下方展开查看全文）';
+  // 去除文本截断：WebView 在现代手机上渲染长内容性能足够
+  // 只保留 maxHeight 视觉折叠（由 isOverflow 控制）
+  const isLongContent = false;
+  const displayContent = safeContent;
 
   const html = useMemo(() => {
-    if (isCodeBlock) return buildCodeHtml(content, language);
+    if (isCodeBlock) return buildCodeHtml(safeContent, language);
     return buildMarkdownHtml(displayContent);
-  }, [displayContent, language, isCodeBlock]);
+  }, [displayContent, safeContent, language, isCodeBlock]);
 
   const onMessage = useCallback((e: any) => {
     try {
@@ -77,7 +79,7 @@ function NativeWebView({ content, language, isCodeBlock, maxHeight }: MarkdownRe
 
   if (!WebView) return null;
 
-  const effectiveHeight = expanded ? height : Math.min(height, maxHeight || 99999);
+  const visibleHeight = expanded ? height : Math.min(height, effectiveMaxHeight || 99999);
 
   return (
     <>
@@ -85,10 +87,10 @@ function NativeWebView({ content, language, isCodeBlock, maxHeight }: MarkdownRe
         source={{ html, baseUrl: 'https://test2.yeolde.fun' }}
         style={[
           styles.webview,
-          { height: effectiveHeight },
+          { height: visibleHeight },
           isCodeBlock ? styles.codeBlock : styles.markdown,
         ]}
-        scrollEnabled={expanded ? true : (!!maxHeight && height > maxHeight)}
+        scrollEnabled={expanded ? true : (!!effectiveMaxHeight && height > effectiveMaxHeight)}
         showsVerticalScrollIndicator={expanded}
         originWhitelist={['*']}
         javaScriptEnabled
@@ -102,15 +104,15 @@ function NativeWebView({ content, language, isCodeBlock, maxHeight }: MarkdownRe
           style={styles.expandToggle}
           onPress={() => setExpanded(!expanded)}
         >
-          {expanded ? '收起 ▲' : `展开全部 ▼ (剩余 ${Math.round((height - maxHeight!) / 20)} 行)`}
+          {expanded ? '收起 ▲' : `展开全部 ▼ (剩余 ${Math.round((height - effectiveMaxHeight!) / 20)} 行)`}
         </Text>
       )}
-      {isLongContent && !fullContentExpanded && (
+      {isLongContent && (
         <Text
           style={styles.expandToggle}
-          onPress={() => setFullContentExpanded(true)}
+          onPress={() => setExpanded(!expanded)}
         >
-          展开全文 ▼（共约 {Math.ceil(content.length / 1000)}K 字符）
+          {expanded ? '收起 ▲' : `展开全文 ▼（共约 ${Math.ceil(safeContent.length / 1000)}K 字符）`}
         </Text>
       )}
     </>

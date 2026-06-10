@@ -1,12 +1,10 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, Platform, Switch } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Platform } from 'react-native';
 import { useAuthStore } from '@/stores/useAuthStore';
-import { useSettingsStore } from '@/stores/useSettingsStore';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function SettingsScreen() {
   const { logout } = useAuthStore();
-  const { useMock, setUseMock } = useSettingsStore();
 
   const handleLogout = () => {
     const performLogout = () => {
@@ -40,29 +38,6 @@ export default function SettingsScreen() {
       </View>
 
       <View style={styles.menuSection}>
-        <TouchableOpacity
-          style={styles.menuItem}
-          activeOpacity={0.82}
-          onPress={() => setUseMock(!useMock)}
-        >
-          <View style={styles.menuLeft}>
-            <View style={styles.menuIcon}>
-              <Ionicons name="construct-outline" size={18} color="#3370ff" />
-            </View>
-            <View style={styles.menuTextContainer}>
-              <Text style={styles.menuText}>Mock模式</Text>
-              <Text style={styles.menuDesc}>后端不可用时也能测试</Text>
-            </View>
-          </View>
-          <View style={styles.switchSlot}>
-            <Switch
-              value={useMock}
-              onValueChange={setUseMock}
-              trackColor={{ false: '#dee0e3', true: '#3370ff' }}
-            />
-          </View>
-        </TouchableOpacity>
-
         <TouchableOpacity style={styles.menuItem}>
           <View style={styles.menuLeft}>
             <View style={styles.menuIcon}>
@@ -180,16 +155,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1f2329',
   },
-  menuTextContainer: {
-    flexDirection: 'column',
-    flex: 1,
-    minWidth: 0,
-  },
-  menuDesc: {
-    fontSize: 12,
-    color: '#8f959e',
-    marginTop: 2,
-  },
   logoutButton: {
     backgroundColor: '#ff3b30',
     borderRadius: 14,
@@ -213,11 +178,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: '#edf4ff',
     alignItems: 'center',
-    justifyContent: 'center',
-  },
-  switchSlot: {
-    width: 58,
-    alignItems: 'flex-end',
     justifyContent: 'center',
   },
 });

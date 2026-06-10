@@ -10,9 +10,9 @@ import {
   Platform,
   ActivityIndicator,
   ScrollView,
-  Clipboard,
   Alert,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import type { Artifact, ArtifactVersion } from '@/types';
 import { useMessageStore } from '@/stores/useMessageStore';
@@ -176,7 +176,7 @@ export default function ArtifactFullScreenModal({
       Alert.alert('提示', '当前版本没有可复制的内容');
       return;
     }
-    Clipboard.setString(currentContent);
+    Clipboard.setStringAsync(currentContent);
     Alert.alert('提示', '已复制产物内容');
   };
 

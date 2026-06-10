@@ -33,6 +33,7 @@ interface AuthState {
   isAuthenticated: boolean | null;
   token: string | null;
   login: (email: string, password: string) => Promise<void>;
+  register: (username: string, email: string, password: string) => Promise<void>;
   loginAsGuest: () => Promise<void>;
   logout: () => void;
   checkAuth: () => Promise<void>;
@@ -48,15 +49,16 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ isAuthenticated: true, token: data.token });
   },
 
+  register: async (username: string, email: string, password: string) => {
+    const data = await authApi.register(username, email, password);
+    await tokenStore.setItem('auth_token', data.token);
+    set({ isAuthenticated: true, token: data.token });
+  },
+
   loginAsGuest: async () => {
-    try {
-      const data = await authApi.loginAsGuest();
-      await tokenStore.setItem('auth_token', data.token);
-      set({ isAuthenticated: true, token: data.token });
-    } catch (error) {
-      await tokenStore.setItem('auth_token', 'mock_token_' + Date.now());
-      set({ isAuthenticated: true, token: 'mock_token' });
-    }
+    const data = await authApi.loginAsGuest();
+    await tokenStore.setItem('auth_token', data.token);
+    set({ isAuthenticated: true, token: data.token });
   },
 
   logout: () => {
@@ -65,7 +67,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   checkAuth: async () => {
-    const token = await tokenStore.getItem('auth_token');
-    set({ isAuthenticated: !!token, token });
+    try {
+      const token = await tokenStore.getItem('auth_token');
+      set({ isAuthenticated: !!token, token });
+    } catch (error) {
+      console.error('[AuthStore] checkAuth failed:', error);
+      set({ isAuthenticated: false, token: null });
+    }
   },
 }));

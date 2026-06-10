@@ -11,7 +11,6 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Rect, Text as SvgText, Path, Defs, Marker, Polygon } from 'react-native-svg';
 import type { Artifact, ArtifactVersion } from '@/types';
-import { useSettingsStore } from '@/stores/useSettingsStore';
 
 const isNative = Platform.OS === 'ios' || Platform.OS === 'android';
 
@@ -37,7 +36,6 @@ export default function ArtifactPreview({
   loading,
   maxHeight,
 }: ArtifactPreviewProps) {
-  const useMock = useSettingsStore((state) => state.useMock);
   // ── 确定要渲染的内容 ──
   const content = version?.content || artifact.contentPreview || '';
   const type = artifact.type;
@@ -71,7 +69,7 @@ export default function ArtifactPreview({
       case 'html':
         return <HtmlPreview content={content} maxHeight={maxHeight} />;
       case 'markdown':
-        return <MarkdownPreview content={content} maxHeight={maxHeight} preferNative={useMock} />;
+        return <MarkdownPreview content={content} maxHeight={maxHeight} />;
       case 'mermaid':
         return <MermaidPreview content={content} maxHeight={maxHeight} />;
       case 'image':
@@ -156,7 +154,7 @@ function HtmlInlinePreview({ content, maxHeight }: { content: string; maxHeight:
 }
 
 /** Markdown 预览 — WebView + marked.js */
-function MarkdownPreview({ content, maxHeight, preferNative }: { content: string; maxHeight?: number; preferNative?: boolean }) {
+function MarkdownPreview({ content, maxHeight }: { content: string; maxHeight?: number }) {
   if (isNative && !WebView) {
     return <NativeMarkdownPreview content={content} maxHeight={maxHeight} />;
   }

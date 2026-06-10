@@ -4,6 +4,7 @@ import { Conversation } from '@/types';
 import { Ionicons } from '@expo/vector-icons';
 import { useAgentStore } from '@/stores/useAgentStore';
 import AuthImage from './AuthImage';
+import { formatConversationTime } from '@/utils/timeFormat';
 
 interface ConversationItemProps {
   conversation: Conversation;
@@ -20,18 +21,9 @@ export default function ConversationItem({ conversation, onPress, onLongPress }:
   const lastMessage = String((conversation as any).lastMessage || (conversation as any).lastMessageContent || '暂无新消息');
   const conversationAgents = Array.isArray((conversation as any).agents) ? (conversation as any).agents : [];
 
-  // Format time (e.g., "2024-01-15 10:30:00" -> "10:30")
+  // 格式化时间：今天→HH:MM，今年→MM-DD，今年以前→YYYY-MM-DD
   const getTimeString = (timeStr: string) => {
-    if (!timeStr) return '';
-    try {
-      const parts = timeStr.split(' ');
-      if (parts.length > 1) {
-        return parts[1].substring(0, 5);
-      }
-      return timeStr.substring(11, 16);
-    } catch {
-      return timeStr;
-    }
+    return formatConversationTime(timeStr);
   };
 
   const getAgentId = (agent: any) => String(agent?.id || agent?.agentId || '');

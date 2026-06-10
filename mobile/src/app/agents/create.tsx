@@ -72,10 +72,10 @@ export default function CreateAgentScreen() {
       tags,
       systemPrompt: systemPrompt.trim(),
       status: (existingAgent?.status || 'online') as any,
-      provider: existingAgent?.provider || 'mock',
+      provider: existingAgent?.provider || 'openai',
       enabled: existingAgent?.enabled !== undefined ? existingAgent.enabled : true,
       modelConfig: existingAgent?.modelConfig || {
-        provider: 'mock',
+        provider: 'openai',
         modelName: 'gpt-4',
         temperature: 0.7,
         maxTokens: 4000,
