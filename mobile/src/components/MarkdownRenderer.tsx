@@ -53,7 +53,7 @@ export default function MarkdownRenderer({
 
 /** Native WebView that auto-heights via postMessage */
 function NativeWebView({ content: rawContent, language, isCodeBlock, maxHeight }: MarkdownRendererProps) {
-  const safeContent = rawContent ?? '';  // guard against undefined/null — crasher #1
+  const safeContent = rawContent ?? '';  // guard against undefined/null
   const [height, setHeight] = useState(40);
   const [expanded, setExpanded] = useState(false);
   // 展开后忽略 maxHeight

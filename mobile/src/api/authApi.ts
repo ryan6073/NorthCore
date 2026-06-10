@@ -24,10 +24,11 @@ export const authApi = {
   },
 
   /**
-   * 验证当前 token 是否有效（轻量调用）
+   * 验证当前 token 是否有效，并返回用户信息
    * 401 时抛出异常，checkAuth 会据此清除 token
    */
-  async verifyToken(): Promise<void> {
-    await request<any>('/auth/me', { method: 'GET' });
+  async verifyToken(): Promise<{ user?: { id?: string; name?: string; email?: string; avatar?: string }; userId?: string; username?: string; avatar?: string }> {
+    const res = await request<any>('/auth/me', { method: 'GET' });
+    return res.data;
   },
 };

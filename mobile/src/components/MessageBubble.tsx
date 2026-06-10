@@ -19,7 +19,7 @@ interface MessageBubbleProps {
 
 export default function MessageBubble({ message: rawMessage, agents = [], onOpenArtifactFullScreen, onImagePress }: MessageBubbleProps) {
   // Normalise: ensure all mutable fields have safe defaults — crasher #6
-  const message = { ...rawMessage, content: rawMessage.content ?? '', type: rawMessage.type ?? 'text' as any };
+  const message = { ...rawMessage, content: (rawMessage.content ?? '').replace(/\\n/g, '\n'), type: rawMessage.type ?? 'text' as any };
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const isThinking = message.type === 'status' && message.content === '正在思考...';

@@ -94,14 +94,12 @@ export const useAuthStore = create<AuthState>((set) => ({
         return;
       }
 
-      // 向后端验证 token 是否仍然有效
-      // 如果返回 401 则清除 token 跳到登录页
+      // 向后端验证 token 是否仍然有效，并获取最新用户信息（含 avatar）
       try {
-        const userJson = await tokenStore.getItem('auth_user');
-        const userInfo = userJson ? JSON.parse(userJson) : null;
-
-        // 调用一个轻量接口验证 token 有效性
-        await authApi.verifyToken();
+        const userData = await authApi.verifyToken();
+        const userInfo = extractUserInfo(userData);
+        // 持久化最新 userInfo
+        await tokenStore.setItem('auth_user', JSON.stringify(userInfo));
         set({ isAuthenticated: true, token, userInfo });
       } catch {
         // token 无效（401）或网络不可用

@@ -98,8 +98,17 @@ export default function RollbackRunCard({ message, onOpenArtifactFullScreen }: R
     if (isUndoing || isRevoked || !runId) return;
     setIsUndoing(true);
     try {
-      await sandboxApi.rollbackRun(runId);
+      const detail = await sandboxApi.rollbackRun(runId);
       setUserRevoked(true);
+      // 从 store artifacts 中移除被撤销的产物，同步 header 角标
+      const revokedIds = new Set(
+        (detail?.changes || []).map((c: any) => c.artifactId).filter(Boolean)
+      );
+      if (revokedIds.size > 0) {
+        useMessageStore.setState((state) => ({
+          artifacts: state.artifacts.filter((a) => !revokedIds.has(a.id) && !revokedIds.has(a.artifactId)),
+        }));
+      }
     } catch {
       // error
     } finally {

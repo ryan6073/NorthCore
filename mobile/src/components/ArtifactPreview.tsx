@@ -639,24 +639,26 @@ function SandboxWebView({
     );
   }
 
+  const isFullScreen = maxHeight === 99999;
   return (
-    <View style={{ minHeight: maxHeight || 360 }}>
-      {webLoading && (
+    <View style={{ flex: isFullScreen ? 1 : 0, minHeight: isFullScreen ? undefined : (maxHeight || 360) }}>
+      {webLoading && (isFullScreen ? null : (
         <View style={styles.webLoadingOverlay}>
           <ActivityIndicator size="small" color="#3370ff" />
           <Text style={styles.loadingText}>正在渲染预览...</Text>
         </View>
-      )}
+      ))}
       <WebView
         source={{ html, baseUrl: 'https://test2.yeolde.fun' }}
         style={{
-          height: Math.min(height, maxHeight || 99999),
-          minHeight: maxHeight || 360,
+          flex: isFullScreen ? 1 : 0,
+          height: isFullScreen ? undefined : Math.min(height, maxHeight || 99999),
+          minHeight: isFullScreen ? undefined : (maxHeight || 360),
           backgroundColor: 'transparent',
           width: '100%',
           opacity: webLoading ? 0 : 1,
         }}
-        scrollEnabled={!!maxHeight && height > maxHeight}
+        scrollEnabled={!isFullScreen && !!maxHeight && height > maxHeight}
         showsVerticalScrollIndicator={false}
         originWhitelist={['*']}
         javaScriptEnabled
