@@ -83,8 +83,9 @@ export default function ArtifactPreview({
     }
   };
 
+  const isFullScreen = maxHeight === 99999;
   return (
-    <View style={[styles.container, maxHeight ? { maxHeight } : undefined]}>
+    <View style={[styles.container, isFullScreen ? { flex: 1 } : (maxHeight ? { maxHeight } : undefined)]}>
       {renderContent()}
     </View>
   );
@@ -106,7 +107,8 @@ function CodePreview({ content, language, maxHeight }: { content: string; langua
 
 /** HTML 预览 — WebView srcDoc */
 function HtmlPreview({ content, maxHeight }: { content: string; maxHeight?: number }) {
-  if (maxHeight) {
+  const isFullScreen = maxHeight === 99999;
+  if (!isFullScreen && maxHeight) {
     return <HtmlInlinePreview content={content} maxHeight={maxHeight} />;
   }
 
@@ -584,6 +586,7 @@ function SandboxWebView({
   fallbackText?: string;
   disableTimeoutFallback?: boolean;
 }) {
+  const isFullScreen = maxHeight === 99999;
   const [height, setHeight] = useState(maxHeight || 520);
   const [fallback, setFallback] = useState(false);
   const [webLoading, setWebLoading] = useState(true);
@@ -624,12 +627,14 @@ function SandboxWebView({
 
     // Web平台使用iframe进行预览
     const srcDocBase64 = btoa(unescape(encodeURIComponent(html)));
+    const iframeMaxHeight = isFullScreen ? undefined : maxHeight;
     return (
       <iframe
         src={`data:text/html;charset=utf-8;base64,${srcDocBase64}`}
         style={{
           width: '100%',
-          height: Math.min(height, maxHeight || 600),
+          height: iframeMaxHeight ? Math.min(height, iframeMaxHeight) : '100%',
+          flex: isFullScreen ? 1 : undefined,
           border: 'none',
           borderRadius: 12,
           overflow: 'hidden',
@@ -639,15 +644,14 @@ function SandboxWebView({
     );
   }
 
-  const isFullScreen = maxHeight === 99999;
   return (
     <View style={{ flex: isFullScreen ? 1 : 0, minHeight: isFullScreen ? undefined : (maxHeight || 360) }}>
-      {webLoading && (isFullScreen ? null : (
+      {webLoading && !isFullScreen && (
         <View style={styles.webLoadingOverlay}>
           <ActivityIndicator size="small" color="#3370ff" />
           <Text style={styles.loadingText}>正在渲染预览...</Text>
         </View>
-      ))}
+      )}
       <WebView
         source={{ html, baseUrl: 'https://test2.yeolde.fun' }}
         style={{

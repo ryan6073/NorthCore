@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import type { Message } from '@/types';
+import type { Message, Artifact } from '@/types';
 import { useMessageStore } from '@/stores/useMessageStore';
 import { sandboxApi } from '@/api/sandboxApi';
+import { getArtifacts } from '@/services/artifactService';
 
 interface RollbackRunCardProps {
   message: Message;
@@ -23,47 +24,43 @@ export default function RollbackRunCard({ message, onOpenArtifactFullScreen }: R
   const [isUndoing, setIsUndoing] = useState(false);
   const [userRevoked, setUserRevoked] = useState(false);
 
-  // ── 查询后端 run 状态 ──
-  const [runStatus, setRunStatus] = useState<string | null>(null);
-  const [statusLoading, setStatusLoading] = useState(true);
+  const convId = message.conversationId || '';
   const runId: string | undefined = message.metadata?.sourceRunId;
 
+  // ── 从 GET /conversations/{id}/artifacts 获取产物列表，对比id+版本+run ──
+  const [serverArtifacts, setServerArtifacts] = useState<Artifact[]>([]);
+  const [statusLoading, setStatusLoading] = useState(true);
   useEffect(() => {
-    if (!runId) { setStatusLoading(false); return; }
+    if (!convId) { setStatusLoading(false); return; }
     let cancelled = false;
     setStatusLoading(true);
-    sandboxApi.getRunDetail(runId)
-      .then((data) => { if (!cancelled) { setRunStatus(data?.status || null); setStatusLoading(false); } })
+    getArtifacts(convId)
+      .then((list) => { if (!cancelled) { setServerArtifacts(list || []); setStatusLoading(false); } })
       .catch(() => { if (!cancelled) setStatusLoading(false); });
     return () => { cancelled = true; };
-  }, [runId]);
-
-  const isRunRolledBack = runStatus === 'rolled_back' || runStatus === 'revoked';
-
-  // ── store artifacts 对比 ──
-  const storeArtifacts = useMessageStore((s) => s.artifacts);
-  const storeArtifactKeys = useMemo(
-    () => new Set(storeArtifacts.map((a) => `${a.id || a.artifactId}::${a.runId || ''}`).filter(Boolean)),
-    [storeArtifacts]
-  );
+  }, [convId]);
 
   const artifactItems: Message[] = message.metadata?.items || message.metadata?.groupedMessages || [];
   if (artifactItems.length === 0) return null;
 
-  const revokedMap = useMemo(() => {
-    const map: Record<string, boolean> = {};
-    artifactItems.forEach((item) => {
-      const aid = item.artifactId;
-      const rid = runId || (item as any).runId || '';
-      if (aid && storeArtifactKeys.size > 0 && !storeArtifactKeys.has(`${aid}::${rid}`)) {
-        map[aid] = true;
-      }
+  // 从 GET /conversations/{id}/artifacts 判断每个产物是否存在
+  // 匹配条件：item.artifactId === server.id 且 sourceRunId === server.runId
+  const allRevoked = useMemo(() => {
+    // 如果用户已点击撤销，直接返回 revoked
+    if (userRevoked) return 'revoked';
+    // 还没加载完成时保留之前的状态（不重置为 pending）
+    if (serverArtifacts.length === 0) return 'pending';
+    const matched = artifactItems.filter((item) => {
+      if (!item.artifactId) return false;
+      return serverArtifacts.some(
+        (a) => (a.id === item.artifactId || a.artifactId === item.artifactId) &&
+              a.runId === runId
+      );
     });
-    return map;
-  }, [artifactItems, storeArtifactKeys, runId]);
+    return matched.length === 0 ? 'revoked' : 'partial';
+  }, [artifactItems, serverArtifacts, runId, userRevoked]);
 
-  const hasAnyStoreRevoked = artifactItems.some((item) => item.artifactId && revokedMap[item.artifactId]);
-  const isRevoked = isRunRolledBack || hasAnyStoreRevoked || userRevoked;
+  const isRevoked = allRevoked === 'revoked';
 
   // ── 文件统计 ──
   const getFileDiff = (path: string, action: string) => {
@@ -98,16 +95,13 @@ export default function RollbackRunCard({ message, onOpenArtifactFullScreen }: R
     if (isUndoing || isRevoked || !runId) return;
     setIsUndoing(true);
     try {
-      const detail = await sandboxApi.rollbackRun(runId);
+      await sandboxApi.rollbackRun(runId);
       setUserRevoked(true);
-      // 从 store artifacts 中移除被撤销的产物，同步 header 角标
-      const revokedIds = new Set(
-        (detail?.changes || []).map((c: any) => c.artifactId).filter(Boolean)
-      );
-      if (revokedIds.size > 0) {
-        useMessageStore.setState((state) => ({
-          artifacts: state.artifacts.filter((a) => !revokedIds.has(a.id) && !revokedIds.has(a.artifactId)),
-        }));
+      // 重新加载会话产物，更新右上角角标、产物面板和当前卡片状态
+      if (convId) {
+        useMessageStore.getState().loadArtifacts(convId);
+        const freshList = await getArtifacts(convId).catch(() => []);
+        setServerArtifacts(freshList || []);
       }
     } catch {
       // error
@@ -155,12 +149,11 @@ export default function RollbackRunCard({ message, onOpenArtifactFullScreen }: R
 
       <View style={s.fileList}>
         {visibleStats.map((file, idx) => {
-          const fr = isRevoked || (file.artifactId ? revokedMap[file.artifactId] : false);
           return (
-            <TouchableOpacity key={idx} onPress={() => handleFileClick(file.artifactId)} disabled={fr}
-              style={[s.fileRow, idx < visibleStats.length - 1 && s.fileRowBorder]} activeOpacity={fr ? 1 : 0.6}>
+            <TouchableOpacity key={idx} onPress={() => handleFileClick(file.artifactId)} disabled={isRevoked}
+              style={[s.fileRow, idx < visibleStats.length - 1 && s.fileRowBorder]} activeOpacity={isRevoked ? 1 : 0.6}>
               <View style={s.fileRowLeft}>
-                {fr ? (
+                {isRevoked ? (
                   <View style={[s.badge, { backgroundColor: '#fff1f2' }]}><Text style={[s.badgeText, { color: '#e11d48' }]}>已撤销</Text></View>
                 ) : (
                   <View style={[s.badge, { backgroundColor: (actionColors[file.action] || actionColors.created).bg }]}>
@@ -169,9 +162,9 @@ export default function RollbackRunCard({ message, onOpenArtifactFullScreen }: R
                     </Text>
                   </View>
                 )}
-                <Text style={[s.filePath, fr && s.filePathRevoked]} numberOfLines={1}>{file.path}</Text>
+                <Text style={[s.filePath, isRevoked && s.filePathRevoked]} numberOfLines={1}>{file.path}</Text>
               </View>
-              {!fr && (
+              {!isRevoked && (
                 <View style={s.fileDiffRight}>
                   <Text style={s.diffAdd}>+{file.additions}</Text>
                   <Text style={s.diffDel}>-{file.deletions}</Text>

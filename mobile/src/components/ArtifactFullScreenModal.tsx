@@ -45,7 +45,6 @@ export default function ArtifactFullScreenModal({
   const [activeMode, setActiveMode] = useState<ArtifactViewMode>('preview');
   const [showHistory, setShowHistory] = useState(false);
   const [localVersions, setLocalVersions] = useState<ArtifactVersion[]>([]);
-  const [contentHeight, setContentHeight] = useState(600);
 
   // ── 获取所有版本 ──
   const versions = useMemo(() => {
@@ -198,11 +197,14 @@ export default function ArtifactFullScreenModal({
     }
 
     return (
-      <ArtifactPreview
-        artifact={artifact}
-        version={currentVersion}
-        loading={loading && sortedVersions.length === 0}
-      />
+      <View style={{ flex: 1 }}>
+        <ArtifactPreview
+          artifact={artifact}
+          version={currentVersion}
+          loading={loading && sortedVersions.length === 0}
+          maxHeight={99999}
+        />
+      </View>
     );
   };
 
@@ -382,14 +384,9 @@ export default function ArtifactFullScreenModal({
           ) : null}
         </View>
 
-        {/* ── 内容区域 (撑满剩余空间) ── */}
+        {/* ── 内容区域 ── */}
         <View style={styles.contentContainer}>
-          <ArtifactPreview
-            artifact={artifact}
-            version={currentVersion}
-            loading={loading && sortedVersions.length === 0}
-            maxHeight={99999}
-          />
+          {renderContent()}
         </View>
       </SafeAreaView>
     </Modal>
