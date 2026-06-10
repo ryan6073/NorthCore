@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { ArrowRight, BookOpen } from "lucide-react";
 import { DemoMedia } from "@/components/showcase/DemoMedia";
+import { APP_URL, DOCS_URL } from "@/lib/constants";
 
 const fadeUp = {
   initial: { opacity: 0, y: 24 },
@@ -50,16 +51,20 @@ export function HeroSection() {
           className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row"
         >
           <a
-            href="#cta"
+            href={APP_URL}
+            target="_blank"
+            rel="noopener noreferrer"
             className="group relative inline-flex items-center gap-2 overflow-hidden rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 transition-all duration-300 hover:shadow-xl hover:shadow-violet-500/35 hover:brightness-105"
           >
-            <span className="absolute inset-0 bg-gradient-to-r from-violet-400/0 via-white/20 to-violet-400/0 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+            <span className="pointer-events-none absolute inset-0 bg-gradient-to-r from-violet-400/0 via-white/20 to-violet-400/0 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
             Get Started
             <ArrowRight className="relative size-4 transition-transform duration-300 group-hover:translate-x-0.5" />
           </a>
 
           <a
-            href="#im-chat"
+            href={DOCS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
             className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-6 py-3 text-sm font-medium text-zinc-600 shadow-sm transition-colors duration-300 hover:border-zinc-300 hover:text-zinc-900"
           >
             <BookOpen className="size-4 text-zinc-400" />
@@ -84,7 +89,7 @@ export function HeroSection() {
           />
 
           <DemoMedia
-            src="/assets/hero-demo.mp4"
+            src="/assets/project-demo.mp4"
             poster="/assets/chat-ui.png"
             alt="Agent Hub platform demo"
             className="w-full"

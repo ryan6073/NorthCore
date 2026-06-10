@@ -30,3 +30,138 @@ Read more: https://nextjs.org/docs/messages/failed-to-find-server-action
 Error: Failed to find Server Action "cd4045ea". This request might be from an older or newer deployment.
 Read more: https://nextjs.org/docs/messages/failed-to-find-server-action
     at ignore-listed frames
+
+> website@0.1.0 start
+> next start -H 0.0.0.0
+
+▲ Next.js 16.2.7
+- Local:         http://localhost:3000
+- Network:       http://0.0.0.0:3000
+✓ Ready in 170ms
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of /home/yeolde/agent_hub/package-lock.json as the root directory.
+ To silence this warning, set `outputFileTracingRoot` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/output#caveats for more information.
+ Detected additional lockfiles: 
+   * /home/yeolde/agent_hub/website/package-lock.json
+
+Error: Failed to find Server Action "x". This request might be from an older or newer deployment.
+Read more: https://nextjs.org/docs/messages/failed-to-find-server-action
+    at ignore-listed frames
+
+> website@0.1.0 start
+> next start -H 0.0.0.0
+
+▲ Next.js 16.2.7
+- Local:         http://localhost:3000
+- Network:       http://0.0.0.0:3000
+✓ Ready in 173ms
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of /home/yeolde/agent_hub/package-lock.json as the root directory.
+ To silence this warning, set `outputFileTracingRoot` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/output#caveats for more information.
+ Detected additional lockfiles: 
+   * /home/yeolde/agent_hub/website/package-lock.json
+
+
+> website@0.1.0 start
+> next start -H 0.0.0.0
+
+▲ Next.js 16.2.7
+- Local:         http://localhost:3000
+- Network:       http://0.0.0.0:3000
+✓ Ready in 179ms
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of /home/yeolde/agent_hub/package-lock.json as the root directory.
+ To silence this warning, set `outputFileTracingRoot` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/output#caveats for more information.
+ Detected additional lockfiles: 
+   * /home/yeolde/agent_hub/website/package-lock.json
+
+Error: Failed to find Server Action "x". This request might be from an older or newer deployment.
+Read more: https://nextjs.org/docs/messages/failed-to-find-server-action
+    at ignore-listed frames
+Error: Failed to find Server Action "x". This request might be from an older or newer deployment.
+Read more: https://nextjs.org/docs/messages/failed-to-find-server-action
+    at ignore-listed frames
+Error: Failed to find Server Action "x". This request might be from an older or newer deployment.
+Read more: https://nextjs.org/docs/messages/failed-to-find-server-action
+    at ignore-listed frames
+Error: Failed to find Server Action "x". This request might be from an older or newer deployment.
+Read more: https://nextjs.org/docs/messages/failed-to-find-server-action
+    at ignore-listed frames
+
+> website@0.1.0 start
+> next start -H 0.0.0.0
+
+▲ Next.js 16.2.7
+- Local:         http://localhost:3000
+- Network:       http://0.0.0.0:3000
+✓ Ready in 181ms
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of /home/yeolde/agent_hub/package-lock.json as the root directory.
+ To silence this warning, set `outputFileTracingRoot` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/output#caveats for more information.
+ Detected additional lockfiles: 
+   * /home/yeolde/agent_hub/website/package-lock.json
+
+
+> website@0.1.0 start
+> next start -H 0.0.0.0
+
+▲ Next.js 16.2.7
+- Local:         http://localhost:3000
+- Network:       http://0.0.0.0:3000
+✓ Ready in 167ms
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of /home/yeolde/agent_hub/package-lock.json as the root directory.
+ To silence this warning, set `outputFileTracingRoot` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/output#caveats for more information.
+ Detected additional lockfiles: 
+   * /home/yeolde/agent_hub/website/package-lock.json
+
+
+> website@0.1.0 start
+> next start -H 0.0.0.0
+
+▲ Next.js 16.2.7
+- Local:         http://localhost:3000
+- Network:       http://0.0.0.0:3000
+✓ Ready in 170ms
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of /home/yeolde/agent_hub/package-lock.json as the root directory.
+ To silence this warning, set `outputFileTracingRoot` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/output#caveats for more information.
+ Detected additional lockfiles: 
+   * /home/yeolde/agent_hub/website/package-lock.json
+
+
+> website@0.1.0 start
+> next start -H 0.0.0.0
+
+▲ Next.js 16.2.7
+- Local:         http://localhost:3000
+- Network:       http://0.0.0.0:3000
+✓ Ready in 165ms
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of /home/yeolde/agent_hub/package-lock.json as the root directory.
+ To silence this warning, set `outputFileTracingRoot` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/output#caveats for more information.
+ Detected additional lockfiles: 
+   * /home/yeolde/agent_hub/website/package-lock.json
+
+Error: Failed to find Server Action "x". This request might be from an older or newer deployment.
+Read more: https://nextjs.org/docs/messages/failed-to-find-server-action
+    at ignore-listed frames
+Error: Failed to find Server Action "x". This request might be from an older or newer deployment.
+Read more: https://nextjs.org/docs/messages/failed-to-find-server-action
+    at ignore-listed frames
+Error: Failed to find Server Action "x". This request might be from an older or newer deployment.
+Read more: https://nextjs.org/docs/messages/failed-to-find-server-action
+    at ignore-listed frames
+Error: Failed to find Server Action "x". This request might be from an older or newer deployment.
+Read more: https://nextjs.org/docs/messages/failed-to-find-server-action
+    at ignore-listed frames
+Error: Failed to find Server Action "x". This request might be from an older or newer deployment.
+Read more: https://nextjs.org/docs/messages/failed-to-find-server-action
+    at ignore-listed frames

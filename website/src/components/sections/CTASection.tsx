@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { ArrowRight } from "lucide-react";
 import { GithubIcon } from "@/components/icons/GithubIcon";
-import { GITHUB_URL, SITE_NAME } from "@/lib/constants";
+import { APP_URL, GITHUB_URL, SITE_NAME } from "@/lib/constants";
 
 export function CTASection() {
   return (
@@ -24,7 +24,7 @@ export function CTASection() {
 
         <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
           <a
-            href={GITHUB_URL}
+            href={APP_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="group inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 transition-all hover:shadow-xl hover:shadow-violet-500/35"

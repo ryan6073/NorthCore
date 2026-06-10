@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import { motion, useScroll, useTransform } from "framer-motion";
-import { DemoMedia } from "@/components/showcase/DemoMedia";
-import type { Feature } from "@/lib/features";
+import { DemoMediaStack } from "@/components/showcase/DemoMediaStack";
+import type { Feature, FeatureHighlight, FeatureMedia } from "@/lib/features";
 import { cn } from "@/lib/utils";
 
 type FeatureShowcaseSectionProps = {
@@ -27,9 +27,46 @@ const itemVariants = {
   },
 };
 
+function isSelectableHighlight(highlight: FeatureHighlight): boolean {
+  return highlight.selectable !== false;
+}
+
+function resolveHighlightVideo(
+  highlight: FeatureHighlight,
+  media: FeatureMedia,
+): string {
+  return highlight.videoSrc ?? media.src;
+}
+
 export function FeatureShowcaseSection({ feature }: FeatureShowcaseSectionProps) {
   const sectionRef = useRef<HTMLElement>(null);
   const isTextLeft = feature.layout === "text-left";
+
+  const selectableHighlights = useMemo(
+    () => feature.highlights.filter(isSelectableHighlight),
+    [feature.highlights],
+  );
+
+  const [activeLabel, setActiveLabel] = useState(
+    () => selectableHighlights[0]?.label ?? feature.highlights[0]?.label ?? "",
+  );
+
+  const videoSources = useMemo(
+    () => [
+      ...new Set(
+        selectableHighlights.map((item) => resolveHighlightVideo(item, feature.media)),
+      ),
+    ],
+    [feature, selectableHighlights],
+  );
+
+  const activeHighlight =
+    selectableHighlights.find((item) => item.label === activeLabel) ??
+    selectableHighlights[0];
+
+  const activeVideo = activeHighlight
+    ? resolveHighlightVideo(activeHighlight, feature.media)
+    : feature.media.src;
 
   const { scrollYProgress } = useScroll({
     target: sectionRef,
@@ -93,23 +130,33 @@ export function FeatureShowcaseSection({ feature }: FeatureShowcaseSectionProps)
             viewport={{ once: true, amount: 0.3 }}
             className="mt-8 space-y-4"
           >
-            {feature.highlights.map((item) => (
-              <motion.li
-                key={item.label}
-                variants={itemVariants}
-                className="flex gap-3 rounded-xl border border-zinc-200/80 bg-white/70 p-4 shadow-sm backdrop-blur-sm"
-              >
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-violet-600">
-                  <item.icon className="size-4" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-zinc-900">{item.label}</p>
-                  <p className="mt-0.5 text-sm leading-relaxed text-zinc-500">
-                    {item.detail}
-                  </p>
-                </div>
-              </motion.li>
-            ))}
+            {feature.highlights.map((item) => {
+              const selectable = isSelectableHighlight(item);
+              const isActive = selectable && item.label === activeLabel;
+
+              return (
+                <motion.li key={item.label} variants={itemVariants}>
+                  {selectable ? (
+                    <button
+                      type="button"
+                      onClick={() => setActiveLabel(item.label)}
+                      className={cn(
+                        "flex w-full gap-3 rounded-xl border p-4 text-left shadow-sm backdrop-blur-sm transition-all duration-200",
+                        isActive
+                          ? "border-violet-300 bg-violet-50/80 shadow-md shadow-violet-500/10 ring-1 ring-violet-200"
+                          : "border-zinc-200/80 bg-white/70 hover:border-violet-200 hover:bg-violet-50/40",
+                      )}
+                    >
+                      <HighlightContent item={item} isActive={isActive} />
+                    </button>
+                  ) : (
+                    <div className="flex gap-3 rounded-xl border border-zinc-200/80 bg-white/70 p-4 shadow-sm backdrop-blur-sm">
+                      <HighlightContent item={item} isActive={false} />
+                    </div>
+                  )}
+                </motion.li>
+              );
+            })}
           </motion.ul>
         </motion.div>
 
@@ -121,13 +168,39 @@ export function FeatureShowcaseSection({ feature }: FeatureShowcaseSectionProps)
           transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1], delay: 0.08 }}
           className="will-change-transform"
         >
-          <DemoMedia
-            src={feature.media.src}
+          <DemoMediaStack
+            sources={videoSources}
+            activeSrc={activeVideo}
             poster={feature.media.poster}
-            alt={`${feature.title} demo`}
+            alt={`${feature.title} - ${activeLabel || "demo"}`}
           />
         </motion.div>
       </div>
     </section>
+  );
+}
+
+function HighlightContent({
+  item,
+  isActive,
+}: {
+  item: FeatureHighlight;
+  isActive: boolean;
+}) {
+  return (
+    <>
+      <div
+        className={cn(
+          "flex size-9 shrink-0 items-center justify-center rounded-lg",
+          isActive ? "bg-violet-600 text-white" : "bg-violet-50 text-violet-600",
+        )}
+      >
+        <item.icon className="size-4" />
+      </div>
+      <div>
+        <p className="text-sm font-semibold text-zinc-900">{item.label}</p>
+        <p className="mt-0.5 text-sm leading-relaxed text-zinc-500">{item.detail}</p>
+      </div>
+    </>
   );
 }

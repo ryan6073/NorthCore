@@ -10,6 +10,8 @@ type DemoMediaProps = {
   className?: string;
 };
 
+const videoClassName = "block h-auto max-w-full w-full align-top";
+
 function MediaPlaceholder({
   alt,
   poster,
@@ -22,16 +24,12 @@ function MediaPlaceholder({
         className,
       )}
     >
-      <div className="overflow-hidden rounded-xl bg-white shadow-[0_24px_64px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06]">
+      <div className="rounded-xl bg-white shadow-[0_24px_64px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06]">
         {poster ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={poster}
-            alt={alt}
-            className="aspect-video w-full object-cover object-top"
-          />
+          <img src={poster} alt={alt} className={videoClassName} />
         ) : (
-          <div className="flex aspect-video w-full items-center justify-center bg-zinc-50 text-sm text-zinc-400">
+          <div className="flex min-h-40 w-full items-center justify-center bg-white text-sm text-zinc-400">
             Demo preview
           </div>
         )}
@@ -48,6 +46,10 @@ export function DemoMedia({ src, alt, poster, className }: DemoMediaProps) {
     setMounted(true);
   }, []);
 
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
+
   if (!mounted) {
     return <MediaPlaceholder alt={alt} poster={poster} className={className} />;
   }
@@ -59,32 +61,30 @@ export function DemoMedia({ src, alt, poster, className }: DemoMediaProps) {
         className,
       )}
     >
-      <div className="overflow-hidden rounded-xl bg-white shadow-[0_24px_64px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06]">
+      <div className="rounded-xl bg-white shadow-[0_24px_64px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06]">
         {failed && poster ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={poster}
-            alt={alt}
-            className="aspect-video w-full object-cover object-top"
-          />
+          <img src={poster} alt={alt} className={videoClassName} />
         ) : failed ? (
-          <div className="flex aspect-video w-full items-center justify-center bg-zinc-50 text-sm text-zinc-400">
+          <div className="flex min-h-40 w-full items-center justify-center bg-white text-sm text-zinc-400">
             Demo preview
           </div>
         ) : (
-          <video
-            suppressHydrationWarning
-            className="aspect-video w-full object-cover object-top"
-            src={src}
-            poster={poster}
-            autoPlay
-            muted
-            loop
-            playsInline
-            preload="auto"
-            aria-label={alt}
-            onError={() => setFailed(true)}
-          />
+          <div className="w-full leading-none">
+            <video
+              suppressHydrationWarning
+              className={videoClassName}
+              src={src}
+              poster={poster}
+              autoPlay
+              muted
+              loop
+              playsInline
+              preload="auto"
+              aria-label={alt}
+              onError={() => setFailed(true)}
+            />
+          </div>
         )}
       </div>
     </div>
