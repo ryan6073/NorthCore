@@ -1,7 +1,8 @@
 /**
  * 时间格式化工具
  *
- * 与 frontend 保持一致的处理逻辑：
+ * 全部基于 北京时间 (UTC+8)，不依赖用户系统时区。
+ * 与 frontend/src/utils/time.ts 一致。
  *
  * 会话列表：
  *   今天       → HH:MM
@@ -16,6 +17,38 @@
  * 两条消息之间超过 5 分钟或跨天 → 显示时间分隔
  */
 
+/** 获取当前北京时间 */
+function nowBeijing(): Date {
+  const d = new Date();
+  const utcMs = d.getTime() + d.getTimezoneOffset() * 60000;
+  return new Date(utcMs + 8 * 3600000);
+}
+
+function getDateStr(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function parseMessageTime(timestamp: string): Date | null {
+  if (!timestamp) return null;
+  try {
+    const cleaned = timestamp.replace('T', ' ').replace(/\.[0-9]{3}Z$/, '').replace(/Z$/, '');
+    const date = new Date(cleaned);
+    if (isNaN(date.getTime())) {
+      const d = new Date(cleaned.substring(0, 10));
+      return isNaN(d.getTime()) ? null : d;
+    }
+    return date;
+  } catch {
+    return null;
+  }
+}
+
+function isSameDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate();
+}
+
 /**
  * 格式化会话列表时间
  * 输入 "YYYY-MM-DD HH:mm:ss" 或 "YYYY-MM-DDTHH:mm:ss"
@@ -23,8 +56,8 @@
 export function formatConversationTime(timestamp: string): string {
   if (!timestamp) return '';
 
-  const now = new Date();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const now = nowBeijing();
+  const today = getDateStr(now);
 
   const parts = timestamp.replace('T', ' ').split(' ');
   const datePart = parts[0] || '';
@@ -38,7 +71,7 @@ export function formatConversationTime(timestamp: string): string {
   // 今年：显示 MM-DD
   const year = datePart.substring(0, 4);
   if (year === String(now.getFullYear())) {
-    return datePart.substring(5); // "MM-DD"
+    return datePart.substring(5);
   }
 
   // 今年以前：显示 YYYY-MM-DD
@@ -55,11 +88,12 @@ export function formatTimeDivider(timestamp: string): string {
   const date = parseMessageTime(timestamp);
   if (!date) return '';
 
-  const now = new Date();
+  const now = nowBeijing();
   const todayStr = getDateStr(now);
+  const yesterdayStr = getDateStr(new Date(now.getTime() - 86400000));
 
   const isToday = getDateStr(date) === todayStr;
-  const isYesterday = getDateStr(date) === getDateStr(new Date(now.getTime() - 86400000));
+  const isYesterday = getDateStr(date) === yesterdayStr;
 
   const hours = String(date.getHours()).padStart(2, '0');
   const minutes = String(date.getMinutes()).padStart(2, '0');
@@ -84,38 +118,7 @@ export function shouldShowTimeDivider(
   const previous = parseMessageTime(previousTimestamp);
   if (!current || !previous) return true;
 
-  // 跨天
   if (!isSameDay(current, previous)) return true;
 
-  // 超过 5 分钟
   return current.getTime() - previous.getTime() > 5 * 60 * 1000;
-}
-
-// ===== 内部辅助 =====
-
-function parseMessageTime(timestamp: string): Date | null {
-  if (!timestamp) return null;
-  try {
-    const cleaned = timestamp.replace('T', ' ').replace(/\.[0-9]{3}Z$/, '').replace(/Z$/, '');
-    // Support "YYYY-MM-DD HH:mm:ss" or "YYYY-MM-DD HH:mm"
-    const date = new Date(cleaned);
-    if (isNaN(date.getTime())) {
-      // Try "YYYY-MM-DD" only
-      const d = new Date(cleaned.substring(0, 10));
-      return isNaN(d.getTime()) ? null : d;
-    }
-    return date;
-  } catch {
-    return null;
-  }
-}
-
-function getDateStr(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
-function isSameDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear()
-    && a.getMonth() === b.getMonth()
-    && a.getDate() === b.getDate();
 }

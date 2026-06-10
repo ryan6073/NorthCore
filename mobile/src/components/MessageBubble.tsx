@@ -8,6 +8,7 @@ import AttachmentCard from './AttachmentCard';
 import AuthImage from './AuthImage';
 import TaskPlanCard from './TaskPlanCard';
 import RollbackRunCard from './RollbackRunCard';
+import { useAuthStore } from '@/stores/useAuthStore';
 
 interface MessageBubbleProps {
   message: Message;
@@ -87,12 +88,7 @@ export default function MessageBubble({ message: rawMessage, agents = [], onOpen
       );
     }
 
-    // 2. Grouped artifacts card (sandbox run result with undo button)
-    if (message.type === 'artifacts' || message.metadata?.isGroupedArtifacts) {
-      return <RollbackRunCard message={message} />;
-    }
-
-    // 3. Task plan message — 1:1 复刻 frontend TaskPlanCard 设计
+    // 2. Task plan message — 1:1 复刻 frontend TaskPlanCard 设计
     // 在 renderMessageContent 中返回 null，由外层直接渲染 TaskPlanCard
     if (message.type === 'task-plan') {
       return null;
@@ -133,10 +129,11 @@ export default function MessageBubble({ message: rawMessage, agents = [], onOpen
 
   // 优先用 senderId 精确查找，找不到再降级用 senderName 模糊匹配
   const senderAgent = !isUser
-    ? agents.find(a => a.id === message.senderId) || 
+    ? agents.find(a => a.id === message.senderId) ||
       (message.senderName ? agents.find(a => a.name === message.senderName) : null)
     : null;
   const senderAvatar = senderAgent?.avatar || (message.metadata?.avatar as string | undefined) || '';
+  const { userInfo } = useAuthStore();
 
   return (
     <View style={[styles.container, isUser ? styles.userContainer : styles.agentContainer]}>
@@ -157,8 +154,17 @@ export default function MessageBubble({ message: rawMessage, agents = [], onOpen
         </View>
       )}
 
-      {/* task-plan 是块级类型，不需要气泡包裹 */}
-      {isBlockType ? (
+      {/* 产物聚合卡片：全宽块级，不带气泡 */}
+      {message.type === 'artifacts' || message.metadata?.isGroupedArtifacts ? (
+        <View style={[styles.bubbleWrapper, styles.fullWidthWrapper]}>
+          {!isUser && (
+            <Text style={styles.senderNameOutside}>
+              {message.senderName || '智能助手'}
+            </Text>
+          )}
+          <RollbackRunCard message={message} />
+        </View>
+      ) : isBlockType ? (
         <View style={[styles.bubbleWrapper, styles.richBubbleWrapper, isUser ? styles.userBubbleWrapper : styles.agentBubbleWrapper]}>
           {!isUser && (
             <Text style={styles.senderNameOutside}>
@@ -210,10 +216,10 @@ export default function MessageBubble({ message: rawMessage, agents = [], onOpen
         </View>
       )}
 
-      {/* User Avatar */}
+      {/* User Avatar — 显示用户名首字母 */}
       {isUser && (
         <View style={[styles.avatar, styles.userAvatar]}>
-          <Text style={styles.avatarText}>U</Text>
+          <Text style={styles.avatarText}>{(userInfo?.username || 'U').charAt(0).toUpperCase()}</Text>
         </View>
       )}
     </View>
@@ -338,6 +344,11 @@ const styles = StyleSheet.create({
     color: '#9aa1ad',
     marginBottom: 4,
     marginRight: 4,
+  },
+  fullWidthWrapper: {
+    flexDirection: 'column',
+    maxWidth: '100%',
+    width: '100%',
   },
 
   // ── Thinking indicator ──

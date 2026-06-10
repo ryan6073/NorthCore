@@ -191,10 +191,19 @@ export interface LoginRequest {
   password: string;
 }
 
+export interface UserInfo {
+  userId: string;
+  username: string;
+  avatar?: string;
+  email?: string;
+}
+
 export interface LoginResponse {
   token: string;
   userId: string;
   username: string;
+  user?: UserInfo;
+  avatar?: string;
 }
 
 // ========== WebSocket 相关类型 ==========

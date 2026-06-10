@@ -4,7 +4,7 @@ import { useAuthStore } from '@/stores/useAuthStore';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function SettingsScreen() {
-  const { logout } = useAuthStore();
+  const { logout, userInfo } = useAuthStore();
 
   const handleLogout = () => {
     const performLogout = () => {
@@ -31,9 +31,9 @@ export default function SettingsScreen() {
     <View style={styles.container}>
       <View style={styles.profileSection}>
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>U</Text>
+          <Text style={styles.avatarText}>{(userInfo?.username || 'U').charAt(0).toUpperCase()}</Text>
         </View>
-        <Text style={styles.username}>管理员</Text>
+        <Text style={styles.username}>{userInfo?.username || '管理员'}</Text>
         <Text style={styles.role}>智能平台成员</Text>
       </View>
 

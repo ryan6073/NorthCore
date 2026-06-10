@@ -315,6 +315,15 @@ export default function ConversationScreen() {
     setIsNearBottom(true);
   }, [conversationId]);
 
+  // 消息加载完成后自动滚动到底部（最新消息）
+  useEffect(() => {
+    if (!loading && messageItems.length > 0 && isMessageListReady) {
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: false });
+      }, 100);
+    }
+  }, [loading, messageItems.length, isMessageListReady]);
+
   const pickDocuments = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -769,7 +778,7 @@ export default function ConversationScreen() {
         <FlatList
           ref={flatListRef}
           data={messageItems}
-          inverted={shouldInvertMessages}
+          inverted={false}
           style={[
             styles.messageList,
             !isMessageListReady && chronologicalMessages.length > 1 && styles.messageListHidden,
@@ -820,14 +829,6 @@ export default function ConversationScreen() {
           onContentSizeChange={(_, height) => {
             listContentHeightRef.current = height;
             updateMessageListMode(height);
-
-            if (isMessageListReady && !loading && !isLoadingHistory.current && isNearBottom) {
-              if (shouldInvertMessages) {
-                flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
-              } else {
-                flatListRef.current?.scrollToEnd({ animated: true });
-              }
-            }
           }}
           onLayout={(event) => {
             listLayoutHeightRef.current = event.nativeEvent.layout.height;
