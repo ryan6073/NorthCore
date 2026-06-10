@@ -7,6 +7,7 @@ import ArtifactMessage from './ArtifactMessage';
 import AttachmentCard from './AttachmentCard';
 import AuthImage from './AuthImage';
 import TaskPlanCard from './TaskPlanCard';
+import RollbackRunCard from './RollbackRunCard';
 
 interface MessageBubbleProps {
   message: Message;
@@ -22,7 +23,7 @@ export default function MessageBubble({ message: rawMessage, agents = [], onOpen
   const isSystem = message.role === 'system';
   const isThinking = message.type === 'status' && message.content === '正在思考...';
 
-  const isBlockType = message.type === 'task-plan';
+  const isBlockType = message.type === 'task-plan' || message.type === 'artifacts' || !!(message.metadata?.isGroupedArtifacts);
   const isRichContent = useMemo(() => {
     if (message.type === 'code' || message.type === 'artifact') {
       return true;
@@ -86,13 +87,18 @@ export default function MessageBubble({ message: rawMessage, agents = [], onOpen
       );
     }
 
-    // 2. Task plan message — 1:1 复刻 frontend TaskPlanCard 设计
+    // 2. Grouped artifacts card (sandbox run result with undo button)
+    if (message.type === 'artifacts' || message.metadata?.isGroupedArtifacts) {
+      return <RollbackRunCard message={message} />;
+    }
+
+    // 3. Task plan message — 1:1 复刻 frontend TaskPlanCard 设计
     // 在 renderMessageContent 中返回 null，由外层直接渲染 TaskPlanCard
     if (message.type === 'task-plan') {
       return null;
     }
 
-    // 3. Artifact message — use interactive ArtifactMessage component
+    // 4. Artifact message — use interactive ArtifactMessage component
     if (message.type === 'artifact') {
       return (
         <ArtifactMessage

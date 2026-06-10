@@ -255,26 +255,20 @@ export default function ConversationScreen() {
     }
   }, [conversationId, currentConversationId, messages]);
 
-  const displayMessages = useMemo(
-    () => shouldInvertMessages ? [...chronologicalMessages].reverse() : chronologicalMessages,
-    [chronologicalMessages, shouldInvertMessages],
-  );
-
-  // 生成带时间分隔的消息条目数组
-  // 每个元素: { type: 'message', msg: Message } 或 { type: 'time-divider', label: string }
+  // 生成带时间分隔的消息条目数组 (chronological 正序排列)
+  // FlatList 的 inverted 属性负责反向展示，data 保持正序
   const messageItems = useMemo(() => {
     const items: ({ type: 'time-divider'; label: string } | { type: 'message'; msg: Message })[] = [];
-    const ordered = shouldInvertMessages ? [...chronologicalMessages].reverse() : chronologicalMessages;
-    for (let i = 0; i < ordered.length; i++) {
-      const msg = ordered[i];
-      const prev = i > 0 ? ordered[i - 1] : null;
+    for (let i = 0; i < chronologicalMessages.length; i++) {
+      const msg = chronologicalMessages[i];
+      const prev = i > 0 ? chronologicalMessages[i - 1] : null;
       if (shouldShowTimeDivider(msg.createdAt, prev?.createdAt)) {
         items.push({ type: 'time-divider', label: formatTimeDivider(msg.createdAt) });
       }
       items.push({ type: 'message', msg });
     }
     return items;
-  }, [chronologicalMessages, shouldInvertMessages]);
+  }, [chronologicalMessages]);
 
   const conversationArtifacts = useMemo(
     () => (currentConversationId === conversationId ? artifacts : []),

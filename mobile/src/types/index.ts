@@ -6,6 +6,7 @@ export type MessageType =
   | 'text'
   | 'code'
   | 'artifact'
+  | 'artifacts'
   | 'task-plan'
   | 'status'
   | 'image'
